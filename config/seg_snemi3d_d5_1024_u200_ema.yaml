@@ -1,0 +1,107 @@
+NAME: 'seg_snemi3d_d5_1024_u200_ema'
+
+MODEL:
+    model_type: 'superhuman'  # 'mala' or 'superhuman'
+    input_nc: 1
+    output_nc: 3
+    if_sigmoid: True
+    # for 'mala':
+    init_mode_mala: 'kaiming'
+    # for 'superhuman':
+    if_skip: 'False'
+    filters: 
+        - 28
+        - 36
+        - 48
+        - 64
+        - 80
+    upsample_mode: 'transposeS'  # 'bilinear', 'nearest', 'transpose', 'transposeS'
+    decode_ratio: 1
+    merge_mode: 'cat'  # 'add', 'cat'
+    pad_mode: 'zero'  # 'zero', 'replicate'
+    bn_mode: 'async'  # 'sync', 'async'
+    relu_mode: 'elu'  # 'elu', 'relu', 'leaky'
+    init_mode: 'kaiming_normal'  # 'kaiming_normal', 'kaiming_uniform', 'xavier_normal', 'xavier_uniform'
+    
+    pre_train: True
+    trained_gpus: 1
+    pre_train_mode: 'finetune'  # 'finetune', 'extract_feature'
+    trained_model_name: 'pretraining_snemi3d'
+    trained_model_id: 'pretraining_snemi3d'
+
+TRAIN:
+    resume: False
+    if_valid: True
+    min_valid_iters: 0
+    cache_path: './caches/'
+    save_path: './models/'
+    pad: 0
+    loss_func: 'BCELoss'   # 'MSELoss', 'BCELoss'
+    loss_func_unlabel: 'MSELoss'
+    weight_unlabel: 1.0
+    weight_unlabel_fixed: True
+    ema_decay: 0.999
+
+    opt_type: 'adam'
+    total_iters: 300000
+    warmup_iters: 0
+    base_lr: 0.0001
+    end_lr: 0.0001
+    display_freq: 100
+    valid_freq: 1000
+    save_freq: 1000
+    decay_iters: 200000
+    weight_decay: ~
+    power: 1.5
+
+    batch_size: 2
+    num_workers: 4
+    if_cuda: True
+
+    random_seed: 555  # -1 is none
+
+DATA:
+    dataset_name: 'snemi3d-ac3'  # 'snemi3d-ac3', 'cremi-C',
+    unlabel_dataset: 'ac3_ac4'  # 'ac3_ac4', 'ac4_around', 'cremi-C-200', 'cremi-all'
+    unlabel_datalist: 
+        - 'AC4_5.h5'
+        - 'AC4_6.h5'
+        - 'AC4_7.h5'
+        - 'AC4_9.h5'
+        - 'AC4_10.h5'
+        - 'AC4_11.h5'
+        - 'AC4_12.h5'
+        - 'AC4_13.h5'
+    train_split: 5
+    label_crop_size: ~
+    test_split: 50
+    unlabel_split: 100
+    data_folder: './data'
+    if_norm_images: False
+    scale_factor: 1.5
+    min_noise_std: 0.01
+    max_noise_std: 0.2
+    min_kernel_size: 3
+    max_kernel_size: 9
+    min_sigma: 0
+    max_sigma: 2
+
+    per_mode: 1
+    if_scale_aug_unlabel: False
+    if_filp_aug_unlabel: False
+    if_rotation_aug_unlabel: False
+    if_intensity_aug_unlabel: True
+    if_noise_aug_unlabel: True
+    if_blur_aug_unlabel: True
+    if_mask_aug_unlabel: True
+    if_sobel_aug_unlabel: False
+    if_mixup_aug_unlabel: False
+    if_misalign_aug_unlabel: True
+    if_elastic_aug_unlabel: False
+    if_artifact_aug_unlabel: False
+    if_missing_aug_unlabel: False
+    if_blurenhanced_aug_unlabel: False
+
+TEST:
+    pad: 0
+    model_name: ''
