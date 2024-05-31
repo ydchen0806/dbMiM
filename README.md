@@ -13,15 +13,29 @@ docker pull registry.cn-hangzhou.aliyuncs.com/cyd_dl/monai-vit:v26
 
 The datasets required for pre-training and segmentation are as follows:
 
-| Dataset Type          | Dataset Name | Description                              |
-|-----------------------|--------------|------------------------------------------|
-| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       |
-| Segmentation Dataset  | CREMI Dataset| Challenge on circuit reconstruction datasets|
+| Dataset Type          | Dataset Name           | Description                              | URL                                           |
+|-----------------------|------------------------|------------------------------------------|-----------------------------------------------|
+| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       | [FAFB Dataset](https://link-to-fafb-dataset)  |
+| Segmentation Dataset  | CREMI Dataset          | Challenge on circuit reconstruction datasets| [CREMI Dataset](https://cremi.org/)           |
 
-### Pre-training Dataset: FAFB
+### Pre-training Dataset: Region of FAFB
 
-The FAFB dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset.
+The Region of FAFB dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset. You can download it from the URL above.
 
 ### Segmentation Dataset: CREMI
 
 The CREMI dataset is used for the segmentation tasks. Detailed instructions for downloading and preprocessing can be found on the [CREMI Challenge website](https://cremi.org/).
+
+## Citation
+
+If you find this code useful in your research, please consider citing our paper:
+
+```bibtex
+@inproceedings{chen2023self,
+  title={Self-supervised neuron segmentation with multi-agent reinforcement learning},
+  author={Chen, Yinda and Huang, Wei and Zhou, Shenglong and Chen, Qi and Xiong, Zhiwei},
+  booktitle={Proceedings of the Thirty-Second International Joint Conference on Artificial Intelligence},
+  pages={609--617},
+  year={2023}
+}
+```
