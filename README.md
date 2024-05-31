@@ -2,9 +2,15 @@
 
 This repository contains the official implementation of the paper **Self-supervised Neuron Segmentation with Multi-agent Reinforcement Learning**, presented at IJCAI 2023. You can find the paper [here](https://www.ijcai.org/proceedings/2023/0068.pdf).
 
-![The pipeline of our proposed methods](framework.png)
+<div style="text-align: center;">
+  <img src="framework.png" alt="The pipeline of our proposed methods" width="100%" />
+  <p><b>Figure 1:</b> The pipeline of our proposed methods</p>
+</div>
 
-![The framework of our proposed decision module.](decision_module.png)
+<div style="text-align: center;">
+  <img src="decision_module.png" alt="The framework of our proposed decision module" width="50%" />
+  <p><b>Figure 2:</b> The framework of our proposed decision module</p>
+</div>
 ## Environment Setup
 
 To streamline the setup process, we provide a Docker image that can be used to set up the environment with a single command. The Docker image is available at:
