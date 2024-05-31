@@ -36,6 +36,17 @@ The Region of FAFB dataset is used for pre-training. Please follow the instructi
 
 The CREMI dataset is used for the segmentation tasks. Detailed instructions for downloading and preprocessing can be found on the [CREMI Challenge website](https://cremi.org/).
 
+## Usage Guide
+
+### 1. Pretraining
+```
+python pretrain.py -c pretraining_all -m train
+```
+### 2. Finetuning
+```
+python finetune.py -c seg_3d -m train -w [your pretrained path]
+```
+
 ## Citation
 
 If you find this code useful in your research, please consider citing our paper:
