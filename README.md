@@ -11,6 +11,7 @@ This repository contains the official implementation of the paper **Self-supervi
   <img src="decision_module.png" alt="The framework of our proposed decision module" width="50%" />
   <p><b>Figure 2:</b> The framework of our proposed decision module</p>
 </div>
+
 ## Environment Setup
 
 To streamline the setup process, we provide a Docker image that can be used to set up the environment with a single command. The Docker image is available at:
