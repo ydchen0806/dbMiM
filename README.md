@@ -47,7 +47,7 @@ python pretrain.py -c pretraining_all -m train
 python finetune.py -c seg_3d -m train -w [your pretrained path]
 ```
 
-# License
+# License (Important !!!)
 
 <details>
 <summary>Usage Notes</summary>
