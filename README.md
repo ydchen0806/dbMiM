@@ -25,7 +25,7 @@ The datasets required for pre-training and segmentation are as follows:
 
 | Dataset Type          | Dataset Name           | Description                              | URL                                           |
 |-----------------------|------------------------|------------------------------------------|-----------------------------------------------|
-| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       | [FAFB Dataset](https://link-to-fafb-dataset)  |
+| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       | [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain)  |
 | Segmentation Dataset  | CREMI Dataset          | Challenge on circuit reconstruction datasets| [CREMI Dataset](https://cremi.org/)           |
 
 ### Pre-training Dataset: Region of FAFB
