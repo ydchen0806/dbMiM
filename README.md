@@ -30,7 +30,9 @@ The datasets required for pre-training and segmentation are as follows:
 
 ### Pre-training Dataset: Region of FAFB
 
-The FAFB region dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset. You can download it from the Hugging Face [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain). Use the subfolder FAFB_hdf to match the paper's settings, or use additional relevant data to achieve better results.
+The FAFB region dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset. You can download it from the Hugging Face [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain). Use the subfolder `FAFB_hdf` to match the paper's settings, or use additional relevant data to achieve better results.
+
+To use this dataset, please refer to the license provided [here](#license-important-).
 
 ### Segmentation Dataset: CREMI
 
