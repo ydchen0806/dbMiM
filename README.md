@@ -25,12 +25,12 @@ The datasets required for pre-training and segmentation are as follows:
 
 | Dataset Type          | Dataset Name           | Description                              | URL                                           |
 |-----------------------|------------------------|------------------------------------------|-----------------------------------------------|
-| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       | [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain)  |
+| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       | [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain_data)  |
 | Segmentation Dataset  | CREMI Dataset          | Challenge on circuit reconstruction datasets| [CREMI Dataset](https://cremi.org/)           |
 
 ### Pre-training Dataset: Region of FAFB
 
-The FAFB region dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset. You can download it from the Hugging Face [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain). Use the subfolder `FAFB_hdf` to match the paper's settings, or use additional relevant data to achieve better results.
+The FAFB region dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset. You can download it from the Hugging Face [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain_data). Use the subfolder `FAFB_hdf` to match the paper's settings, or use additional relevant data to achieve better results.
 
 To use this dataset, please refer to the license provided [here](#license-important-).
 
