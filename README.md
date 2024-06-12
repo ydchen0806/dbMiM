@@ -99,13 +99,9 @@ If you find this code or dataset useful in your research, please consider citing
 ```
 
 # To-Do List
-
-## Completed Tasks
 - [x] Open-sourced the core code
 - [x] Wrote the README for code usage
 - [x] Open-sourced the pre-training dataset
-
-## Pending Tasks
 - [ ] Upload the pre-trained weights
 
 # Contact 
