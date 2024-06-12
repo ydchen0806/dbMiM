@@ -86,7 +86,7 @@ python finetune.py -c seg_3d -m train -w [your pretrained path]
 
 ## Citation
 
-If you find this code useful in your research, please consider citing our paper:
+If you find this code or dataset useful in your research, please consider citing our paper:
 
 ```bibtex
 @inproceedings{chen2023self,
