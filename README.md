@@ -1,6 +1,10 @@
 # Self-supervised Neuron Segmentation with Multi-agent Reinforcement Learning (IJCAI 2023)
-![Visitor Count](https://visitor-badge.glitch.me/badge?page_id=ydchen0806.dbMiM)
 This repository contains the official implementation of the paper **Self-supervised Neuron Segmentation with Multi-agent Reinforcement Learning**, presented at IJCAI 2023. You can find the paper [here](https://www.ijcai.org/proceedings/2023/0068.pdf).
+
+<details>
+  <summary>Visitor Count</summary>
+  <img src="https://komarev.com/ghpvc/?username=ydchen0806&repo=dbMiM" alt="Visitor Count">
+</details>
 
 <div style="text-align: center;">
   <img src="framework.png" alt="The pipeline of our proposed methods" width="100%" />
