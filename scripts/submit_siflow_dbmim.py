@@ -52,16 +52,24 @@ def _patch_cremi_configs(bundle: Path) -> None:
 def make_bundle(entrypoint: str, stage: str) -> Path:
     out = PROJECT / "outputs" / "siflow_bundles" / f"dbmim_bundle_{stamp()}"
     out.mkdir(parents=True, exist_ok=True)
-    for name in ["dbmim", "configs", "train_pretrain.py", "train_finetune.py", "requirements-dbMIM.txt"]:
+    for name in [
+        "dbmim",
+        "configs",
+        "train_pretrain.py",
+        "train_finetune.py",
+        "scripts/evaluate_cremi_segmentation.py",
+        "requirements-dbMIM.txt",
+    ]:
         src = PROJECT / name
         dst = out / name
+        dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
             shutil.copytree(src, dst)
         else:
             shutil.copy2(src, dst)
     if WHEELHOUSE.exists():
         shutil.copytree(WHEELHOUSE, out / "wheelhouse")
-    if stage in {"pretrain-cremi", "finetune-cremi"}:
+    if stage in {"pretrain-cremi", "finetune-cremi", "eval-cremi"}:
         _patch_cremi_configs(out)
     if TOSUTIL.exists():
         (out / "bin").mkdir(parents=True, exist_ok=True)
@@ -70,7 +78,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
 
     prelude = []
     postlude = []
-    if stage in {"pretrain-cremi", "finetune-cremi"}:
+    if stage in {"pretrain-cremi", "finetune-cremi", "eval-cremi"}:
         prelude.extend(
             [
                 "if [ -x bin/tosutil ]; then",
@@ -93,6 +101,22 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi":
+        prelude.extend(
+            [
+                "mkdir -p outputs/finetune_cremi_real_dbmim outputs/eval_cremi_real_dbmim",
+                "if bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_dbmim/finetuned_best.pt "
+                "outputs/finetune_cremi_real_dbmim/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
+                "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_dbmim/finetuned_best.pt",
+                "else",
+                "  bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_dbmim/finetuned_latest.pt "
+                "outputs/finetune_cremi_real_dbmim/finetuned_latest.pt -conf=\"$TOS_CONF\"",
+                "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_dbmim/finetuned_latest.pt",
+                "fi",
+            ]
+        )
     if stage == "pretrain-cremi":
         postlude.extend(
             [
@@ -104,6 +128,13 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         postlude.extend(
             [
                 "bin/tosutil cp outputs/finetune_cremi_real_dbmim "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "eval-cremi":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_real_dbmim "
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
@@ -145,7 +176,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Submit dbMiM training to SiFlow through TOS bootstrap")
-    parser.add_argument("--stage", choices=["pretrain", "finetune", "pretrain-cremi", "finetune-cremi", "smoke"], default="smoke")
+    parser.add_argument("--stage", choices=["pretrain", "finetune", "pretrain-cremi", "finetune-cremi", "eval-cremi", "smoke"], default="smoke")
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--resource-pool", default="med-model")
     parser.add_argument("--gpus-per-pod", type=int, default=8)
@@ -161,6 +192,21 @@ def main() -> None:
     elif args.stage == "finetune-cremi":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"
+    elif args.stage == "eval-cremi":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_real_dbmim "
+            "--crop-size 32 256 256 "
+            "--stride 16 128 128 "
+            "--thresholds 0.35 0.45 0.55 0.65 "
+            "--min-size 32 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi"
     elif args.stage == "finetune":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi.yaml"
         prefix = "dbmim-finetune"

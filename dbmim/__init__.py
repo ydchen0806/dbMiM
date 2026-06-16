@@ -4,5 +4,6 @@ __all__ = [
     "datasets",
     "metrics",
     "models",
+    "postprocess",
     "utils",
 ]

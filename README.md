@@ -90,6 +90,39 @@ Submit only after data and environment paths are verified:
 python scripts/submit_siflow_dbmim.py --stage pretrain --submit
 ```
 
+### 4. CREMI segmentation post-processing
+
+The finetuning head predicts z/y/x affinities. To evaluate neuron instances,
+convert affinities to connected components and compute adapted Rand / VI:
+
+```sh
+python scripts/evaluate_cremi_segmentation.py \
+  --config configs/finetune_cremi_real.yaml \
+  --checkpoint outputs/finetune_cremi_real_dbmim/finetuned_best.pt \
+  --data-dir data/CREMI \
+  --output-dir outputs/eval_cremi_real_dbmim \
+  --crop-size 32 256 256 \
+  --stride 16 128 128 \
+  --thresholds 0.35 0.45 0.55 0.65 \
+  --min-size 32 \
+  --max-samples 3
+```
+
+For the full CREMI SiFlow path, `eval-cremi` downloads the CREMI TOS asset and
+finetuned checkpoint, runs the post-processing evaluation, and uploads
+`outputs/eval_cremi_real_dbmim` back to TOS:
+
+```sh
+python scripts/submit_siflow_dbmim.py --stage eval-cremi --resource-pool med-dev --gpus-per-pod 1 --submit
+```
+
+If finetuning is still running, launch the watcher so the eval job is submitted
+only after the checkpoint appears on TOS:
+
+```sh
+nohup bash scripts/watch_and_submit_eval.sh > outputs/watchers/eval_submit_$(date +%Y%m%dT%H%M%S).log 2>&1 &
+```
+
 # License (Important !!!)
 
 <details>
