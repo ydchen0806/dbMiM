@@ -1,0 +1,36 @@
+seed: 42
+device: cuda
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_smoke
+data:
+  synthetic: true
+  synthetic_length: 16
+  volume_size: [8, 32, 32]
+model:
+  in_channels: 1
+  volume_size: [8, 32, 32]
+  patch_size: [2, 8, 8]
+  embed_dim: 64
+  depth: 2
+  num_heads: 4
+  decoder_dim: 64
+  mask_ratio: 0.75
+  structure_weight: 0.05
+decision:
+  enabled: true
+  hidden_dim: 64
+  target_mask_ratio: 0.75
+  min_mask_ratio: 0.40
+  max_mask_ratio: 0.90
+  lr: 0.0005
+  policy_weight: 0.05
+train:
+  batch_size: 2
+  epochs: 1
+  max_steps: 4
+  num_workers: 0
+  lr: 0.0003
+  weight_decay: 0.05
+  amp: false
+  log_every: 1
+  save_every: 1
+  clip_grad: 1.0

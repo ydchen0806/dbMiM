@@ -1,0 +1,30 @@
+seed: 42
+device: cuda
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_smoke
+pretrained: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_smoke/pretrained_latest.pt
+data:
+  synthetic: true
+  synthetic_length: 16
+  volume_size: [8, 32, 32]
+model:
+  in_channels: 1
+  out_channels: 3
+  volume_size: [8, 32, 32]
+  patch_size: [2, 8, 8]
+  embed_dim: 64
+  depth: 2
+  num_heads: 4
+  dropout: 0.0
+train:
+  batch_size: 2
+  epochs: 1
+  max_steps: 4
+  num_workers: 0
+  lr: 0.0003
+  weight_decay: 0.01
+  amp: false
+  log_every: 1
+  eval_every: 1
+  val_fraction: 0.25
+  pos_weight: 1.0
+  clip_grad: 1.0

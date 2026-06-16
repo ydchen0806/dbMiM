@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import argparse
+import time
+from pathlib import Path
+
+import torch
+from torch.utils.data import DataLoader
+
+from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset
+from dbmim.models import DBMIM3DMAE, DecisionModule
+from dbmim.utils import (
+    atomic_jsonl_append,
+    count_parameters,
+    device_from_config,
+    ensure_dir,
+    load_config,
+    save_checkpoint,
+    load_checkpoint,
+    seed_everything,
+)
+
+
+def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
+    data_cfg = cfg.get("data", {})
+    volume_size = tuple(data_cfg.get("volume_size", cfg.get("model", {}).get("volume_size", [16, 64, 64])))
+    if data_cfg.get("synthetic", False):
+        return SyntheticEMDataset(
+            length=int(data_cfg.get("synthetic_length", 128)),
+            volume_size=volume_size,
+            with_labels=False,
+            seed=int(cfg.get("seed", 0)),
+        )
+    paths = data_cfg.get("train_paths") or data_cfg.get("paths")
+    if not paths:
+        raise ValueError("data.train_paths is required unless data.synthetic=true")
+    return EMVolumeDataset(
+        paths=paths,
+        volume_size=volume_size,
+        keys=data_cfg.get("keys"),
+        length_multiplier=int(data_cfg.get("length_multiplier", 1)),
+        augment=bool(data_cfg.get("augment", True)),
+        seed=int(cfg.get("seed", 0)),
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="dbMiM pretraining")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--resume", default="")
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    seed_everything(int(cfg.get("seed", 0)))
+    output_dir = ensure_dir(args.output_dir or cfg["output_dir"])
+    log_path = output_dir / "train_log.jsonl"
+    device = device_from_config(cfg)
+
+    dataset = build_dataset(cfg)
+    train_cfg = cfg.get("train", {})
+    loader = DataLoader(
+        dataset,
+        batch_size=int(train_cfg.get("batch_size", 2)),
+        shuffle=True,
+        num_workers=int(train_cfg.get("num_workers", 2)),
+        pin_memory=(device.type == "cuda"),
+        drop_last=True,
+    )
+    model_cfg = cfg.get("model", {})
+    model = DBMIM3DMAE(
+        in_channels=int(model_cfg.get("in_channels", 1)),
+        volume_size=tuple(model_cfg.get("volume_size", [16, 64, 64])),
+        patch_size=tuple(model_cfg.get("patch_size", [4, 16, 16])),
+        embed_dim=int(model_cfg.get("embed_dim", 192)),
+        depth=int(model_cfg.get("depth", 6)),
+        num_heads=int(model_cfg.get("num_heads", 6)),
+        decoder_dim=int(model_cfg.get("decoder_dim", model_cfg.get("embed_dim", 192))),
+        mask_ratio=float(model_cfg.get("mask_ratio", 0.75)),
+        structure_weight=float(model_cfg.get("structure_weight", 0.1)),
+    ).to(device)
+    decision_cfg = cfg.get("decision", {})
+    use_policy = bool(decision_cfg.get("enabled", True))
+    decision_module = None
+    if use_policy:
+        decision_module = DecisionModule(
+            embed_dim=int(model_cfg.get("embed_dim", 192)),
+            hidden_dim=int(decision_cfg.get("hidden_dim", 256)),
+            min_mask_ratio=float(decision_cfg.get("min_mask_ratio", 0.35)),
+            max_mask_ratio=float(decision_cfg.get("max_mask_ratio", 0.90)),
+            entropy_coef=float(decision_cfg.get("entropy_coef", 0.01)),
+            value_coef=float(decision_cfg.get("value_coef", 0.5)),
+            ratio_coef=float(decision_cfg.get("ratio_coef", 0.25)),
+        ).to(device)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(train_cfg.get("lr", 1.5e-4)),
+        weight_decay=float(train_cfg.get("weight_decay", 0.05)),
+    )
+    policy_optimizer = None
+    if decision_module is not None:
+        policy_optimizer = torch.optim.AdamW(
+            decision_module.parameters(),
+            lr=float(decision_cfg.get("lr", 5e-4)),
+            weight_decay=float(decision_cfg.get("weight_decay", 1e-4)),
+        )
+
+    start_epoch = 0
+    global_step = 0
+    if args.resume:
+        ckpt = load_checkpoint(args.resume, map_location="cpu")
+        model.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        if decision_module is not None and ckpt.get("decision_module") is not None:
+            decision_module.load_state_dict(ckpt["decision_module"])
+        if policy_optimizer is not None and ckpt.get("policy_optimizer") is not None:
+            policy_optimizer.load_state_dict(ckpt["policy_optimizer"])
+        start_epoch = int(ckpt.get("epoch", -1)) + 1
+        global_step = int(ckpt.get("global_step", 0))
+
+    scaler = torch.amp.GradScaler("cuda", enabled=bool(train_cfg.get("amp", True)) and device.type == "cuda")
+    epochs = int(train_cfg.get("epochs", 100))
+    max_steps = int(train_cfg.get("max_steps", 0))
+    log_every = int(train_cfg.get("log_every", 20))
+    save_every = int(train_cfg.get("save_every", 1))
+    target_ratio = float(decision_cfg.get("target_mask_ratio", model_cfg.get("mask_ratio", 0.75)))
+    freeze_policy_after = int(decision_cfg.get("freeze_after_steps", 0))
+
+    print(f"output_dir={output_dir}")
+    print(f"dataset_size={len(dataset)} batches={len(loader)} device={device}")
+    print(f"model_trainable_params={count_parameters(model)}")
+    if decision_module is not None:
+        print(f"decision_trainable_params={count_parameters(decision_module)}")
+
+    t0 = time.time()
+    for epoch in range(start_epoch, epochs):
+        model.train()
+        if decision_module is not None:
+            decision_module.train(global_step < freeze_policy_after or freeze_policy_after <= 0)
+        for batch in loader:
+            image = batch["image"].to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+            if policy_optimizer is not None:
+                policy_optimizer.zero_grad(set_to_none=True)
+            with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
+                out = model(
+                    image,
+                    decision_module=decision_module,
+                    target_mask_ratio=target_ratio,
+                )
+                loss = out.loss
+                policy_loss = image.new_tensor(0.0)
+                if (
+                    decision_module is not None
+                    and policy_optimizer is not None
+                    and (freeze_policy_after <= 0 or global_step < freeze_policy_after)
+                    and out.decision is not None
+                ):
+                    per_sample = (out.pred.detach() - out.target).pow(2).flatten(1).mean(dim=1)
+                    policy_loss = decision_module.policy_loss(out.decision, per_sample)
+                    loss = loss + float(decision_cfg.get("policy_weight", 0.05)) * policy_loss
+            scaler.scale(loss).backward()
+            if float(train_cfg.get("clip_grad", 0.0)) > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float(train_cfg["clip_grad"]))
+            scaler.step(optimizer)
+            if policy_optimizer is not None:
+                scaler.step(policy_optimizer)
+            scaler.update()
+
+            global_step += 1
+            if global_step % log_every == 0:
+                payload = {
+                    "epoch": epoch,
+                    "step": global_step,
+                    "loss": float(out.loss.detach().cpu()),
+                    "pixel_loss": float(out.pixel_loss.detach().cpu()),
+                    "structure_loss": float(out.structure_loss.detach().cpu()),
+                    "policy_loss": float(policy_loss.detach().cpu()),
+                    "mask_ratio": float(out.mask.float().mean().detach().cpu()),
+                    "lr": optimizer.param_groups[0]["lr"],
+                    "elapsed_sec": round(time.time() - t0, 2),
+                }
+                print(payload, flush=True)
+                atomic_jsonl_append(log_path, payload)
+            if max_steps and global_step >= max_steps:
+                break
+
+        if (epoch + 1) % save_every == 0 or epoch + 1 == epochs or (max_steps and global_step >= max_steps):
+            payload = {
+                "model": model.state_dict(),
+                "decision_module": decision_module.state_dict() if decision_module is not None else None,
+                "optimizer": optimizer.state_dict(),
+                "policy_optimizer": policy_optimizer.state_dict() if policy_optimizer is not None else None,
+                "epoch": epoch,
+                "global_step": global_step,
+                "config": cfg,
+            }
+            save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
+            save_checkpoint(output_dir / "pretrained_latest.pt", payload)
+        if max_steps and global_step >= max_steps:
+            break
+
+
+if __name__ == "__main__":
+    main()

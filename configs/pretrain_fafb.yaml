@@ -1,0 +1,40 @@
+seed: 42
+device: cuda
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_fafb_dbmim
+data:
+  synthetic: false
+  train_paths:
+    - /volume/med-train/users/dchen02/code/dbMiM/data/EM_pretrain_data/FAFB_hdf
+  volume_size: [16, 128, 128]
+  length_multiplier: 1024
+  augment: true
+model:
+  in_channels: 1
+  volume_size: [16, 128, 128]
+  patch_size: [4, 16, 16]
+  embed_dim: 192
+  depth: 6
+  num_heads: 6
+  decoder_dim: 192
+  mask_ratio: 0.75
+  structure_weight: 0.10
+decision:
+  enabled: true
+  hidden_dim: 256
+  target_mask_ratio: 0.75
+  min_mask_ratio: 0.40
+  max_mask_ratio: 0.90
+  lr: 0.0005
+  policy_weight: 0.05
+  freeze_after_steps: 100000
+train:
+  batch_size: 8
+  epochs: 200
+  max_steps: 200000
+  num_workers: 8
+  lr: 0.00015
+  weight_decay: 0.05
+  amp: true
+  log_every: 20
+  save_every: 1
+  clip_grad: 1.0

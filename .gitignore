@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+data/
+outputs/
+*.pt
+*.pth
+*.ckpt
+
+.env
+*.token
+*.secret

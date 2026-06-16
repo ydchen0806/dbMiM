@@ -45,13 +45,49 @@ The CREMI dataset is used for the segmentation tasks. Detailed instructions for 
 
 ## Usage Guide
 
+The maintained training path is self-contained and avoids the private absolute
+paths that were used during early experiments. See `DBMIM_WORKFLOW.md` for the
+complete workflow.
+
+### 0. Smoke test
+
+```sh
+bash scripts/run_smoke.sh
+```
+
+This writes a small synthetic-data checkpoint pair:
+
+- `/volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_smoke/pretrained_latest.pt`
+- `/volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_smoke/finetuned_latest.pt`
+
 ### 1. Pretraining
+
+```sh
+python train_pretrain.py --config configs/pretrain_fafb.yaml
 ```
-python pretrain.py -c pretraining_all -m train
-```
+
 ### 2. Finetuning
+
+```sh
+python train_finetune.py \
+  --config configs/finetune_cremi.yaml \
+  --pretrained /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_fafb_dbmim/pretrained_latest.pt
 ```
-python finetune.py -c seg_3d -m train -w [your pretrained path]
+
+### 3. SiFlow
+
+Dry-run:
+
+```sh
+python scripts/submit_siflow_dbmim.py --stage smoke
+python scripts/submit_siflow_dbmim.py --stage pretrain
+python scripts/submit_siflow_dbmim.py --stage finetune
+```
+
+Submit only after data and environment paths are verified:
+
+```sh
+python scripts/submit_siflow_dbmim.py --stage pretrain --submit
 ```
 
 # License (Important !!!)
@@ -110,4 +146,3 @@ If you find this code or dataset useful in your research, please consider citing
 
 # Contact 
 If you need any help or are looking for cooperation feel free to contact us. cyd0806@mail.ustc.edu.cn
-
