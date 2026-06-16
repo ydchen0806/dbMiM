@@ -1,7 +1,7 @@
 seed: 42
 device: cuda
-output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_cremi_dbmim
-pretrained: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_fafb_dbmim/pretrained_latest.pt
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_cremi_real_dbmim
+pretrained: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt
 data:
   synthetic: false
   image_paths:
@@ -24,14 +24,14 @@ model:
   dropout: 0.05
 train:
   batch_size: 8
-  epochs: 100
-  max_steps: 200000
+  epochs: 50
+  max_steps: 50000
   num_workers: 8
   lr: 0.0001
   weight_decay: 0.01
   amp: true
   log_every: 20
   eval_every: 1
-  val_fraction: 0.1
+  val_fraction: 0.34
   pos_weight: 1.0
   clip_grad: 1.0

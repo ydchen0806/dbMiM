@@ -40,6 +40,8 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
         paths=image_paths,
         label_paths=label_paths,
         volume_size=volume_size,
+        keys=data_cfg.get("image_keys") or data_cfg.get("keys"),
+        label_keys=data_cfg.get("label_keys"),
         length_multiplier=int(data_cfg.get("length_multiplier", 1)),
         augment=bool(data_cfg.get("augment", True)),
         seed=int(cfg.get("seed", 0)),

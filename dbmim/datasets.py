@@ -122,6 +122,7 @@ class EMVolumeDataset(Dataset):
         volume_size: tuple[int, int, int] = (16, 64, 64),
         label_paths: Iterable[str | Path] | None = None,
         keys: Iterable[str] | None = None,
+        label_keys: Iterable[str] | None = None,
         length_multiplier: int = 1,
         augment: bool = True,
         seed: int = 0,
@@ -129,6 +130,7 @@ class EMVolumeDataset(Dataset):
         self.paths = self._expand_paths([Path(p) for p in paths])
         self.label_paths = self._expand_paths([Path(p) for p in label_paths]) if label_paths is not None else None
         self.keys = list(keys) if keys is not None else None
+        self.label_keys = list(label_keys) if label_keys is not None else None
         self.volume_size = volume_size
         self.length_multiplier = max(1, length_multiplier)
         self.augment = augment
@@ -187,7 +189,7 @@ class EMVolumeDataset(Dataset):
         if path.suffix.lower() in {".h5", ".hdf", ".hdf5"}:
             keys = self.keys
             if label:
-                keys = ["label", "labels", "gt", "volumes/labels/neuron_ids", "main"]
+                keys = self.label_keys or ["label", "labels", "gt", "volumes/labels/neuron_ids", "main"]
             return self._read_h5(path, keys)
         return self._read_image_stack(path)
 
@@ -201,10 +203,11 @@ class EMVolumeDataset(Dataset):
             image = augment_volume(image)
         item = {"image": image}
         if self.label_paths is not None:
+            label_rng = random.Random(self.seed + index)
             label_np = self._read_volume(self.label_paths[base_idx], label=True)
             if label_np.ndim == 2:
                 label_np = label_np[None, ...]
-            label_np = random_crop_3d(label_np, self.volume_size, rng)
+            label_np = random_crop_3d(label_np, self.volume_size, label_rng)
             item["label"] = torch.from_numpy(label_np.astype(np.int64))
         return item
 

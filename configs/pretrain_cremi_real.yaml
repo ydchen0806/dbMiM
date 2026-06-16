@@ -1,11 +1,11 @@
 seed: 42
 device: cuda
-output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_fafb_dbmim
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_cremi_real_dbmim
 data:
   synthetic: false
   train_paths:
-    - /volume/med-train/users/dchen02/code/dbMiM/data/EM_pretrain_data/FAFB_hdf
-  image_keys: [main, raw, image, volumes/raw]
+    - /volume/med-train/users/dchen02/code/dbMiM/data/CREMI
+  image_keys: [volumes/raw, raw, main]
   volume_size: [16, 128, 128]
   length_multiplier: 1024
   augment: true
@@ -27,11 +27,11 @@ decision:
   max_mask_ratio: 0.90
   lr: 0.0005
   policy_weight: 0.05
-  freeze_after_steps: 100000
+  freeze_after_steps: 10000
 train:
   batch_size: 8
-  epochs: 200
-  max_steps: 200000
+  epochs: 20
+  max_steps: 20000
   num_workers: 8
   lr: 0.00015
   weight_decay: 0.05
