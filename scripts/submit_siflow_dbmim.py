@@ -11,6 +11,7 @@ from pathlib import Path
 PROJECT = Path("/volume/med-train/users/dchen02/code/dbMiM")
 HELPER = Path("/volume/med-train/users/dchen02/.codex/skills/yinda-public-skill/scripts/submit_tos_bootstrap_job.py")
 PY = Path("/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python")
+WHEELHOUSE = PROJECT / "outputs" / "wheelhouse_dbmim"
 
 
 def stamp() -> str:
@@ -27,12 +28,25 @@ def make_bundle(entrypoint: str) -> Path:
             shutil.copytree(src, dst)
         else:
             shutil.copy2(src, dst)
+    if WHEELHOUSE.exists():
+        shutil.copytree(WHEELHOUSE, out / "wheelhouse")
     (out / "run.sh").write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 "cd \"$(dirname \"$0\")\"",
+                "if [ -d wheelhouse ]; then",
+                "  missing_pkgs=$(python - <<'PY'",
+                "import importlib.util",
+                "mapping = {'yaml': 'PyYAML', 'h5py': 'h5py', 'PIL': 'Pillow', 'numpy': 'numpy'}",
+                "print(' '.join(pkg for mod, pkg in mapping.items() if importlib.util.find_spec(mod) is None))",
+                "PY",
+                "  )",
+                "  if [ -n \"$missing_pkgs\" ]; then",
+                "    python -m pip install --user --no-index --find-links wheelhouse $missing_pkgs",
+                "  fi",
+                "fi",
                 "python - <<'PY'",
                 "import importlib.util",
                 "missing=[m for m in ['torch','yaml','h5py','PIL','numpy'] if importlib.util.find_spec(m) is None]",
@@ -89,6 +103,7 @@ def main() -> None:
         str(args.gpus_per_pod),
         "--tos-prefix",
         "tos://agi-data/users/dchen02/dbmim/bundles",
+        "--direct-network",
     ]
     if args.submit:
         cmd.append("--submit")
