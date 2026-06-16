@@ -51,7 +51,7 @@ def make_bundle(entrypoint: str) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Submit dbMiM training to SiFlow through TOS bootstrap")
-    parser.add_argument("--stage", choices=["pretrain", "finetune", "smoke"], default="smoke")
+    parser.add_argument("--stage", choices=["pretrain", "finetune", "pretrain-cremi", "finetune-cremi", "smoke"], default="smoke")
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--resource-pool", default="med-model")
     parser.add_argument("--gpus-per-pod", type=int, default=8)
@@ -60,6 +60,12 @@ def main() -> None:
     if args.stage == "pretrain":
         entrypoint = "python train_pretrain.py --config configs/pretrain_fafb.yaml"
         prefix = "dbmim-pretrain"
+    elif args.stage == "pretrain-cremi":
+        entrypoint = "python train_pretrain.py --config configs/pretrain_cremi_real.yaml"
+        prefix = "dbmim-pretrain-cremi"
+    elif args.stage == "finetune-cremi":
+        entrypoint = "python train_finetune.py --config configs/finetune_cremi_real.yaml"
+        prefix = "dbmim-finetune-cremi"
     elif args.stage == "finetune":
         entrypoint = "python train_finetune.py --config configs/finetune_cremi.yaml"
         prefix = "dbmim-finetune"
