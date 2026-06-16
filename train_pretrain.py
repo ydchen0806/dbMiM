@@ -177,12 +177,17 @@ def main() -> None:
         if sampler is not None:
             sampler.set_epoch(epoch)
         model.train()
-        if decision_module is not None:
-            decision_module.train(global_step < freeze_policy_after or freeze_policy_after <= 0)
         for batch in loader:
             image = batch["image"].to(device, non_blocking=True)
+            update_policy = (
+                decision_module is not None
+                and policy_optimizer is not None
+                and (freeze_policy_after <= 0 or global_step < freeze_policy_after)
+            )
+            if decision_module is not None:
+                decision_module.train(update_policy)
             optimizer.zero_grad(set_to_none=True)
-            if policy_optimizer is not None:
+            if update_policy:
                 policy_optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 out = model(
@@ -195,7 +200,7 @@ def main() -> None:
                 if (
                     decision_module is not None
                     and policy_optimizer is not None
-                    and (freeze_policy_after <= 0 or global_step < freeze_policy_after)
+                    and update_policy
                     and out.decision is not None
                 ):
                     per_sample = (out.pred.detach() - out.target).pow(2).flatten(1).mean(dim=1)
@@ -206,7 +211,7 @@ def main() -> None:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), float(train_cfg["clip_grad"]))
             scaler.step(optimizer)
-            if policy_optimizer is not None:
+            if update_policy:
                 scaler.step(policy_optimizer)
             scaler.update()
 
