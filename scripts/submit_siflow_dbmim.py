@@ -58,16 +58,16 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.stage == "pretrain":
-        entrypoint = "python train_pretrain.py --config configs/pretrain_fafb.yaml"
+        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_pretrain.py --config configs/pretrain_fafb.yaml"
         prefix = "dbmim-pretrain"
     elif args.stage == "pretrain-cremi":
-        entrypoint = "python train_pretrain.py --config configs/pretrain_cremi_real.yaml"
+        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_pretrain.py --config configs/pretrain_cremi_real.yaml"
         prefix = "dbmim-pretrain-cremi"
     elif args.stage == "finetune-cremi":
-        entrypoint = "python train_finetune.py --config configs/finetune_cremi_real.yaml"
+        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"
     elif args.stage == "finetune":
-        entrypoint = "python train_finetune.py --config configs/finetune_cremi.yaml"
+        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_finetune.py --config configs/finetune_cremi.yaml"
         prefix = "dbmim-finetune"
     else:
         entrypoint = "python train_pretrain.py --config configs/pretrain_smoke.yaml && python train_finetune.py --config configs/finetune_smoke.yaml"
