@@ -182,6 +182,7 @@ def main() -> None:
     max_steps = int(train_cfg.get("max_steps", 0))
     log_every = int(train_cfg.get("log_every", 20))
     eval_every = int(train_cfg.get("eval_every", 1))
+    save_every = int(train_cfg.get("save_every", 1))
     pos_weight = torch.tensor(float(train_cfg.get("pos_weight", 1.0)), device=device)
 
     if is_main(rank):
@@ -240,7 +241,7 @@ def main() -> None:
                     },
                 )
 
-        if is_main(rank):
+        if is_main(rank) and ((epoch + 1) % save_every == 0 or epoch + 1 == epochs or (max_steps and global_step >= max_steps)):
             payload = {
                 "model": unwrap(model).state_dict(),
                 "optimizer": optimizer.state_dict(),

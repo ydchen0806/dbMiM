@@ -2,23 +2,54 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import yaml
 
 
 PROJECT = Path("/volume/med-train/users/dchen02/code/dbMiM")
 HELPER = Path("/volume/med-train/users/dchen02/.codex/skills/yinda-public-skill/scripts/submit_tos_bootstrap_job.py")
 PY = Path("/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python")
 WHEELHOUSE = PROJECT / "outputs" / "wheelhouse_dbmim"
+TOSUTIL = Path("/volume/med-train/users/dchen02/bin/tosutil")
+TOS_OUTPUT_PREFIX = "tos://agi-data/users/dchen02/dbmim/outputs"
+CREMI_ASSET = "tos://agi-data/users/dchen02/dbmim/assets/cremi_abc_20160501.tar.gz"
 
 
 def stamp() -> str:
     return time.strftime("%Y%m%dT%H%M%S")
 
 
-def make_bundle(entrypoint: str) -> Path:
+def _write_yaml(path: Path, cfg: dict) -> None:
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+
+
+def _patch_cremi_configs(bundle: Path) -> None:
+    pretrain = bundle / "configs" / "pretrain_cremi_real.yaml"
+    finetune = bundle / "configs" / "finetune_cremi_real.yaml"
+    pre_cfg = yaml.safe_load(pretrain.read_text(encoding="utf-8"))
+    pre_cfg["output_dir"] = "outputs/pretrain_cremi_real_dbmim"
+    pre_cfg["data"]["train_paths"] = ["data/CREMI"]
+    pre_cfg["train"]["epochs"] = max(int(pre_cfg["train"].get("epochs", 1)), 100000)
+    pre_cfg["train"]["save_every"] = max(int(pre_cfg["train"].get("save_every", 1)), 50)
+    _write_yaml(pretrain, pre_cfg)
+
+    ft_cfg = yaml.safe_load(finetune.read_text(encoding="utf-8"))
+    ft_cfg["output_dir"] = "outputs/finetune_cremi_real_dbmim"
+    ft_cfg["pretrained"] = "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt"
+    ft_cfg["data"]["image_paths"] = ["data/CREMI"]
+    ft_cfg["data"]["label_paths"] = ["data/CREMI"]
+    ft_cfg["train"]["epochs"] = max(int(ft_cfg["train"].get("epochs", 1)), 100000)
+    ft_cfg["train"]["eval_every"] = max(int(ft_cfg["train"].get("eval_every", 1)), 20)
+    ft_cfg["train"]["save_every"] = max(int(ft_cfg["train"].get("save_every", 1)), 20)
+    _write_yaml(finetune, ft_cfg)
+
+
+def make_bundle(entrypoint: str, stage: str) -> Path:
     out = PROJECT / "outputs" / "siflow_bundles" / f"dbmim_bundle_{stamp()}"
     out.mkdir(parents=True, exist_ok=True)
     for name in ["dbmim", "configs", "train_pretrain.py", "train_finetune.py", "requirements-dbMIM.txt"]:
@@ -30,6 +61,53 @@ def make_bundle(entrypoint: str) -> Path:
             shutil.copy2(src, dst)
     if WHEELHOUSE.exists():
         shutil.copytree(WHEELHOUSE, out / "wheelhouse")
+    if stage in {"pretrain-cremi", "finetune-cremi"}:
+        _patch_cremi_configs(out)
+    if TOSUTIL.exists():
+        (out / "bin").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(TOSUTIL.resolve(), out / "bin" / "tosutil")
+        os.chmod(out / "bin" / "tosutil", 0o700)
+
+    prelude = []
+    postlude = []
+    if stage in {"pretrain-cremi", "finetune-cremi"}:
+        prelude.extend(
+            [
+                "if [ -x bin/tosutil ]; then",
+                "  TOS_CONF=/tmp/dbmim_tosutil.conf",
+                "  : > \"$TOS_CONF\"",
+                "  bin/tosutil config -e \"$TOS_ENDPOINT\" -re \"$TOS_REGION\" -i \"$TOS_ACCESS_KEY_ID\" -k \"$TOS_SECRET_ACCESS_KEY\" -conf=\"$TOS_CONF\" >/dev/null",
+                "fi",
+                "mkdir -p data",
+                f"bin/tosutil cp {CREMI_ASSET} /tmp/cremi_abc_20160501.tar.gz -conf=\"$TOS_CONF\"",
+                "tar -xzf /tmp/cremi_abc_20160501.tar.gz -C data",
+                "ls -lh data/CREMI",
+            ]
+        )
+    if stage == "finetune-cremi":
+        prelude.extend(
+            [
+                "mkdir -p outputs/pretrain_cremi_real_dbmim",
+                "bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/pretrain_cremi_real_dbmim/pretrained_latest.pt "
+                "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "pretrain-cremi":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/pretrain_cremi_real_dbmim "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "finetune-cremi":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/finetune_cremi_real_dbmim "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+
     (out / "run.sh").write_text(
         "\n".join(
             [
@@ -54,7 +132,9 @@ def make_bundle(entrypoint: str) -> Path:
                 "if missing:",
                 "    raise SystemExit('missing required python modules: '+','.join(missing))",
                 "PY",
+                *prelude,
                 entrypoint,
+                *postlude,
                 "",
             ]
         ),
@@ -87,7 +167,7 @@ def main() -> None:
         entrypoint = "python train_pretrain.py --config configs/pretrain_smoke.yaml && python train_finetune.py --config configs/finetune_smoke.yaml"
         prefix = "dbmim-smoke"
 
-    bundle = make_bundle(entrypoint)
+    bundle = make_bundle(entrypoint, args.stage)
     cmd = [
         str(PY),
         str(HELPER),

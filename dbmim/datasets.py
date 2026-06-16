@@ -161,15 +161,79 @@ class EMVolumeDataset(Dataset):
     def _read_h5(self, path: Path, preferred_keys: list[str] | None = None) -> np.ndarray:
         h5py = _lazy_h5py()
         with h5py.File(path, "r") as handle:
-            if preferred_keys:
-                for key in preferred_keys:
-                    if key in handle:
-                        return handle[key][()]
-            for key in ["main", "raw", "image", "images", "data", "volumes/raw", "stack"]:
+            dataset = self._select_h5_dataset(handle, preferred_keys)
+            return dataset[()]
+
+    def _select_h5_dataset(self, handle, preferred_keys: list[str] | None = None):
+        if preferred_keys:
+            for key in preferred_keys:
                 if key in handle:
-                    return handle[key][()]
-            first = next(iter(handle.keys()))
-            return handle[first][()]
+                    item = handle[key]
+                    if hasattr(item, "shape"):
+                        return item
+        for key in ["main", "raw", "image", "images", "data", "volumes/raw", "stack"]:
+            if key in handle:
+                item = handle[key]
+                if hasattr(item, "shape"):
+                    return item
+        datasets = []
+        handle.visititems(lambda _name, obj: datasets.append(obj) if hasattr(obj, "shape") else None)
+        if not datasets:
+            raise ValueError("HDF5 file does not contain any dataset")
+        return datasets[0]
+
+    def _crop_params(
+        self,
+        shape: tuple[int, ...],
+        rng: random.Random,
+        crop: tuple[int, int, int, int, int, int] | None = None,
+    ) -> tuple[int, int, int, int, int, int]:
+        if len(shape) < 3:
+            raise ValueError(f"expected at least 3D data, got shape={shape}")
+        depth, height, width = int(shape[0]), int(shape[1]), int(shape[2])
+        cd, ch, cw = self.volume_size
+        if crop is not None:
+            return crop
+        z0 = rng.randint(0, depth - cd) if depth > cd else 0
+        y0 = rng.randint(0, height - ch) if height > ch else 0
+        x0 = rng.randint(0, width - cw) if width > cw else 0
+        return z0, y0, x0, cd, ch, cw
+
+    def _pad_crop(self, arr: np.ndarray, label: bool) -> np.ndarray:
+        cd, ch, cw = self.volume_size
+        arr = np.asarray(arr)
+        pad = (
+            (0, max(0, cd - arr.shape[0])),
+            (0, max(0, ch - arr.shape[1])),
+            (0, max(0, cw - arr.shape[2])),
+        )
+        if not any(v for pair in pad for v in pair):
+            return arr
+        mode = "edge" if label or min(arr.shape[:3]) < 2 else "reflect"
+        return np.pad(arr, pad, mode=mode)
+
+    def _read_h5_crop(
+        self,
+        path: Path,
+        preferred_keys: list[str] | None,
+        rng: random.Random,
+        crop: tuple[int, int, int, int, int, int] | None = None,
+        label: bool = False,
+    ) -> tuple[np.ndarray, tuple[int, int, int, int, int, int]]:
+        h5py = _lazy_h5py()
+        with h5py.File(path, "r") as handle:
+            dataset = self._select_h5_dataset(handle, preferred_keys)
+            if len(dataset.shape) != 3:
+                arr = np.asarray(dataset[()])
+                crop_params = self._crop_params(arr.shape, rng, crop)
+                return random_crop_3d(arr, self.volume_size, rng), crop_params
+            crop_params = self._crop_params(tuple(dataset.shape), rng, crop)
+            z0, y0, x0, cd, ch, cw = crop_params
+            z1 = min(z0 + cd, dataset.shape[0])
+            y1 = min(y0 + ch, dataset.shape[1])
+            x1 = min(x0 + cw, dataset.shape[2])
+            arr = np.asarray(dataset[z0:z1, y0:y1, x0:x1])
+            return self._pad_crop(arr, label=label), crop_params
 
     def _read_image_stack(self, path: Path) -> np.ndarray:
         from PIL import Image
@@ -196,18 +260,34 @@ class EMVolumeDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         base_idx = index % len(self.paths)
         rng = random.Random(self.seed + index)
-        image_np = normalize_volume(self._read_volume(self.paths[base_idx], label=False))
-        image_np = random_crop_3d(image_np, self.volume_size, rng)
+        image_path = self.paths[base_idx]
+        crop = None
+        if image_path.suffix.lower() in {".h5", ".hdf", ".hdf5"}:
+            image_np, crop = self._read_h5_crop(image_path, self.keys, rng, label=False)
+            image_np = normalize_volume(image_np)
+        else:
+            image_np = normalize_volume(self._read_volume(image_path, label=False))
+            image_np = random_crop_3d(image_np, self.volume_size, rng)
         image = torch.from_numpy(image_np).float().unsqueeze(0)
         if self.augment:
             image = augment_volume(image)
         item = {"image": image}
         if self.label_paths is not None:
             label_rng = random.Random(self.seed + index)
-            label_np = self._read_volume(self.label_paths[base_idx], label=True)
-            if label_np.ndim == 2:
-                label_np = label_np[None, ...]
-            label_np = random_crop_3d(label_np, self.volume_size, label_rng)
+            label_path = self.label_paths[base_idx]
+            if label_path.suffix.lower() in {".h5", ".hdf", ".hdf5"}:
+                label_np, _ = self._read_h5_crop(
+                    label_path,
+                    self.label_keys or ["label", "labels", "gt", "volumes/labels/neuron_ids", "main"],
+                    label_rng,
+                    crop=crop,
+                    label=True,
+                )
+            else:
+                label_np = self._read_volume(label_path, label=True)
+                if label_np.ndim == 2:
+                    label_np = label_np[None, ...]
+                label_np = random_crop_3d(label_np, self.volume_size, label_rng)
             item["label"] = torch.from_numpy(label_np.astype(np.int64))
         return item
 
