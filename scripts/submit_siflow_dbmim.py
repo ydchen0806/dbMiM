@@ -151,17 +151,18 @@ def main() -> None:
     parser.add_argument("--gpus-per-pod", type=int, default=8)
     args = parser.parse_args()
 
+    nproc = int(args.gpus_per_pod)
     if args.stage == "pretrain":
-        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_pretrain.py --config configs/pretrain_fafb.yaml"
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_fafb.yaml"
         prefix = "dbmim-pretrain"
     elif args.stage == "pretrain-cremi":
-        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_pretrain.py --config configs/pretrain_cremi_real.yaml"
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_cremi_real.yaml"
         prefix = "dbmim-pretrain-cremi"
     elif args.stage == "finetune-cremi":
-        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_finetune.py --config configs/finetune_cremi_real.yaml"
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"
     elif args.stage == "finetune":
-        entrypoint = "python -m torch.distributed.run --nproc_per_node=8 train_finetune.py --config configs/finetune_cremi.yaml"
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi.yaml"
         prefix = "dbmim-finetune"
     else:
         entrypoint = "python train_pretrain.py --config configs/pretrain_smoke.yaml && python train_finetune.py --config configs/finetune_smoke.yaml"
