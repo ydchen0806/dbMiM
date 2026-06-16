@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset
 from dbmim.models import DBMIM3DMAE, DecisionModule
@@ -19,6 +22,30 @@ from dbmim.utils import (
     load_checkpoint,
     seed_everything,
 )
+
+
+def setup_distributed(cfg: dict) -> tuple[bool, int, int, int, torch.device]:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    distributed = world_size > 1
+    if distributed:
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
+    else:
+        device = device_from_config(cfg)
+    return distributed, rank, local_rank, world_size, device
+
+
+def is_main(rank: int) -> bool:
+    return rank == 0
+
+
+def unwrap(model: torch.nn.Module) -> torch.nn.Module:
+    return model.module if hasattr(model, "module") else model
 
 
 def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
@@ -55,14 +82,16 @@ def main() -> None:
     seed_everything(int(cfg.get("seed", 0)))
     output_dir = ensure_dir(args.output_dir or cfg["output_dir"])
     log_path = output_dir / "train_log.jsonl"
-    device = device_from_config(cfg)
+    distributed, rank, local_rank, world_size, device = setup_distributed(cfg)
 
     dataset = build_dataset(cfg)
     train_cfg = cfg.get("train", {})
+    sampler = DistributedSampler(dataset, shuffle=True) if distributed else None
     loader = DataLoader(
         dataset,
         batch_size=int(train_cfg.get("batch_size", 2)),
-        shuffle=True,
+        shuffle=(sampler is None),
+        sampler=sampler,
         num_workers=int(train_cfg.get("num_workers", 2)),
         pin_memory=(device.type == "cuda"),
         drop_last=True,
@@ -93,6 +122,15 @@ def main() -> None:
             ratio_coef=float(decision_cfg.get("ratio_coef", 0.25)),
         ).to(device)
 
+    if distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True)
+        if decision_module is not None:
+            decision_module = torch.nn.parallel.DistributedDataParallel(
+                decision_module,
+                device_ids=[local_rank],
+                find_unused_parameters=True,
+            )
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(train_cfg.get("lr", 1.5e-4)),
@@ -110,10 +148,10 @@ def main() -> None:
     global_step = 0
     if args.resume:
         ckpt = load_checkpoint(args.resume, map_location="cpu")
-        model.load_state_dict(ckpt["model"])
+        unwrap(model).load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         if decision_module is not None and ckpt.get("decision_module") is not None:
-            decision_module.load_state_dict(ckpt["decision_module"])
+            unwrap(decision_module).load_state_dict(ckpt["decision_module"])
         if policy_optimizer is not None and ckpt.get("policy_optimizer") is not None:
             policy_optimizer.load_state_dict(ckpt["policy_optimizer"])
         start_epoch = int(ckpt.get("epoch", -1)) + 1
@@ -127,14 +165,17 @@ def main() -> None:
     target_ratio = float(decision_cfg.get("target_mask_ratio", model_cfg.get("mask_ratio", 0.75)))
     freeze_policy_after = int(decision_cfg.get("freeze_after_steps", 0))
 
-    print(f"output_dir={output_dir}")
-    print(f"dataset_size={len(dataset)} batches={len(loader)} device={device}")
-    print(f"model_trainable_params={count_parameters(model)}")
-    if decision_module is not None:
-        print(f"decision_trainable_params={count_parameters(decision_module)}")
+    if is_main(rank):
+        print(f"output_dir={output_dir}")
+        print(f"dataset_size={len(dataset)} batches={len(loader)} device={device} world_size={world_size}")
+        print(f"model_trainable_params={count_parameters(unwrap(model))}")
+        if decision_module is not None:
+            print(f"decision_trainable_params={count_parameters(unwrap(decision_module))}")
 
     t0 = time.time()
     for epoch in range(start_epoch, epochs):
+        if sampler is not None:
+            sampler.set_epoch(epoch)
         model.train()
         if decision_module is not None:
             decision_module.train(global_step < freeze_policy_after or freeze_policy_after <= 0)
@@ -158,7 +199,7 @@ def main() -> None:
                     and out.decision is not None
                 ):
                     per_sample = (out.pred.detach() - out.target).pow(2).flatten(1).mean(dim=1)
-                    policy_loss = decision_module.policy_loss(out.decision, per_sample)
+                    policy_loss = unwrap(decision_module).policy_loss(out.decision, per_sample)
                     loss = loss + float(decision_cfg.get("policy_weight", 0.05)) * policy_loss
             scaler.scale(loss).backward()
             if float(train_cfg.get("clip_grad", 0.0)) > 0:
@@ -170,7 +211,7 @@ def main() -> None:
             scaler.update()
 
             global_step += 1
-            if global_step % log_every == 0:
+            if is_main(rank) and global_step % log_every == 0:
                 payload = {
                     "epoch": epoch,
                     "step": global_step,
@@ -188,19 +229,23 @@ def main() -> None:
                 break
 
         if (epoch + 1) % save_every == 0 or epoch + 1 == epochs or (max_steps and global_step >= max_steps):
-            payload = {
-                "model": model.state_dict(),
-                "decision_module": decision_module.state_dict() if decision_module is not None else None,
-                "optimizer": optimizer.state_dict(),
-                "policy_optimizer": policy_optimizer.state_dict() if policy_optimizer is not None else None,
-                "epoch": epoch,
-                "global_step": global_step,
-                "config": cfg,
-            }
-            save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
-            save_checkpoint(output_dir / "pretrained_latest.pt", payload)
+            if is_main(rank):
+                payload = {
+                    "model": unwrap(model).state_dict(),
+                    "decision_module": unwrap(decision_module).state_dict() if decision_module is not None else None,
+                    "optimizer": optimizer.state_dict(),
+                    "policy_optimizer": policy_optimizer.state_dict() if policy_optimizer is not None else None,
+                    "epoch": epoch,
+                    "global_step": global_step,
+                    "config": cfg,
+                }
+                save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
+                save_checkpoint(output_dir / "pretrained_latest.pt", payload)
         if max_steps and global_step >= max_steps:
             break
+    if distributed:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

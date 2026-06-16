@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
+from torch.utils.data.distributed import DistributedSampler
 
 from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset, labels_to_affinities
 from dbmim.metrics import AverageMeter, binary_iou_from_logits, dice_from_logits
@@ -20,6 +23,30 @@ from dbmim.utils import (
     load_checkpoint,
     seed_everything,
 )
+
+
+def setup_distributed(cfg: dict) -> tuple[bool, int, int, int, torch.device]:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    distributed = world_size > 1
+    if distributed:
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
+    else:
+        device = device_from_config(cfg)
+    return distributed, rank, local_rank, world_size, device
+
+
+def is_main(rank: int) -> bool:
+    return rank == 0
+
+
+def unwrap(model: torch.nn.Module) -> torch.nn.Module:
+    return model.module if hasattr(model, "module") else model
 
 
 def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
@@ -79,7 +106,7 @@ def main() -> None:
     seed_everything(int(cfg.get("seed", 0)))
     output_dir = ensure_dir(args.output_dir or cfg["output_dir"])
     log_path = output_dir / "finetune_log.jsonl"
-    device = device_from_config(cfg)
+    distributed, rank, local_rank, world_size, device = setup_distributed(cfg)
     dataset = build_dataset(cfg)
 
     train_cfg = cfg.get("train", {})
@@ -94,10 +121,12 @@ def main() -> None:
         )
     else:
         train_set, val_set = dataset, dataset
+    sampler = DistributedSampler(train_set, shuffle=True) if distributed else None
     loader = DataLoader(
         train_set,
         batch_size=int(train_cfg.get("batch_size", 2)),
-        shuffle=True,
+        shuffle=(sampler is None),
+        sampler=sampler,
         num_workers=int(train_cfg.get("num_workers", 2)),
         pin_memory=(device.type == "cuda"),
         drop_last=True,
@@ -126,7 +155,11 @@ def main() -> None:
     if pretrained:
         ckpt = load_checkpoint(pretrained, map_location="cpu")
         loaded = load_pretrained_backbone(model, ckpt)
-        print(f"loaded_pretrained_keys={len(loaded)} from {pretrained}")
+        if is_main(rank):
+            print(f"loaded_pretrained_keys={len(loaded)} from {pretrained}")
+
+    if distributed:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -138,7 +171,7 @@ def main() -> None:
     best_score = -1.0
     if args.resume:
         ckpt = load_checkpoint(args.resume, map_location="cpu")
-        model.load_state_dict(ckpt["model"])
+        unwrap(model).load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         start_epoch = int(ckpt.get("epoch", -1)) + 1
         global_step = int(ckpt.get("global_step", 0))
@@ -151,11 +184,14 @@ def main() -> None:
     eval_every = int(train_cfg.get("eval_every", 1))
     pos_weight = torch.tensor(float(train_cfg.get("pos_weight", 1.0)), device=device)
 
-    print(f"output_dir={output_dir}")
-    print(f"dataset_size={len(dataset)} train={len(train_set)} val={len(val_set)} device={device}")
-    print(f"model_trainable_params={count_parameters(model)}")
+    if is_main(rank):
+        print(f"output_dir={output_dir}")
+        print(f"dataset_size={len(dataset)} train={len(train_set)} val={len(val_set)} device={device} world_size={world_size}")
+        print(f"model_trainable_params={count_parameters(unwrap(model))}")
     t0 = time.time()
     for epoch in range(start_epoch, epochs):
+        if sampler is not None:
+            sampler.set_epoch(epoch)
         model.train()
         for batch in loader:
             image = batch["image"].to(device, non_blocking=True)
@@ -172,7 +208,7 @@ def main() -> None:
             scaler.step(optimizer)
             scaler.update()
             global_step += 1
-            if global_step % log_every == 0:
+            if is_main(rank) and global_step % log_every == 0:
                 payload = {
                     "epoch": epoch,
                     "step": global_step,
@@ -185,8 +221,8 @@ def main() -> None:
                 break
 
         stats = {}
-        if (epoch + 1) % eval_every == 0 or epoch + 1 == epochs:
-            stats = evaluate(model, val_loader, device)
+        if is_main(rank) and ((epoch + 1) % eval_every == 0 or epoch + 1 == epochs):
+            stats = evaluate(unwrap(model), val_loader, device)
             stats.update({"epoch": epoch, "step": global_step})
             print(stats, flush=True)
             atomic_jsonl_append(log_path, stats)
@@ -195,7 +231,7 @@ def main() -> None:
                 save_checkpoint(
                     output_dir / "finetuned_best.pt",
                     {
-                        "model": model.state_dict(),
+                        "model": unwrap(model).state_dict(),
                         "optimizer": optimizer.state_dict(),
                         "epoch": epoch,
                         "global_step": global_step,
@@ -204,19 +240,23 @@ def main() -> None:
                     },
                 )
 
-        payload = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "epoch": epoch,
-            "global_step": global_step,
-            "best_score": best_score,
-            "config": cfg,
-            "last_eval": stats,
-        }
-        save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
-        save_checkpoint(output_dir / "finetuned_latest.pt", payload)
+        if is_main(rank):
+            payload = {
+                "model": unwrap(model).state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch,
+                "global_step": global_step,
+                "best_score": best_score,
+                "config": cfg,
+                "last_eval": stats,
+            }
+            save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
+            save_checkpoint(output_dir / "finetuned_latest.pt", payload)
         if max_steps and global_step >= max_steps:
             break
+    if distributed:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
