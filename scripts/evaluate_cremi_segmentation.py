@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -18,7 +19,16 @@ if str(ROOT) not in sys.path:
 from dbmim.datasets import labels_to_affinities, normalize_volume
 from dbmim.metrics import binary_iou_from_logits, dice_from_logits
 from dbmim.models import MAEBackboneAffinityNet
-from dbmim.postprocess import affinities_to_connected_components, segmentation_metrics
+from dbmim.postprocess import (
+    affinities_to_connected_components,
+    agglomerate_fragments_by_affinity,
+    cc3d_mean_affinity_components,
+    cupy_affinity_graph_connected_components,
+    cupy_mean_affinity_components,
+    segmentation_metrics,
+    waterz_agglomeration,
+    watershed_fragments,
+)
 from dbmim.utils import ensure_dir, load_checkpoint, load_config
 
 
@@ -162,6 +172,116 @@ def metric_dict(obj) -> dict[str, float | int]:
     }
 
 
+def package_probe() -> dict[str, object]:
+    import importlib.util
+
+    packages = ["scipy", "mahotas", "cc3d", "waterz", "elf", "cupy"]
+    result: dict[str, object] = {name: importlib.util.find_spec(name) is not None for name in packages}
+    if result.get("cupy"):
+        try:
+            import cupy as cp  # type: ignore
+
+            result["cupy_version"] = cp.__version__
+            result["cuda_device_count"] = int(cp.cuda.runtime.getDeviceCount())
+        except Exception as exc:
+            result["cupy_error"] = repr(exc)
+    return result
+
+
+def run_backend(
+    affinities: np.ndarray,
+    backend: str,
+    threshold: float,
+    min_size: int,
+    seed_method: str,
+    seed_distance: int,
+    boundary_threshold: float,
+    min_boundary: int,
+    cache: dict[str, tuple[np.ndarray, float]] | None = None,
+) -> np.ndarray:
+    if backend == "graph_cc":
+        return affinities_to_connected_components(affinities, threshold=threshold, min_size=min_size)
+    if backend == "cc3d_mean":
+        return cc3d_mean_affinity_components(affinities, threshold=threshold, min_size=min_size)
+    if backend == "cupy_mean":
+        return cupy_mean_affinity_components(affinities, threshold=threshold, min_size=min_size)
+    if backend == "cupy_graph_cc":
+        return cupy_affinity_graph_connected_components(affinities, threshold=threshold)
+    if backend == "mahotas_watershed":
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+        if cache is not None and key in cache:
+            return cache[key][0]
+        fragments = watershed_fragments(
+            affinities,
+            backend="mahotas",
+            seed_method=seed_method,
+            seed_distance=seed_distance,
+            boundary_threshold=boundary_threshold,
+        )
+        if cache is not None:
+            cache[key] = (fragments, 0.0)
+        return fragments
+    if backend == "scipy_watershed":
+        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}"
+        if cache is not None and key in cache:
+            return cache[key][0]
+        fragments = watershed_fragments(
+            affinities,
+            backend="scipy",
+            seed_method=seed_method,
+            seed_distance=seed_distance,
+            boundary_threshold=boundary_threshold,
+        )
+        if cache is not None:
+            cache[key] = (fragments, 0.0)
+        return fragments
+    if backend == "mahotas_agglomeration":
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+        fragments = None
+        if cache is not None and key in cache:
+            fragments = cache[key][0]
+        if fragments is None:
+            fragments = watershed_fragments(
+                affinities,
+                backend="mahotas",
+                seed_method=seed_method,
+                seed_distance=seed_distance,
+                boundary_threshold=boundary_threshold,
+            )
+            if cache is not None:
+                cache[key] = (fragments, 0.0)
+        return agglomerate_fragments_by_affinity(
+            affinities,
+            fragments,
+            threshold=threshold,
+            min_boundary=min_boundary,
+        )
+    if backend == "scipy_agglomeration":
+        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}"
+        fragments = None
+        if cache is not None and key in cache:
+            fragments = cache[key][0]
+        if fragments is None:
+            fragments = watershed_fragments(
+                affinities,
+                backend="scipy",
+                seed_method=seed_method,
+                seed_distance=seed_distance,
+                boundary_threshold=boundary_threshold,
+            )
+            if cache is not None:
+                cache[key] = (fragments, 0.0)
+        return agglomerate_fragments_by_affinity(
+            affinities,
+            fragments,
+            threshold=threshold,
+            min_boundary=min_boundary,
+        )
+    if backend == "waterz":
+        return waterz_agglomeration(affinities, threshold=threshold)
+    raise ValueError(f"unknown backend: {backend}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate CREMI neuron segmentation from dbMiM affinities")
     parser.add_argument("--config", required=True)
@@ -171,7 +291,27 @@ def main() -> None:
     parser.add_argument("--crop-size", nargs=3, type=int, default=[32, 256, 256])
     parser.add_argument("--stride", nargs=3, type=int, default=None)
     parser.add_argument("--thresholds", nargs="+", type=float, default=[0.4, 0.5, 0.6, 0.7])
+    parser.add_argument(
+        "--backends",
+        nargs="+",
+        default=["graph_cc"],
+        choices=[
+            "graph_cc",
+            "cc3d_mean",
+            "cupy_mean",
+            "cupy_graph_cc",
+            "mahotas_watershed",
+            "scipy_watershed",
+            "mahotas_agglomeration",
+            "scipy_agglomeration",
+            "waterz",
+        ],
+    )
     parser.add_argument("--min-size", type=int, default=0)
+    parser.add_argument("--seed-method", default="maxima_distance", choices=["maxima_distance", "minima", "grid"])
+    parser.add_argument("--seed-distance", type=int, default=12)
+    parser.add_argument("--boundary-threshold", type=float, default=0.5)
+    parser.add_argument("--min-boundary", type=int, default=1)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--save-seg", action="store_true")
@@ -196,6 +336,9 @@ def main() -> None:
         files = files[: args.max_samples]
 
     records: list[dict[str, float | int | str]] = []
+    failures: list[dict[str, str | float]] = []
+    probes = package_probe()
+    print({"package_probe": probes}, flush=True)
     for path in files:
         raw, label, crop = read_cremi_crop(path, crop_size, raw_keys, label_keys)
         print(
@@ -207,27 +350,60 @@ def main() -> None:
             },
             flush=True,
         )
+        t0 = time.perf_counter()
         aff = predict_affinities(model, raw, model_window, stride, device)
+        infer_sec = time.perf_counter() - t0
         target_aff = labels_to_affinities(torch.from_numpy(label.astype(np.int64))[None]).numpy()[0]
         logits = torch.from_numpy(np.log(np.clip(aff, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - aff, 1e-6, 1.0)))
         target = torch.from_numpy(target_aff)
         aff_dice = dice_from_logits(logits, target)
         aff_iou = binary_iou_from_logits(logits, target)
-        for threshold in args.thresholds:
-            seg = affinities_to_connected_components(aff, threshold=threshold, min_size=args.min_size)
-            metrics = segmentation_metrics(seg, label, ignore_label=args.ignore_label)
-            record: dict[str, float | int | str] = {
-                "sample": path.name,
-                "threshold": float(threshold),
-                "affinity_dice": float(aff_dice),
-                "affinity_iou": float(aff_iou),
-                **metric_dict(metrics),
-            }
-            print(record, flush=True)
-            records.append(record)
-            if args.save_seg:
-                out_npz = output_dir / f"{path.stem}_thr{threshold:.2f}_seg.npz"
-                np.savez_compressed(out_npz, segmentation=seg.astype(np.uint64), crop=np.array([[sl.start, sl.stop] for sl in crop]))
+        backend_cache: dict[str, tuple[np.ndarray, float]] = {}
+        for backend in args.backends:
+            for threshold in args.thresholds:
+                try:
+                    t1 = time.perf_counter()
+                    seg = run_backend(
+                        aff,
+                        backend=backend,
+                        threshold=threshold,
+                        min_size=args.min_size,
+                        seed_method=args.seed_method,
+                        seed_distance=args.seed_distance,
+                        boundary_threshold=args.boundary_threshold,
+                        min_boundary=args.min_boundary,
+                        cache=backend_cache,
+                    )
+                    postprocess_sec = time.perf_counter() - t1
+                    t2 = time.perf_counter()
+                    metrics = segmentation_metrics(seg, label, ignore_label=args.ignore_label)
+                    metrics_sec = time.perf_counter() - t2
+                except Exception as exc:
+                    failure = {
+                        "sample": path.name,
+                        "backend": backend,
+                        "threshold": float(threshold),
+                        "error": repr(exc),
+                    }
+                    print(failure, flush=True)
+                    failures.append(failure)
+                    continue
+                record: dict[str, float | int | str] = {
+                    "sample": path.name,
+                    "backend": backend,
+                    "threshold": float(threshold),
+                    "affinity_dice": float(aff_dice),
+                    "affinity_iou": float(aff_iou),
+                    "inference_sec": float(infer_sec),
+                    "postprocess_sec": float(postprocess_sec),
+                    "metrics_sec": float(metrics_sec),
+                    **metric_dict(metrics),
+                }
+                print(record, flush=True)
+                records.append(record)
+                if args.save_seg:
+                    out_npz = output_dir / f"{path.stem}_{backend}_thr{threshold:.2f}_seg.npz"
+                    np.savez_compressed(out_npz, segmentation=seg.astype(np.uint64), crop=np.array([[sl.start, sl.stop] for sl in crop]))
 
     csv_path = output_dir / "cremi_segmentation_metrics.csv"
     if records:
@@ -236,6 +412,7 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(records)
     thresholds = sorted({float(r["threshold"]) for r in records})
+    backends = sorted({str(r["backend"]) for r in records})
     summary: dict[str, object] = {
         "checkpoint": str(args.checkpoint),
         "data_dir": str(args.data_dir),
@@ -243,26 +420,40 @@ def main() -> None:
         "window_size": list(model_window),
         "stride": list(stride),
         "num_records": len(records),
+        "package_probe": probes,
+        "failures": failures,
         "per_threshold": [],
+        "per_backend_threshold": [],
     }
+    metric_keys = [
+        "adapted_rand_error",
+        "rand_fscore",
+        "rand_precision",
+        "rand_recall",
+        "voi_split",
+        "voi_merge",
+        "affinity_dice",
+        "affinity_iou",
+        "inference_sec",
+        "postprocess_sec",
+        "metrics_sec",
+    ]
+    for backend in backends:
+        for threshold in thresholds:
+            rows = [r for r in records if str(r["backend"]) == backend and float(r["threshold"]) == threshold]
+            mean_row: dict[str, float | int | str] = {"backend": backend, "threshold": threshold, "n": len(rows)}
+            for key in metric_keys:
+                mean_row[key] = float(np.mean([float(r[key]) for r in rows])) if rows else float("nan")
+            summary["per_backend_threshold"].append(mean_row)  # type: ignore[index]
     for threshold in thresholds:
         rows = [r for r in records if float(r["threshold"]) == threshold]
         mean_row: dict[str, float | int] = {"threshold": threshold, "n": len(rows)}
-        for key in [
-            "adapted_rand_error",
-            "rand_fscore",
-            "rand_precision",
-            "rand_recall",
-            "voi_split",
-            "voi_merge",
-            "affinity_dice",
-            "affinity_iou",
-        ]:
+        for key in metric_keys:
             mean_row[key] = float(np.mean([float(r[key]) for r in rows])) if rows else float("nan")
         summary["per_threshold"].append(mean_row)  # type: ignore[index]
-    if summary["per_threshold"]:
+    if summary["per_backend_threshold"]:
         summary["best_by_adapted_rand"] = min(
-            summary["per_threshold"],  # type: ignore[arg-type]
+            summary["per_backend_threshold"],  # type: ignore[arg-type]
             key=lambda row: float(row["adapted_rand_error"]),
         )
     (output_dir / "cremi_segmentation_summary.json").write_text(

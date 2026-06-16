@@ -69,7 +69,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
             shutil.copy2(src, dst)
     if WHEELHOUSE.exists():
         shutil.copytree(WHEELHOUSE, out / "wheelhouse")
-    if stage in {"pretrain-cremi", "finetune-cremi", "eval-cremi"}:
+    if stage in {"pretrain-cremi", "finetune-cremi", "eval-cremi", "eval-cremi-sweep", "eval-cremi-gpu-probe"}:
         _patch_cremi_configs(out)
     if TOSUTIL.exists():
         (out / "bin").mkdir(parents=True, exist_ok=True)
@@ -78,7 +78,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
 
     prelude = []
     postlude = []
-    if stage in {"pretrain-cremi", "finetune-cremi", "eval-cremi"}:
+    if stage in {"pretrain-cremi", "finetune-cremi", "eval-cremi", "eval-cremi-sweep", "eval-cremi-gpu-probe"}:
         prelude.extend(
             [
                 "if [ -x bin/tosutil ]; then",
@@ -101,10 +101,10 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]
         )
-    if stage == "eval-cremi":
+    if stage in {"eval-cremi", "eval-cremi-sweep", "eval-cremi-gpu-probe"}:
         prelude.extend(
             [
-                "mkdir -p outputs/finetune_cremi_real_dbmim outputs/eval_cremi_real_dbmim",
+                "mkdir -p outputs/finetune_cremi_real_dbmim outputs/eval_cremi_real_dbmim outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe",
                 "if bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_dbmim/finetuned_best.pt "
                 "outputs/finetune_cremi_real_dbmim/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
@@ -138,6 +138,20 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi-sweep":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_postprocess_sweep "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "eval-cremi-gpu-probe":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_gpu_probe "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
 
     (out / "run.sh").write_text(
         "\n".join(
@@ -148,7 +162,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "if [ -d wheelhouse ]; then",
                 "  missing_pkgs=$(python - <<'PY'",
                 "import importlib.util",
-                "mapping = {'yaml': 'PyYAML', 'h5py': 'h5py', 'PIL': 'Pillow', 'numpy': 'numpy'}",
+                "mapping = {'yaml': 'PyYAML', 'h5py': 'h5py', 'PIL': 'Pillow', 'numpy': 'numpy', 'scipy': 'scipy', 'mahotas': 'mahotas', 'cc3d': 'connected-components-3d'}",
                 "print(' '.join(pkg for mod, pkg in mapping.items() if importlib.util.find_spec(mod) is None))",
                 "PY",
                 "  )",
@@ -158,7 +172,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "fi",
                 "python - <<'PY'",
                 "import importlib.util",
-                "missing=[m for m in ['torch','yaml','h5py','PIL','numpy'] if importlib.util.find_spec(m) is None]",
+                "missing=[m for m in ['torch','yaml','h5py','PIL','numpy','scipy','mahotas','cc3d'] if importlib.util.find_spec(m) is None]",
                 "print({'missing_python_modules': missing})",
                 "if missing:",
                 "    raise SystemExit('missing required python modules: '+','.join(missing))",
@@ -176,7 +190,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Submit dbMiM training to SiFlow through TOS bootstrap")
-    parser.add_argument("--stage", choices=["pretrain", "finetune", "pretrain-cremi", "finetune-cremi", "eval-cremi", "smoke"], default="smoke")
+    parser.add_argument("--stage", choices=["pretrain", "finetune", "pretrain-cremi", "finetune-cremi", "eval-cremi", "eval-cremi-sweep", "eval-cremi-gpu-probe", "smoke"], default="smoke")
     parser.add_argument("--submit", action="store_true")
     parser.add_argument("--resource-pool", default="med-model")
     parser.add_argument("--gpus-per-pod", type=int, default=8)
@@ -207,6 +221,42 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-eval-cremi"
+    elif args.stage == "eval-cremi-sweep":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_postprocess_sweep "
+            "--crop-size 32 256 256 "
+            "--stride 16 128 128 "
+            "--thresholds 0.25 0.35 0.45 0.55 0.65 0.75 0.85 "
+            "--backends graph_cc cc3d_mean scipy_watershed scipy_agglomeration mahotas_watershed mahotas_agglomeration waterz "
+            "--min-size 32 "
+            "--seed-method maxima_distance "
+            "--seed-distance 12 "
+            "--boundary-threshold 0.5 "
+            "--min-boundary 4 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-sweep"
+    elif args.stage == "eval-cremi-gpu-probe":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_gpu_probe "
+            "--crop-size 32 256 256 "
+            "--stride 16 128 128 "
+            "--thresholds 0.65 0.85 "
+            "--backends graph_cc cc3d_mean cupy_mean cupy_graph_cc "
+            "--min-size 32 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-gpu-probe"
     elif args.stage == "finetune":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi.yaml"
         prefix = "dbmim-finetune"
