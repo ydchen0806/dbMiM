@@ -58,6 +58,22 @@ Watchers running from the login node:
 | long-pretrained eval | `outputs/watchers/eval_aniso_longpretrained_20260617T140406.log` |
 | long-pretrained large-crop eval | `outputs/watchers/eval_aniso_large_longpretrained_20260617T140406.log` |
 
+Additional open ablations submitted on 2026-06-17 to use the H200 pool while
+the main runs are training:
+
+| stage | purpose | UUID | cards |
+|---|---|---|---:|
+| `no-dtrans` | remove the anisotropic z compression module | `1d9a076c-7bea-4224-8067-94bda7b39c95` | 8 |
+| `dtrans2` | use z stride 2 instead of the paper-style z stride 4 | `7a5631c4-63bc-4ae6-ad83-feca3fc78221` | 8 |
+| `fs64` | increase UNETR decoder feature size from 32 to 64 | `53424b91-e37c-4ecd-9eaf-311042355c5c` | 8 |
+| `boundary-loss` | stronger z/xy boundary-aware affinity loss | `d015653e-fc71-434c-b6c8-96a51cc04e4a` | 8 |
+| `context48` | larger crop/context `48x192x192` | `c4982264-be93-4f50-8aaf-b09cc3feb655` | 8 |
+
+Each ablation has normal and large-crop eval watchers under
+`outputs/watchers/eval_ablation_*_20260617T154639.log`. These jobs bring the
+submitted training footprint from 24 GPUs to 64 GPUs, before queued 1-GPU evals
+and the future long-pretrained finetune.
+
 ## Diagnostic Simplified UNETR Run
 
 This earlier run used the simplified `UNETRAffinityNet` decoder and a small

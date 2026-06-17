@@ -18,6 +18,41 @@ WHEELHOUSE = PROJECT / "outputs" / "wheelhouse_dbmim"
 TOSUTIL = Path("/volume/med-train/users/dchen02/bin/tosutil")
 TOS_OUTPUT_PREFIX = "tos://agi-data/users/dchen02/dbmim/outputs"
 CREMI_ASSET = "tos://agi-data/users/dchen02/dbmim/assets/cremi_abc_20160501.tar.gz"
+ABLATION_RUNS = {
+    "no-dtrans": {
+        "config": "finetune_cremi_real_unetr_aniso_no_dtrans.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_no_dtrans",
+        "eval": "eval_cremi_unetr_aniso_no_dtrans",
+        "large_eval": "eval_cremi_unetr_aniso_large_no_dtrans",
+    },
+    "dtrans2": {
+        "config": "finetune_cremi_real_unetr_aniso_dtrans2.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_dtrans2",
+        "eval": "eval_cremi_unetr_aniso_dtrans2",
+        "large_eval": "eval_cremi_unetr_aniso_large_dtrans2",
+    },
+    "fs64": {
+        "config": "finetune_cremi_real_unetr_aniso_fs64.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_fs64",
+        "eval": "eval_cremi_unetr_aniso_fs64",
+        "large_eval": "eval_cremi_unetr_aniso_large_fs64",
+    },
+    "boundary-loss": {
+        "config": "finetune_cremi_real_unetr_aniso_boundary_loss.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_boundary_loss",
+        "eval": "eval_cremi_unetr_aniso_boundary_loss",
+        "large_eval": "eval_cremi_unetr_aniso_large_boundary_loss",
+    },
+    "context48": {
+        "config": "finetune_cremi_real_unetr_aniso_context48.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_context48",
+        "eval": "eval_cremi_unetr_aniso_context48",
+        "large_eval": "eval_cremi_unetr_aniso_large_context48",
+    },
+}
+ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
+ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
+ABLATION_LARGE_EVAL_STAGES = {f"eval-cremi-unetr-aniso-large-{name}" for name in ABLATION_RUNS}
 CREMI_STAGES = {
     "pretrain-cremi",
     "pretrain-cremi-long",
@@ -45,7 +80,7 @@ CREMI_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
-}
+} | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES
 CREMI_EVAL_STAGES = {
     "eval-cremi",
     "eval-cremi-unetr-pretrained",
@@ -63,7 +98,16 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
-}
+} | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES
+
+
+def _ablation_name_from_stage(stage: str) -> str | None:
+    for prefix in ["finetune-cremi-unetr-aniso-", "eval-cremi-unetr-aniso-large-", "eval-cremi-unetr-aniso-"]:
+        if stage.startswith(prefix):
+            name = stage[len(prefix) :]
+            if name in ABLATION_RUNS:
+                return name
+    return None
 
 
 def stamp() -> str:
@@ -104,6 +148,7 @@ def _patch_cremi_configs(bundle: Path) -> None:
         ),
         ("finetune_cremi_real_zdice.yaml", "outputs/finetune_cremi_real_zdice"),
         ("finetune_cremi_real_zdice_focal.yaml", "outputs/finetune_cremi_real_zdice_focal"),
+        *[(spec["config"], f"outputs/{spec['output']}") for spec in ABLATION_RUNS.values()],
     ]:
         finetune = bundle / "configs" / name
         if not finetune.exists():
@@ -171,6 +216,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         "finetune-cremi",
         "finetune-cremi-unetr-pretrained",
         "finetune-cremi-unetr-aniso-pretrained",
+        *ABLATION_TRAIN_STAGES,
         "finetune-cremi-zdice",
         "finetune-cremi-zdice-focal",
     }:
@@ -226,6 +272,9 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
             "DBMIM_EVAL_CKPT",
         ),
     }
+    for name, spec in ABLATION_RUNS.items():
+        eval_stage_map[f"eval-cremi-unetr-aniso-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
+        eval_stage_map[f"eval-cremi-unetr-aniso-large-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
     if stage in eval_stage_map:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
@@ -328,6 +377,14 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    ablation_name = _ablation_name_from_stage(stage)
+    if stage in ABLATION_TRAIN_STAGES and ablation_name is not None:
+        postlude.extend(
+            [
+                f"bin/tosutil cp outputs/{ABLATION_RUNS[ablation_name]['output']} "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "finetune-cremi-zdice":
         postlude.extend(
             [
@@ -371,6 +428,9 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         "eval-cremi-unetr-aniso-large-scratch": "outputs/eval_cremi_unetr_aniso_large_scratch",
         "eval-cremi-unetr-aniso-large-longpretrained": "outputs/eval_cremi_unetr_aniso_large_longpretrained",
     }
+    for name, spec in ABLATION_RUNS.items():
+        eval_output_dirs[f"eval-cremi-unetr-aniso-{name}"] = f"outputs/{spec['eval']}"
+        eval_output_dirs[f"eval-cremi-unetr-aniso-large-{name}"] = f"outputs/{spec['large_eval']}"
     if stage in eval_output_dirs:
         postlude.extend(
             [
@@ -478,6 +538,7 @@ def main() -> None:
             "finetune-cremi-unetr-aniso-pretrained",
             "finetune-cremi-unetr-aniso-scratch",
             "finetune-cremi-unetr-aniso-longpretrained",
+            *sorted(ABLATION_TRAIN_STAGES),
             "finetune-cremi-zdice",
             "finetune-cremi-zdice-focal",
             "eval-cremi",
@@ -489,6 +550,8 @@ def main() -> None:
             "eval-cremi-unetr-aniso-large-pretrained",
             "eval-cremi-unetr-aniso-large-scratch",
             "eval-cremi-unetr-aniso-large-longpretrained",
+            *sorted(ABLATION_EVAL_STAGES),
+            *sorted(ABLATION_LARGE_EVAL_STAGES),
             "eval-cremi-sweep",
             "eval-cremi-gpu-probe",
             "eval-cremi-rag-ablation",
@@ -533,6 +596,13 @@ def main() -> None:
     elif args.stage == "finetune-cremi-unetr-aniso-longpretrained":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_unetr_aniso_longpretrained.yaml"
         prefix = "dbmim-finetune-cremi-unetr-aniso-longpretrained"
+    elif args.stage in ABLATION_TRAIN_STAGES:
+        ablation_name = _ablation_name_from_stage(args.stage)
+        if ablation_name is None:
+            raise ValueError(f"unknown ablation stage: {args.stage}")
+        spec = ABLATION_RUNS[ablation_name]
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/{spec['config']}"
+        prefix = f"dbmim-finetune-cremi-unetr-aniso-{ablation_name}"
     elif args.stage == "finetune-cremi-zdice":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_zdice.yaml"
         prefix = "dbmim-finetune-cremi-zdice"
@@ -698,6 +768,33 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-eval-cremi-unetr-aniso-large-longpretrained"
+    elif args.stage in ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES:
+        ablation_name = _ablation_name_from_stage(args.stage)
+        if ablation_name is None:
+            raise ValueError(f"unknown ablation stage: {args.stage}")
+        spec = ABLATION_RUNS[ablation_name]
+        large = args.stage in ABLATION_LARGE_EVAL_STAGES
+        out_dir = spec["large_eval"] if large else spec["eval"]
+        crop = "64 512 512" if large else "32 320 320"
+        z_thresholds = "0.55 0.65 0.75" if large else "0.45 0.55 0.65 0.75 0.85"
+        xy_thresholds = "0.75 0.85 0.90 0.95" if large else "0.65 0.75 0.85 0.90 0.95"
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            f"--config configs/{spec['config']} "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            f"--output-dir outputs/{out_dir} "
+            f"--crop-size {crop} "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            f"--z-thresholds {z_thresholds} "
+            f"--xy-thresholds {xy_thresholds} "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = f"dbmim-eval-cremi-unetr-aniso-{'large-' if large else ''}{ablation_name}"
     elif args.stage == "eval-cremi-sweep":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "

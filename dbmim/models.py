@@ -634,6 +634,8 @@ class UNETRAnisotropicAffinityNet(nn.Module):
         feature_size: int = 32,
         dropout: float = 0.0,
         skip_indices: Sequence[int] | None = None,
+        use_dtrans: bool | None = None,
+        dtrans_stride_z: int | None = None,
     ) -> None:
         super().__init__()
         self.volume_size = _triple(volume_size)
@@ -658,8 +660,9 @@ class UNETRAnisotropicAffinityNet(nn.Module):
         self.decoder3 = UpConcatBlock3D(feature_size * 4, feature_size * 2, feature_size * 2, dropout=dropout)
         self.decoder2 = UpConcatBlock3D(feature_size * 2, feature_size, feature_size, dropout=dropout)
 
-        self.use_dtrans = self.patch_size[0] != self.patch_size[1]
-        stride_z = max(1, int(self.patch_size[1] / self.patch_size[0]))
+        default_stride_z = max(1, int(self.patch_size[1] / self.patch_size[0]))
+        stride_z = default_stride_z if dtrans_stride_z is None else max(1, int(dtrans_stride_z))
+        self.use_dtrans = (self.patch_size[0] != self.patch_size[1]) if use_dtrans is None else bool(use_dtrans)
         self.dtrans = nn.Conv3d(
             feature_size * 2,
             feature_size * 2,

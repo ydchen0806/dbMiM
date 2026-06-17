@@ -162,10 +162,16 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
             skip_indices=model_cfg.get("skip_indices"),
         )
     if architecture in {"unetr_aniso", "unetr_anisotropic", "paper_unetr", "unetr_dtrans"}:
+        aniso_kwargs = {}
+        if "use_dtrans" in model_cfg:
+            aniso_kwargs["use_dtrans"] = bool(model_cfg["use_dtrans"])
+        if "dtrans_stride_z" in model_cfg:
+            aniso_kwargs["dtrans_stride_z"] = int(model_cfg["dtrans_stride_z"])
         return UNETRAnisotropicAffinityNet(
             **common,
             feature_size=int(model_cfg.get("feature_size", 32)),
             skip_indices=model_cfg.get("skip_indices"),
+            **aniso_kwargs,
         )
     if architecture in {"linear_head", "transpose_head", "mae_head", "mae_backbone"}:
         return MAEBackboneAffinityNet(**common)
