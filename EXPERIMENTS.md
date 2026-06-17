@@ -37,6 +37,27 @@ Validation checks before submitting the aniso jobs:
 Evaluation summaries now include both `best_by_adapted_rand` and
 `best_by_voi_sum` in `cremi_segmentation_summary.json`.
 
+Aniso jobs submitted on 2026-06-17 through Shanghai changliu with 8-GPU
+training pods selected by `--resource-pool auto`:
+
+| stage | UUID | output prefix |
+|---|---|---|
+| long dbMiM pretrain | `56d6c8f0-184f-4dcd-98c2-01060b3230a0` | `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_cremi_real_long_dbmim/` |
+| aniso UNETR pretrained finetune | `90e2ca36-6c50-4346-8fa3-d2320b914459` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_pretrained/` |
+| aniso UNETR scratch finetune | `adb18e9f-e4a5-4935-a00e-485388c9545b` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_scratch/` |
+
+Watchers running from the login node:
+
+| purpose | watcher log |
+|---|---|
+| aniso pretrained eval | `outputs/watchers/eval_aniso_pretrained_20260617T140343.log` |
+| aniso pretrained large-crop eval | `outputs/watchers/eval_aniso_large_pretrained_20260617T140344.log` |
+| aniso scratch eval | `outputs/watchers/eval_aniso_scratch_20260617T140344.log` |
+| aniso scratch large-crop eval | `outputs/watchers/eval_aniso_large_scratch_20260617T140344.log` |
+| long pretrain -> long-pretrained finetune | `outputs/watchers/finetune_aniso_longpretrained_20260617T140406.log` |
+| long-pretrained eval | `outputs/watchers/eval_aniso_longpretrained_20260617T140406.log` |
+| long-pretrained large-crop eval | `outputs/watchers/eval_aniso_large_longpretrained_20260617T140406.log` |
+
 ## Diagnostic Simplified UNETR Run
 
 This earlier run used the simplified `UNETRAffinityNet` decoder and a small
