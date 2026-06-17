@@ -3,11 +3,44 @@
 This note tracks the maintained reproduction path and the real SiFlow
 experiments run on CREMI.
 
-## Paper-aligned UNETR Ablation
+## Paper-aligned Anisotropic UNETR Ablation
 
-The current paper-aligned experiment uses a UNETR affinity backbone and reports
-VOI plus adapted Rand error (ARAND). The goal is to isolate the effect of dbMiM
-pretraining:
+The maintained UNETR experiment now uses the original anisotropic design from
+`model_unetr.py`: `patch_size=(4,16,16)`, hidden-state skip projection with
+3/2/1 upsampling stages, and the z-only `dtrans` convolution between decoder3
+and decoder2. The current self-contained implementation is
+`UNETRAnisotropicAffinityNet` in `dbmim/models.py`, selected with
+`architecture: unetr_aniso`.
+
+The simplified `UNETRAffinityNet` jobs listed below are retained only as a
+diagnostic failed run. They did not migrate the original anisotropic decoder
+and should not be used as a paper-aligned conclusion about dbMiM pretraining.
+
+Current aniso experiment plan:
+
+| arm | backbone | initialization | config | output prefix |
+|---|---|---|---|---|
+| aniso UNETR pretrained | `UNETRAnisotropicAffinityNet` | existing dbMiM pretrained ViT encoder, with interpolated `pos_embed` | `configs/finetune_cremi_real_unetr_aniso_pretrained.yaml` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_pretrained/` |
+| aniso UNETR scratch | `UNETRAnisotropicAffinityNet` | random initialization | `configs/finetune_cremi_real_unetr_aniso_scratch.yaml` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_scratch/` |
+| aniso UNETR long-pretrained | `UNETRAnisotropicAffinityNet` | long dbMiM pretrain at `32x160x160` | `configs/finetune_cremi_real_unetr_aniso_longpretrained.yaml` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_longpretrained/` |
+
+Validation checks before submitting the aniso jobs:
+
+| check | result |
+|---|---|
+| `py_compile` maintained entrypoints | passed |
+| aniso UNETR forward at `16x64x64` | output `1x3x16x64x64` |
+| aniso UNETR forward at `32x160x160` | output `1x3x32x160x160`, 18.07M parameters |
+| load existing pretrain into aniso UNETR | 77 backbone keys loaded, including interpolated `pos_embed` |
+| SiFlow dry-run bundles | aniso pretrained/scratch finetune, long pretrain, and aniso eval stages dry-run successfully |
+
+Evaluation summaries now include both `best_by_adapted_rand` and
+`best_by_voi_sum` in `cremi_segmentation_summary.json`.
+
+## Diagnostic Simplified UNETR Run
+
+This earlier run used the simplified `UNETRAffinityNet` decoder and a small
+center-crop evaluation. It is not the current paper-aligned architecture.
 
 | arm | backbone | initialization | config | output prefix |
 |---|---|---|---|---|
@@ -61,16 +94,14 @@ Training best validation rows from the tail logs:
 | UNETR pretrained | 1719 | 25800 | 0.966879 | 0.935917 | 0.360447 |
 | UNETR scratch | 1899 | 28500 | 0.966754 | 0.935687 | 0.379407 |
 
-This is a negative result for the current UNETR decoder/postprocess setup:
+This is a negative diagnostic result for the simplified UNETR decoder used in
+that run:
 dbMiM pretraining slightly improves affinity validation metrics, but the
 instance-segmentation metric selected by the threshold sweep is identical to
 scratch. Both UNETR arms are also worse than the earlier MAE-head graph-CC
 baseline (`ARAND 0.745897`, `VOI sum 4.344215`) on the same 3-sample CREMI
-evaluation. The next useful experiment is not more threshold search on this
-decoder; it should address affinity calibration/segmentation topology, e.g.
-stronger boundary-aware loss, longer/larger-context finetuning, or a
-postprocess objective that penalizes the all-merge failure mode reflected by
-`VOI merge = 0`.
+evaluation. This is the result that motivated migrating the original
+anisotropic decoder before drawing a conclusion about the pretraining effect.
 
 ## Baseline Weights
 

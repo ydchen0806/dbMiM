@@ -535,6 +535,10 @@ def main() -> None:
             summary["per_backend_threshold"],  # type: ignore[arg-type]
             key=lambda row: float(row["adapted_rand_error"]),
         )
+        summary["best_by_voi_sum"] = min(
+            summary["per_backend_threshold"],  # type: ignore[arg-type]
+            key=lambda row: float(row["voi_sum"]),
+        )
     (output_dir / "cremi_segmentation_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

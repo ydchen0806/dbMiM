@@ -20,14 +20,24 @@ TOS_OUTPUT_PREFIX = "tos://agi-data/users/dchen02/dbmim/outputs"
 CREMI_ASSET = "tos://agi-data/users/dchen02/dbmim/assets/cremi_abc_20160501.tar.gz"
 CREMI_STAGES = {
     "pretrain-cremi",
+    "pretrain-cremi-long",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
     "finetune-cremi-unetr-scratch",
+    "finetune-cremi-unetr-aniso-pretrained",
+    "finetune-cremi-unetr-aniso-scratch",
+    "finetune-cremi-unetr-aniso-longpretrained",
     "finetune-cremi-zdice",
     "finetune-cremi-zdice-focal",
     "eval-cremi",
     "eval-cremi-unetr-pretrained",
     "eval-cremi-unetr-scratch",
+    "eval-cremi-unetr-aniso-pretrained",
+    "eval-cremi-unetr-aniso-scratch",
+    "eval-cremi-unetr-aniso-longpretrained",
+    "eval-cremi-unetr-aniso-large-pretrained",
+    "eval-cremi-unetr-aniso-large-scratch",
+    "eval-cremi-unetr-aniso-large-longpretrained",
     "eval-cremi-sweep",
     "eval-cremi-gpu-probe",
     "eval-cremi-rag-ablation",
@@ -40,6 +50,12 @@ CREMI_EVAL_STAGES = {
     "eval-cremi",
     "eval-cremi-unetr-pretrained",
     "eval-cremi-unetr-scratch",
+    "eval-cremi-unetr-aniso-pretrained",
+    "eval-cremi-unetr-aniso-scratch",
+    "eval-cremi-unetr-aniso-longpretrained",
+    "eval-cremi-unetr-aniso-large-pretrained",
+    "eval-cremi-unetr-aniso-large-scratch",
+    "eval-cremi-unetr-aniso-large-longpretrained",
     "eval-cremi-sweep",
     "eval-cremi-gpu-probe",
     "eval-cremi-rag-ablation",
@@ -67,10 +83,25 @@ def _patch_cremi_configs(bundle: Path) -> None:
     pre_cfg["train"]["save_every"] = max(int(pre_cfg["train"].get("save_every", 1)), 50)
     _write_yaml(pretrain, pre_cfg)
 
+    pretrain_long = bundle / "configs" / "pretrain_cremi_real_long.yaml"
+    if pretrain_long.exists():
+        pre_long_cfg = yaml.safe_load(pretrain_long.read_text(encoding="utf-8"))
+        pre_long_cfg["output_dir"] = "outputs/pretrain_cremi_real_long_dbmim"
+        pre_long_cfg["data"]["train_paths"] = ["data/CREMI"]
+        pre_long_cfg["train"]["epochs"] = max(int(pre_long_cfg["train"].get("epochs", 1)), 100000)
+        pre_long_cfg["train"]["save_every"] = max(int(pre_long_cfg["train"].get("save_every", 1)), 10)
+        _write_yaml(pretrain_long, pre_long_cfg)
+
     for name, out_dir in [
         ("finetune_cremi_real.yaml", "outputs/finetune_cremi_real_dbmim"),
         ("finetune_cremi_real_unetr_pretrained.yaml", "outputs/finetune_cremi_real_unetr_pretrained"),
         ("finetune_cremi_real_unetr_scratch.yaml", "outputs/finetune_cremi_real_unetr_scratch"),
+        ("finetune_cremi_real_unetr_aniso_pretrained.yaml", "outputs/finetune_cremi_real_unetr_aniso_pretrained"),
+        ("finetune_cremi_real_unetr_aniso_scratch.yaml", "outputs/finetune_cremi_real_unetr_aniso_scratch"),
+        (
+            "finetune_cremi_real_unetr_aniso_longpretrained.yaml",
+            "outputs/finetune_cremi_real_unetr_aniso_longpretrained",
+        ),
         ("finetune_cremi_real_zdice.yaml", "outputs/finetune_cremi_real_zdice"),
         ("finetune_cremi_real_zdice_focal.yaml", "outputs/finetune_cremi_real_zdice_focal"),
     ]:
@@ -81,6 +112,8 @@ def _patch_cremi_configs(bundle: Path) -> None:
         ft_cfg["output_dir"] = out_dir
         if "scratch" in name:
             ft_cfg["pretrained"] = ""
+        elif "longpretrained" in name:
+            ft_cfg["pretrained"] = "outputs/pretrain_cremi_real_long_dbmim/pretrained_latest.pt"
         else:
             ft_cfg["pretrained"] = "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt"
         ft_cfg["data"]["image_paths"] = ["data/CREMI"]
@@ -137,6 +170,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
     if stage in {
         "finetune-cremi",
         "finetune-cremi-unetr-pretrained",
+        "finetune-cremi-unetr-aniso-pretrained",
         "finetune-cremi-zdice",
         "finetune-cremi-zdice-focal",
     }:
@@ -148,10 +182,19 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "finetune-cremi-unetr-aniso-longpretrained":
+        prelude.extend(
+            [
+                "mkdir -p outputs/pretrain_cremi_real_long_dbmim",
+                "bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/pretrain_cremi_real_long_dbmim/pretrained_latest.pt "
+                "outputs/pretrain_cremi_real_long_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage in CREMI_EVAL_STAGES:
         prelude.extend(
             [
-                "mkdir -p outputs/finetune_cremi_real_dbmim outputs/finetune_cremi_real_unetr_pretrained outputs/finetune_cremi_real_unetr_scratch outputs/finetune_cremi_real_zdice outputs/finetune_cremi_real_zdice_focal outputs/eval_cremi_real_dbmim outputs/eval_cremi_unetr_pretrained outputs/eval_cremi_unetr_scratch outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe outputs/eval_cremi_rag_ablation outputs/eval_cremi_aniso_graph outputs/eval_cremi_scale64 outputs/eval_cremi_zdice outputs/eval_cremi_zdice_focal",
+                "mkdir -p outputs/finetune_cremi_real_dbmim outputs/finetune_cremi_real_unetr_pretrained outputs/finetune_cremi_real_unetr_scratch outputs/finetune_cremi_real_unetr_aniso_pretrained outputs/finetune_cremi_real_unetr_aniso_scratch outputs/finetune_cremi_real_unetr_aniso_longpretrained outputs/finetune_cremi_real_zdice outputs/finetune_cremi_real_zdice_focal outputs/eval_cremi_real_dbmim outputs/eval_cremi_unetr_pretrained outputs/eval_cremi_unetr_scratch outputs/eval_cremi_unetr_aniso_pretrained outputs/eval_cremi_unetr_aniso_scratch outputs/eval_cremi_unetr_aniso_longpretrained outputs/eval_cremi_unetr_aniso_large_pretrained outputs/eval_cremi_unetr_aniso_large_scratch outputs/eval_cremi_unetr_aniso_large_longpretrained outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe outputs/eval_cremi_rag_ablation outputs/eval_cremi_aniso_graph outputs/eval_cremi_scale64 outputs/eval_cremi_zdice outputs/eval_cremi_zdice_focal",
                 "if bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_dbmim/finetuned_best.pt "
                 "outputs/finetune_cremi_real_dbmim/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
@@ -164,33 +207,38 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "fi",
             ]
         )
-    if stage == "eval-cremi-unetr-pretrained":
+    eval_stage_map = {
+        "eval-cremi-unetr-pretrained": ("finetune_cremi_real_unetr_pretrained", "DBMIM_EVAL_CKPT"),
+        "eval-cremi-unetr-scratch": ("finetune_cremi_real_unetr_scratch", "DBMIM_EVAL_CKPT"),
+        "eval-cremi-unetr-aniso-pretrained": ("finetune_cremi_real_unetr_aniso_pretrained", "DBMIM_EVAL_CKPT"),
+        "eval-cremi-unetr-aniso-scratch": ("finetune_cremi_real_unetr_aniso_scratch", "DBMIM_EVAL_CKPT"),
+        "eval-cremi-unetr-aniso-longpretrained": (
+            "finetune_cremi_real_unetr_aniso_longpretrained",
+            "DBMIM_EVAL_CKPT",
+        ),
+        "eval-cremi-unetr-aniso-large-pretrained": (
+            "finetune_cremi_real_unetr_aniso_pretrained",
+            "DBMIM_EVAL_CKPT",
+        ),
+        "eval-cremi-unetr-aniso-large-scratch": ("finetune_cremi_real_unetr_aniso_scratch", "DBMIM_EVAL_CKPT"),
+        "eval-cremi-unetr-aniso-large-longpretrained": (
+            "finetune_cremi_real_unetr_aniso_longpretrained",
+            "DBMIM_EVAL_CKPT",
+        ),
+    }
+    if stage in eval_stage_map:
+        model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
             [
                 "if bin/tosutil cp "
-                f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_unetr_pretrained/finetuned_best.pt "
-                "outputs/finetune_cremi_real_unetr_pretrained/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
-                "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_unetr_pretrained/finetuned_best.pt",
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
+                f"  export {env_key}=outputs/{model_prefix}/finetuned_best.pt",
                 "else",
                 "  bin/tosutil cp "
-                f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_unetr_pretrained/finetuned_latest.pt "
-                "outputs/finetune_cremi_real_unetr_pretrained/finetuned_latest.pt -conf=\"$TOS_CONF\"",
-                "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_unetr_pretrained/finetuned_latest.pt",
-                "fi",
-            ]
-        )
-    if stage == "eval-cremi-unetr-scratch":
-        prelude.extend(
-            [
-                "if bin/tosutil cp "
-                f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_unetr_scratch/finetuned_best.pt "
-                "outputs/finetune_cremi_real_unetr_scratch/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
-                "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_unetr_scratch/finetuned_best.pt",
-                "else",
-                "  bin/tosutil cp "
-                f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_unetr_scratch/finetuned_latest.pt "
-                "outputs/finetune_cremi_real_unetr_scratch/finetuned_latest.pt -conf=\"$TOS_CONF\"",
-                "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_unetr_scratch/finetuned_latest.pt",
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"",
+                f"  export {env_key}=outputs/{model_prefix}/finetuned_latest.pt",
                 "fi",
             ]
         )
@@ -231,6 +279,13 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "pretrain-cremi-long":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/pretrain_cremi_real_long_dbmim "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "finetune-cremi":
         postlude.extend(
             [
@@ -249,6 +304,27 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         postlude.extend(
             [
                 "bin/tosutil cp outputs/finetune_cremi_real_unetr_scratch "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "finetune-cremi-unetr-aniso-pretrained":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/finetune_cremi_real_unetr_aniso_pretrained "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "finetune-cremi-unetr-aniso-scratch":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/finetune_cremi_real_unetr_aniso_scratch "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "finetune-cremi-unetr-aniso-longpretrained":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/finetune_cremi_real_unetr_aniso_longpretrained "
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
@@ -284,6 +360,21 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         postlude.extend(
             [
                 "bin/tosutil cp outputs/eval_cremi_unetr_scratch "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    eval_output_dirs = {
+        "eval-cremi-unetr-aniso-pretrained": "outputs/eval_cremi_unetr_aniso_pretrained",
+        "eval-cremi-unetr-aniso-scratch": "outputs/eval_cremi_unetr_aniso_scratch",
+        "eval-cremi-unetr-aniso-longpretrained": "outputs/eval_cremi_unetr_aniso_longpretrained",
+        "eval-cremi-unetr-aniso-large-pretrained": "outputs/eval_cremi_unetr_aniso_large_pretrained",
+        "eval-cremi-unetr-aniso-large-scratch": "outputs/eval_cremi_unetr_aniso_large_scratch",
+        "eval-cremi-unetr-aniso-large-longpretrained": "outputs/eval_cremi_unetr_aniso_large_longpretrained",
+    }
+    if stage in eval_output_dirs:
+        postlude.extend(
+            [
+                f"bin/tosutil cp {eval_output_dirs[stage]} "
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
@@ -380,14 +471,24 @@ def main() -> None:
             "pretrain",
             "finetune",
             "pretrain-cremi",
+            "pretrain-cremi-long",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
             "finetune-cremi-unetr-scratch",
+            "finetune-cremi-unetr-aniso-pretrained",
+            "finetune-cremi-unetr-aniso-scratch",
+            "finetune-cremi-unetr-aniso-longpretrained",
             "finetune-cremi-zdice",
             "finetune-cremi-zdice-focal",
             "eval-cremi",
             "eval-cremi-unetr-pretrained",
             "eval-cremi-unetr-scratch",
+            "eval-cremi-unetr-aniso-pretrained",
+            "eval-cremi-unetr-aniso-scratch",
+            "eval-cremi-unetr-aniso-longpretrained",
+            "eval-cremi-unetr-aniso-large-pretrained",
+            "eval-cremi-unetr-aniso-large-scratch",
+            "eval-cremi-unetr-aniso-large-longpretrained",
             "eval-cremi-sweep",
             "eval-cremi-gpu-probe",
             "eval-cremi-rag-ablation",
@@ -400,7 +501,7 @@ def main() -> None:
         default="smoke",
     )
     parser.add_argument("--submit", action="store_true")
-    parser.add_argument("--resource-pool", default="med-model")
+    parser.add_argument("--resource-pool", default="auto")
     parser.add_argument("--gpus-per-pod", type=int, default=8)
     args = parser.parse_args()
 
@@ -411,6 +512,9 @@ def main() -> None:
     elif args.stage == "pretrain-cremi":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_cremi_real.yaml"
         prefix = "dbmim-pretrain-cremi"
+    elif args.stage == "pretrain-cremi-long":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_cremi_real_long.yaml"
+        prefix = "dbmim-pretrain-cremi-long"
     elif args.stage == "finetune-cremi":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"
@@ -420,6 +524,15 @@ def main() -> None:
     elif args.stage == "finetune-cremi-unetr-scratch":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_unetr_scratch.yaml"
         prefix = "dbmim-finetune-cremi-unetr-scratch"
+    elif args.stage == "finetune-cremi-unetr-aniso-pretrained":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_unetr_aniso_pretrained.yaml"
+        prefix = "dbmim-finetune-cremi-unetr-aniso-pretrained"
+    elif args.stage == "finetune-cremi-unetr-aniso-scratch":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_unetr_aniso_scratch.yaml"
+        prefix = "dbmim-finetune-cremi-unetr-aniso-scratch"
+    elif args.stage == "finetune-cremi-unetr-aniso-longpretrained":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_unetr_aniso_longpretrained.yaml"
+        prefix = "dbmim-finetune-cremi-unetr-aniso-longpretrained"
     elif args.stage == "finetune-cremi-zdice":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_zdice.yaml"
         prefix = "dbmim-finetune-cremi-zdice"
@@ -477,6 +590,114 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-eval-cremi-unetr-scratch"
+    elif args.stage == "eval-cremi-unetr-aniso-pretrained":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_pretrained.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_unetr_aniso_pretrained "
+            "--crop-size 32 320 320 "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            "--z-thresholds 0.45 0.55 0.65 0.75 0.85 "
+            "--xy-thresholds 0.65 0.75 0.85 0.90 0.95 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-unetr-aniso-pretrained"
+    elif args.stage == "eval-cremi-unetr-aniso-scratch":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_scratch.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_unetr_aniso_scratch "
+            "--crop-size 32 320 320 "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            "--z-thresholds 0.45 0.55 0.65 0.75 0.85 "
+            "--xy-thresholds 0.65 0.75 0.85 0.90 0.95 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-unetr-aniso-scratch"
+    elif args.stage == "eval-cremi-unetr-aniso-longpretrained":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_longpretrained.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_unetr_aniso_longpretrained "
+            "--crop-size 32 320 320 "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            "--z-thresholds 0.45 0.55 0.65 0.75 0.85 "
+            "--xy-thresholds 0.65 0.75 0.85 0.90 0.95 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-unetr-aniso-longpretrained"
+    elif args.stage == "eval-cremi-unetr-aniso-large-pretrained":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_pretrained.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_unetr_aniso_large_pretrained "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            "--z-thresholds 0.55 0.65 0.75 "
+            "--xy-thresholds 0.75 0.85 0.90 0.95 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-unetr-aniso-large-pretrained"
+    elif args.stage == "eval-cremi-unetr-aniso-large-scratch":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_scratch.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_unetr_aniso_large_scratch "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            "--z-thresholds 0.55 0.65 0.75 "
+            "--xy-thresholds 0.75 0.85 0.90 0.95 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-unetr-aniso-large-scratch"
+    elif args.stage == "eval-cremi-unetr-aniso-large-longpretrained":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_longpretrained.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_unetr_aniso_large_longpretrained "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--thresholds 0.0 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 32 "
+            "--z-thresholds 0.55 0.65 0.75 "
+            "--xy-thresholds 0.75 0.85 0.90 0.95 "
+            "--max-samples 3 "
+            "--device cuda"
+        )
+        prefix = "dbmim-eval-cremi-unetr-aniso-large-longpretrained"
     elif args.stage == "eval-cremi-sweep":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "

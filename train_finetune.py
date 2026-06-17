@@ -12,7 +12,12 @@ from torch.utils.data.distributed import DistributedSampler
 
 from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset, labels_to_affinities
 from dbmim.metrics import AverageMeter, binary_iou_from_logits, dice_from_logits
-from dbmim.models import MAEBackboneAffinityNet, UNETRAffinityNet, load_pretrained_backbone
+from dbmim.models import (
+    MAEBackboneAffinityNet,
+    UNETRAffinityNet,
+    UNETRAnisotropicAffinityNet,
+    load_pretrained_backbone,
+)
 from dbmim.utils import (
     atomic_jsonl_append,
     count_parameters,
@@ -152,6 +157,12 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
     }
     if architecture in {"unetr", "unetr_affinity", "unetr_affinity_net"}:
         return UNETRAffinityNet(
+            **common,
+            feature_size=int(model_cfg.get("feature_size", 32)),
+            skip_indices=model_cfg.get("skip_indices"),
+        )
+    if architecture in {"unetr_aniso", "unetr_anisotropic", "paper_unetr", "unetr_dtrans"}:
+        return UNETRAnisotropicAffinityNet(
             **common,
             feature_size=int(model_cfg.get("feature_size", 32)),
             skip_indices=model_cfg.get("skip_indices"),

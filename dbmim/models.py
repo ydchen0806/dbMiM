@@ -369,6 +369,80 @@ class ConvBlock3D(nn.Module):
         return self.block(x)
 
 
+class ResidualConvBlock3D(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.InstanceNorm3d(out_channels, affine=True),
+            nn.GELU(),
+            nn.Dropout3d(dropout) if dropout > 0 else nn.Identity(),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.InstanceNorm3d(out_channels, affine=True),
+        )
+        if in_channels == out_channels:
+            self.residual = nn.Identity()
+        else:
+            self.residual = nn.Sequential(
+                nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.InstanceNorm3d(out_channels, affine=True),
+            )
+        self.act = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.act(self.conv(x) + self.residual(x))
+
+
+class TokenProjectUpBlock3D(nn.Module):
+    """Project ViT tokens to a 3D feature map and upsample like MONAI UnetrPrUpBlock."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_upsamples: int,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        layers: list[nn.Module] = [
+            nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
+            nn.InstanceNorm3d(out_channels, affine=True),
+            nn.GELU(),
+        ]
+        for _ in range(int(num_upsamples)):
+            layers.extend(
+                [
+                    nn.ConvTranspose3d(out_channels, out_channels, kernel_size=2, stride=2, bias=False),
+                    nn.InstanceNorm3d(out_channels, affine=True),
+                    nn.GELU(),
+                    ResidualConvBlock3D(out_channels, out_channels, dropout=dropout),
+                ]
+            )
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
+
+
+class UpConcatBlock3D(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        skip_channels: int,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.up = nn.ConvTranspose3d(in_channels, out_channels, kernel_size=2, stride=2, bias=False)
+        self.conv = ResidualConvBlock3D(out_channels + skip_channels, out_channels, dropout=dropout)
+
+    def forward(self, x: torch.Tensor, skip: torch.Tensor) -> torch.Tensor:
+        x = self.up(x)
+        if tuple(x.shape[-3:]) != tuple(skip.shape[-3:]):
+            x = F.interpolate(x, size=skip.shape[-3:], mode="trilinear", align_corners=False)
+        return self.conv(torch.cat([x, skip], dim=1))
+
+
 class UNETRAffinityNet(nn.Module):
     """UNETR-style affinity model initialized from the dbMiM ViT encoder.
 
@@ -516,6 +590,120 @@ class UNETRAffinityNet(nn.Module):
         return self.head(self.decode_full(torch.cat([decoded, skip], dim=1)))
 
 
+def _default_unetr_skip_indices(depth: int) -> tuple[int, int, int]:
+    if depth <= 0:
+        raise ValueError("UNETR depth must be positive")
+    raw = [depth // 4, depth // 2, (3 * depth) // 4]
+    return tuple(max(0, min(depth - 1, int(idx))) for idx in raw)  # type: ignore[return-value]
+
+
+def _normalize_skip_indices(skip_indices: Sequence[int] | None, depth: int) -> tuple[int, int, int]:
+    if skip_indices is None:
+        return _default_unetr_skip_indices(depth)
+    indices = [max(0, min(depth - 1, int(idx))) for idx in skip_indices]
+    if not indices:
+        indices = list(_default_unetr_skip_indices(depth))
+    while len(indices) < 3:
+        indices.append(indices[-1])
+    return tuple(indices[:3])  # type: ignore[return-value]
+
+
+class UNETRAnisotropicAffinityNet(nn.Module):
+    """Paper-style UNETR affinity model with the original anisotropic z decoder.
+
+    This migrates the old ``model_unetr.py`` topology without depending on
+    MONAI or the private ViT path. The ViT encoder key names intentionally match
+    ``DBMIM3DMAE`` so dbMiM pretraining can initialize the backbone. The decoder
+    mirrors the original skip path:
+
+    ``encoder2/3/4`` upsample hidden states by 3/2/1 times, ``decoder5/4/3``
+    bring the final tokens back to the high-resolution patch grid, and the
+    ``dtrans`` convolution compresses z by ``patch_y / patch_z`` before the
+    final upsample to full resolution.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        out_channels: int = 3,
+        volume_size: tuple[int, int, int] = (32, 160, 160),
+        patch_size: tuple[int, int, int] = (4, 16, 16),
+        embed_dim: int = 192,
+        depth: int = 6,
+        num_heads: int = 6,
+        feature_size: int = 32,
+        dropout: float = 0.0,
+        skip_indices: Sequence[int] | None = None,
+    ) -> None:
+        super().__init__()
+        self.volume_size = _triple(volume_size)
+        self.patch_size = _triple(patch_size)
+        self.patch_embed = PatchEmbed3D(in_channels, embed_dim, self.patch_size)
+        self.grid_size = tuple(v // p for v, p in zip(self.volume_size, self.patch_size))
+        self.num_patches = math.prod(self.grid_size)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        self.encoder_blocks = nn.ModuleList(
+            [TransformerBlock(embed_dim, num_heads, dropout=dropout) for _ in range(depth)]
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+        self.skip_indices = _normalize_skip_indices(skip_indices, depth)
+
+        self.encoder1 = ResidualConvBlock3D(in_channels, feature_size, dropout=dropout)
+        self.encoder2 = TokenProjectUpBlock3D(embed_dim, feature_size * 2, num_upsamples=3, dropout=dropout)
+        self.encoder3 = TokenProjectUpBlock3D(embed_dim, feature_size * 4, num_upsamples=2, dropout=dropout)
+        self.encoder4 = TokenProjectUpBlock3D(embed_dim, feature_size * 8, num_upsamples=1, dropout=dropout)
+
+        self.decoder5 = UpConcatBlock3D(embed_dim, feature_size * 8, feature_size * 8, dropout=dropout)
+        self.decoder4 = UpConcatBlock3D(feature_size * 8, feature_size * 4, feature_size * 4, dropout=dropout)
+        self.decoder3 = UpConcatBlock3D(feature_size * 4, feature_size * 2, feature_size * 2, dropout=dropout)
+        self.decoder2 = UpConcatBlock3D(feature_size * 2, feature_size, feature_size, dropout=dropout)
+
+        self.use_dtrans = self.patch_size[0] != self.patch_size[1]
+        stride_z = max(1, int(self.patch_size[1] / self.patch_size[0]))
+        self.dtrans = nn.Conv3d(
+            feature_size * 2,
+            feature_size * 2,
+            kernel_size=(3, 3, 3),
+            stride=(stride_z, 1, 1),
+            padding=(1, 1, 1),
+            bias=False,
+        )
+        self.head = nn.Conv3d(feature_size, out_channels, kernel_size=1)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+    def _tokens_to_grid(self, tokens: torch.Tensor) -> torch.Tensor:
+        bsz, _, channels = tokens.shape
+        gd, gh, gw = self.grid_size
+        return tokens.transpose(1, 2).reshape(bsz, channels, gd, gh, gw)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        tokens, grid = self.patch_embed(x)
+        if grid != self.grid_size:
+            raise ValueError(f"input grid {grid} does not match configured grid {self.grid_size}")
+        tokens = tokens + self.pos_embed
+        hidden_by_index: dict[int, torch.Tensor] = {}
+        for idx, block in enumerate(self.encoder_blocks):
+            tokens = block(tokens)
+            if idx in self.skip_indices:
+                hidden_by_index[idx] = tokens
+        tokens = self.norm(tokens)
+
+        x2, x3, x4 = [hidden_by_index.get(idx, tokens) for idx in self.skip_indices]
+        enc1 = self.encoder1(x)
+        enc2 = self.encoder2(self._tokens_to_grid(x2))
+        enc3 = self.encoder3(self._tokens_to_grid(x3))
+        enc4 = self.encoder4(self._tokens_to_grid(x4))
+
+        dec4 = self._tokens_to_grid(tokens)
+        dec3 = self.decoder5(dec4, enc4)
+        dec2 = self.decoder4(dec3, enc3)
+        dec1 = self.decoder3(dec2, enc2)
+        if self.use_dtrans:
+            dec1 = self.dtrans(dec1)
+        out = self.decoder2(dec1, enc1)
+        return self.head(out)
+
+
 def gradient_loss_3d(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     loss = pred.new_tensor(0.0)
     for dim in (-3, -2, -1):
@@ -532,5 +720,71 @@ def load_pretrained_backbone(model: nn.Module, checkpoint: dict[str, Any]) -> li
     for key, value in state.items():
         if key in own and own[key].shape == value.shape:
             loaded[key] = value
+        elif key == "pos_embed" and key in own:
+            interpolated = _interpolate_pos_embed_for_model(value, own[key], model, checkpoint)
+            if interpolated is not None:
+                loaded[key] = interpolated
     model.load_state_dict(loaded, strict=False)
     return sorted(loaded.keys())
+
+
+def _grid_from_model_cfg(cfg: dict[str, Any] | None) -> tuple[int, int, int] | None:
+    if not isinstance(cfg, dict):
+        return None
+    volume = cfg.get("volume_size")
+    patch = cfg.get("patch_size")
+    if volume is None or patch is None:
+        return None
+    if len(volume) != 3 or len(patch) != 3:
+        return None
+    return tuple(int(v) // int(p) for v, p in zip(volume, patch))
+
+
+def _factor_grid(num_patches: int) -> tuple[int, int, int] | None:
+    # Prefer anisotropic CREMI-like grids where z is the smallest dimension.
+    best: tuple[int, int, int] | None = None
+    best_score = float("inf")
+    for d in range(1, int(round(num_patches ** (1.0 / 3.0))) + 8):
+        if num_patches % d != 0:
+            continue
+        rest = num_patches // d
+        for h in range(1, int(math.sqrt(rest)) + 1):
+            if rest % h != 0:
+                continue
+            w = rest // h
+            dims = sorted((d, h, w))
+            score = (dims[2] - dims[1]) + 2 * (dims[1] - dims[0])
+            if score < best_score:
+                best_score = float(score)
+                best = (dims[0], dims[1], dims[2])
+    return best
+
+
+def _interpolate_pos_embed_for_model(
+    value: torch.Tensor,
+    target: torch.Tensor,
+    model: nn.Module,
+    checkpoint: dict[str, Any],
+) -> torch.Tensor | None:
+    if value.ndim != 3 or target.ndim != 3:
+        return None
+    if value.shape[0] != 1 or target.shape[0] != 1:
+        return None
+    if value.shape[-1] != target.shape[-1]:
+        return None
+    if value.shape[1] == target.shape[1]:
+        return value
+    cfg = checkpoint.get("config", {}) if isinstance(checkpoint, dict) else {}
+    old_grid = _grid_from_model_cfg(cfg.get("model") if isinstance(cfg, dict) else None)
+    if old_grid is None or math.prod(old_grid) != int(value.shape[1]):
+        old_grid = _factor_grid(int(value.shape[1]))
+    new_grid = getattr(model, "grid_size", None)
+    if new_grid is None or math.prod(tuple(int(v) for v in new_grid)) != int(target.shape[1]):
+        new_grid = _factor_grid(int(target.shape[1]))
+    if old_grid is None or new_grid is None:
+        return None
+    channels = int(value.shape[-1])
+    pos = value.reshape(1, old_grid[0], old_grid[1], old_grid[2], channels).permute(0, 4, 1, 2, 3)
+    pos = F.interpolate(pos.float(), size=tuple(int(v) for v in new_grid), mode="trilinear", align_corners=False)
+    pos = pos.permute(0, 2, 3, 4, 1).reshape(1, int(target.shape[1]), channels)
+    return pos.to(dtype=target.dtype)

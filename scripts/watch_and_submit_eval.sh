@@ -13,14 +13,16 @@ GPUS_PER_POD=${GPUS_PER_POD:-1}
 EVAL_STAGE=${EVAL_STAGE:-eval-cremi}
 SLEEP_SEC=${SLEEP_SEC:-120}
 MAX_POLLS=${MAX_POLLS:-240}
+CHECKPOINT_FILES=${CHECKPOINT_FILES:-"finetuned_best.pt finetuned_latest.pt"}
 
 mkdir -p outputs/watchers
-echo "{\"event\":\"watch_start\",\"tos_prefix\":\"${TOS_PREFIX}\",\"eval_stage\":\"${EVAL_STAGE}\",\"resource_pool\":\"${RESOURCE_POOL}\",\"gpus_per_pod\":${GPUS_PER_POD}}"
+echo "{\"event\":\"watch_start\",\"tos_prefix\":\"${TOS_PREFIX}\",\"checkpoint_files\":\"${CHECKPOINT_FILES}\",\"eval_stage\":\"${EVAL_STAGE}\",\"resource_pool\":\"${RESOURCE_POOL}\",\"gpus_per_pod\":${GPUS_PER_POD}}"
 
 probe_checkpoint() {
-  local kind="$1"
-  local target="${TOS_PREFIX}/finetuned_${kind}.pt"
-  local probe="/tmp/dbmim_watch_${EVAL_STAGE}_${kind}_$$.pt"
+  local filename="$1"
+  local target="${TOS_PREFIX}/${filename}"
+  local safe_name="${filename//[^A-Za-z0-9_.-]/_}"
+  local probe="/tmp/dbmim_watch_${EVAL_STAGE}_${safe_name}_$$.pt"
   rm -f "${probe}"
   if timeout 60 "${TOSUTIL}" cp "${target}" "${probe}" -conf="${TOS_CONF}" >/dev/null 2>&1; then
     local ok=1
@@ -35,15 +37,17 @@ probe_checkpoint() {
 }
 
 ready=0
+ready_file=""
 for idx in $(seq 1 "${MAX_POLLS}"); do
-  if probe_checkpoint best; then
-    ready=1
-    echo "{\"event\":\"checkpoint_ready\",\"kind\":\"best\",\"poll\":${idx}}"
-    break
-  fi
-  if probe_checkpoint latest; then
-    ready=1
-    echo "{\"event\":\"checkpoint_ready\",\"kind\":\"latest\",\"poll\":${idx}}"
+  for filename in ${CHECKPOINT_FILES}; do
+    if probe_checkpoint "${filename}"; then
+      ready=1
+      ready_file="${filename}"
+      echo "{\"event\":\"checkpoint_ready\",\"file\":\"${filename}\",\"poll\":${idx}}"
+      break
+    fi
+  done
+  if [ "${ready}" -eq 1 ]; then
     break
   fi
   echo "{\"event\":\"checkpoint_wait\",\"poll\":${idx}}"
