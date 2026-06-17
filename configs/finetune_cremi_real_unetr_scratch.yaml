@@ -1,7 +1,7 @@
 seed: 42
 device: cuda
-output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_cremi_real_zdice_focal
-pretrained: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_cremi_real_unetr_scratch
+pretrained: ""
 data:
   synthetic: false
   image_paths:
@@ -14,7 +14,7 @@ data:
   length_multiplier: 512
   augment: true
 model:
-  architecture: mae_head
+  architecture: unetr
   in_channels: 1
   out_channels: 3
   volume_size: [16, 128, 128]
@@ -22,6 +22,7 @@ model:
   embed_dim: 192
   depth: 6
   num_heads: 6
+  feature_size: 32
   dropout: 0.05
 train:
   batch_size: 8
@@ -36,9 +37,3 @@ train:
   val_fraction: 0.34
   pos_weight: 1.0
   clip_grad: 1.0
-  loss:
-    bce_weight: 1.0
-    dice_weight: 0.2
-    focal_gamma: 1.5
-    channel_weights: [1.5, 1.0, 1.0]
-    pos_weight: [1.2, 1.0, 1.0]

@@ -19,7 +19,6 @@ if str(ROOT) not in sys.path:
 
 from dbmim.datasets import labels_to_affinities, normalize_volume
 from dbmim.metrics import binary_iou_from_logits, dice_from_logits
-from dbmim.models import MAEBackboneAffinityNet
 from dbmim.postprocess import (
     affinities_to_connected_components,
     agglomerate_fragments_by_affinity,
@@ -30,6 +29,7 @@ from dbmim.postprocess import (
     waterz_agglomeration,
     watershed_fragments,
 )
+from train_finetune import build_affinity_model
 from dbmim.utils import ensure_dir, load_checkpoint, load_config
 
 
@@ -102,7 +102,7 @@ def starts_for_dim(dim: int, window: int, stride: int) -> list[int]:
 
 @torch.no_grad()
 def predict_affinities(
-    model: MAEBackboneAffinityNet,
+    model: torch.nn.Module,
     raw: np.ndarray,
     window_size: tuple[int, int, int],
     stride: tuple[int, int, int],
@@ -140,20 +140,10 @@ def predict_affinities(
     return affinities[:, :depth, :height, :width]
 
 
-def build_model(cfg: dict, checkpoint: Path, device: torch.device) -> MAEBackboneAffinityNet:
+def build_model(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.Module:
     payload = load_checkpoint(checkpoint, map_location="cpu")
     effective_cfg = payload.get("config", cfg)
-    model_cfg = effective_cfg.get("model", cfg.get("model", {}))
-    model = MAEBackboneAffinityNet(
-        in_channels=int(model_cfg.get("in_channels", 1)),
-        out_channels=int(model_cfg.get("out_channels", 3)),
-        volume_size=tuple(model_cfg.get("volume_size", [16, 128, 128])),
-        patch_size=tuple(model_cfg.get("patch_size", [4, 16, 16])),
-        embed_dim=int(model_cfg.get("embed_dim", 192)),
-        depth=int(model_cfg.get("depth", 6)),
-        num_heads=int(model_cfg.get("num_heads", 6)),
-        dropout=float(model_cfg.get("dropout", 0.0)),
-    )
+    model = build_affinity_model(effective_cfg)
     state = payload.get("model", payload)
     model.load_state_dict(state, strict=True)
     return model.to(device)
@@ -167,6 +157,7 @@ def metric_dict(obj) -> dict[str, float | int]:
         "rand_recall": obj.rand_recall,
         "voi_split": obj.voi_split,
         "voi_merge": obj.voi_merge,
+        "voi_sum": obj.voi_split + obj.voi_merge,
         "n_pred": obj.n_pred,
         "n_gt": obj.n_gt,
         "n_voxels": obj.n_voxels,
@@ -506,6 +497,7 @@ def main() -> None:
         "rand_recall",
         "voi_split",
         "voi_merge",
+        "voi_sum",
         "affinity_dice",
         "affinity_iou",
         "inference_sec",

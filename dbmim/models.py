@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 import torch
 from torch import nn
@@ -352,6 +352,170 @@ class MAEBackboneAffinityNet(nn.Module):
         return self.head(feat)
 
 
+class ConvBlock3D(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.InstanceNorm3d(out_channels, affine=True),
+            nn.GELU(),
+            nn.Dropout3d(dropout) if dropout > 0 else nn.Identity(),
+            nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.InstanceNorm3d(out_channels, affine=True),
+            nn.GELU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.block(x)
+
+
+class UNETRAffinityNet(nn.Module):
+    """UNETR-style affinity model initialized from the dbMiM ViT encoder.
+
+    The encoder module/key names intentionally match ``DBMIM3DMAE`` so that
+    pretraining checkpoints load into the segmentation backbone. Transformer
+    hidden states are fused at patch-grid resolution and decoded with a
+    convolutional U-Net style refinement path to z/y/x affinity logits.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        out_channels: int = 3,
+        volume_size: tuple[int, int, int] = (16, 64, 64),
+        patch_size: tuple[int, int, int] = (4, 16, 16),
+        embed_dim: int = 192,
+        depth: int = 6,
+        num_heads: int = 6,
+        feature_size: int = 32,
+        dropout: float = 0.0,
+        skip_indices: Sequence[int] | None = None,
+    ) -> None:
+        super().__init__()
+        self.volume_size = _triple(volume_size)
+        self.patch_size = _triple(patch_size)
+        self.patch_embed = PatchEmbed3D(in_channels, embed_dim, self.patch_size)
+        self.grid_size = tuple(v // p for v, p in zip(self.volume_size, self.patch_size))
+        self.num_patches = math.prod(self.grid_size)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dim))
+        self.encoder_blocks = nn.ModuleList(
+            [TransformerBlock(embed_dim, num_heads, dropout=dropout) for _ in range(depth)]
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+        if skip_indices is None:
+            raw = {
+                max(0, depth // 4 - 1),
+                max(0, depth // 2 - 1),
+                max(0, (3 * depth) // 4 - 1),
+            }
+            skip_indices = sorted(raw)
+        self.skip_indices = tuple(int(i) for i in skip_indices if 0 <= int(i) < depth)
+        self.final_proj = nn.Sequential(
+            nn.Conv3d(embed_dim, feature_size * 4, kernel_size=1, bias=False),
+            nn.InstanceNorm3d(feature_size * 4, affine=True),
+            nn.GELU(),
+            ConvBlock3D(feature_size * 4, feature_size * 4, dropout=dropout),
+        )
+        self.up_late = nn.ConvTranspose3d(
+            feature_size * 4,
+            feature_size * 4,
+            kernel_size=(1, 2, 2),
+            stride=(1, 2, 2),
+        )
+        self.skip_late_up = nn.Sequential(
+            nn.ConvTranspose3d(
+                embed_dim,
+                feature_size * 4,
+                kernel_size=(1, 2, 2),
+                stride=(1, 2, 2),
+                bias=False,
+            ),
+            nn.InstanceNorm3d(feature_size * 4, affine=True),
+            nn.GELU(),
+        )
+        self.decode_late = ConvBlock3D(feature_size * 8, feature_size * 4, dropout=dropout)
+        self.up_mid = nn.ConvTranspose3d(
+            feature_size * 4,
+            feature_size * 2,
+            kernel_size=(2, 2, 2),
+            stride=(2, 2, 2),
+        )
+        self.skip_mid_up = nn.Sequential(
+            nn.ConvTranspose3d(
+                embed_dim,
+                feature_size * 2,
+                kernel_size=(2, 4, 4),
+                stride=(2, 4, 4),
+                bias=False,
+            ),
+            nn.InstanceNorm3d(feature_size * 2, affine=True),
+            nn.GELU(),
+        )
+        self.decode_mid = ConvBlock3D(feature_size * 4, feature_size * 2, dropout=dropout)
+        full_stride = (
+            max(1, self.patch_size[0] // 2),
+            max(1, self.patch_size[1] // 4),
+            max(1, self.patch_size[2] // 4),
+        )
+        self.up_full = nn.ConvTranspose3d(
+            feature_size * 2,
+            feature_size,
+            kernel_size=full_stride,
+            stride=full_stride,
+        )
+        self.input_skip = ConvBlock3D(in_channels, feature_size, dropout=dropout)
+        self.decode_full = ConvBlock3D(feature_size * 2, feature_size, dropout=dropout)
+        self.head = nn.Conv3d(feature_size, out_channels, kernel_size=1)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+    def _tokens_to_grid(self, tokens: torch.Tensor) -> torch.Tensor:
+        bsz, _, channels = tokens.shape
+        gd, gh, gw = self.grid_size
+        return tokens.transpose(1, 2).reshape(bsz, channels, gd, gh, gw)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        tokens, grid = self.patch_embed(x)
+        if grid != self.grid_size:
+            raise ValueError(f"input grid {grid} does not match configured grid {self.grid_size}")
+        tokens = tokens + self.pos_embed
+        hidden: list[torch.Tensor] = []
+        for idx, block in enumerate(self.encoder_blocks):
+            tokens = block(tokens)
+            if idx in self.skip_indices:
+                hidden.append(tokens)
+        tokens = self.norm(tokens)
+        if len(hidden) >= 2:
+            mid_tokens, late_tokens = hidden[-2], hidden[-1]
+        elif len(hidden) == 1:
+            mid_tokens = late_tokens = hidden[-1]
+        else:
+            mid_tokens = late_tokens = tokens
+        decoded = self.final_proj(self._tokens_to_grid(tokens))
+        decoded = self.decode_late(
+            torch.cat(
+                [
+                    self.up_late(decoded),
+                    self.skip_late_up(self._tokens_to_grid(late_tokens)),
+                ],
+                dim=1,
+            )
+        )
+        decoded = self.decode_mid(
+            torch.cat(
+                [
+                    self.up_mid(decoded),
+                    self.skip_mid_up(self._tokens_to_grid(mid_tokens)),
+                ],
+                dim=1,
+            )
+        )
+        decoded = self.up_full(decoded)
+        if tuple(decoded.shape[-3:]) != tuple(x.shape[-3:]):
+            decoded = F.interpolate(decoded, size=x.shape[-3:], mode="trilinear", align_corners=False)
+        skip = self.input_skip(x)
+        return self.head(self.decode_full(torch.cat([decoded, skip], dim=1)))
+
+
 def gradient_loss_3d(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     loss = pred.new_tensor(0.0)
     for dim in (-3, -2, -1):
@@ -361,7 +525,7 @@ def gradient_loss_3d(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return loss / 3.0
 
 
-def load_pretrained_backbone(model: MAEBackboneAffinityNet, checkpoint: dict[str, Any]) -> list[str]:
+def load_pretrained_backbone(model: nn.Module, checkpoint: dict[str, Any]) -> list[str]:
     state = checkpoint.get("model", checkpoint)
     own = model.state_dict()
     loaded: dict[str, torch.Tensor] = {}

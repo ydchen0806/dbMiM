@@ -12,7 +12,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset, labels_to_affinities
 from dbmim.metrics import AverageMeter, binary_iou_from_logits, dice_from_logits
-from dbmim.models import MAEBackboneAffinityNet, load_pretrained_backbone
+from dbmim.models import MAEBackboneAffinityNet, UNETRAffinityNet, load_pretrained_backbone
 from dbmim.utils import (
     atomic_jsonl_append,
     count_parameters,
@@ -137,6 +137,30 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
     )
 
 
+def build_affinity_model(cfg: dict) -> torch.nn.Module:
+    model_cfg = cfg.get("model", {})
+    architecture = str(model_cfg.get("architecture", model_cfg.get("name", "mae_head"))).lower()
+    common = {
+        "in_channels": int(model_cfg.get("in_channels", 1)),
+        "out_channels": int(model_cfg.get("out_channels", 3)),
+        "volume_size": tuple(model_cfg.get("volume_size", [16, 64, 64])),
+        "patch_size": tuple(model_cfg.get("patch_size", [4, 16, 16])),
+        "embed_dim": int(model_cfg.get("embed_dim", 192)),
+        "depth": int(model_cfg.get("depth", 6)),
+        "num_heads": int(model_cfg.get("num_heads", 6)),
+        "dropout": float(model_cfg.get("dropout", 0.0)),
+    }
+    if architecture in {"unetr", "unetr_affinity", "unetr_affinity_net"}:
+        return UNETRAffinityNet(
+            **common,
+            feature_size=int(model_cfg.get("feature_size", 32)),
+            skip_indices=model_cfg.get("skip_indices"),
+        )
+    if architecture in {"linear_head", "transpose_head", "mae_head", "mae_backbone"}:
+        return MAEBackboneAffinityNet(**common)
+    raise ValueError(f"unknown model architecture: {architecture}")
+
+
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, train_cfg: dict) -> dict[str, float]:
     model.eval()
@@ -211,17 +235,7 @@ def main() -> None:
         pin_memory=(device.type == "cuda"),
     )
 
-    model_cfg = cfg.get("model", {})
-    model = MAEBackboneAffinityNet(
-        in_channels=int(model_cfg.get("in_channels", 1)),
-        out_channels=int(model_cfg.get("out_channels", 3)),
-        volume_size=tuple(model_cfg.get("volume_size", [16, 64, 64])),
-        patch_size=tuple(model_cfg.get("patch_size", [4, 16, 16])),
-        embed_dim=int(model_cfg.get("embed_dim", 192)),
-        depth=int(model_cfg.get("depth", 6)),
-        num_heads=int(model_cfg.get("num_heads", 6)),
-        dropout=float(model_cfg.get("dropout", 0.0)),
-    ).to(device)
+    model = build_affinity_model(cfg).to(device)
 
     pretrained = args.pretrained or cfg.get("pretrained", "")
     if pretrained:
@@ -295,7 +309,10 @@ def main() -> None:
                 break
 
         stats = {}
-        if is_main(rank) and ((epoch + 1) % eval_every == 0 or epoch + 1 == epochs):
+        should_eval = (epoch + 1) % eval_every == 0 or epoch + 1 == epochs
+        if distributed and should_eval:
+            dist.barrier()
+        if is_main(rank) and should_eval:
             stats = evaluate(unwrap(model), val_loader, device, train_cfg)
             stats.update({"epoch": epoch, "step": global_step})
             print(stats, flush=True)
@@ -313,8 +330,13 @@ def main() -> None:
                         "config": cfg,
                     },
                 )
+        if distributed and should_eval:
+            dist.barrier()
 
-        if is_main(rank) and ((epoch + 1) % save_every == 0 or epoch + 1 == epochs or (max_steps and global_step >= max_steps)):
+        should_save = (epoch + 1) % save_every == 0 or epoch + 1 == epochs or (max_steps and global_step >= max_steps)
+        if distributed and should_save:
+            dist.barrier()
+        if is_main(rank) and should_save:
             payload = {
                 "model": unwrap(model).state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -326,6 +348,8 @@ def main() -> None:
             }
             save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
             save_checkpoint(output_dir / "finetuned_latest.pt", payload)
+        if distributed and should_save:
+            dist.barrier()
         if max_steps and global_step >= max_steps:
             break
     if distributed:

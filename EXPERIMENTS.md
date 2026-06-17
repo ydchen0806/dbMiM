@@ -3,6 +3,49 @@
 This note tracks the maintained reproduction path and the real SiFlow
 experiments run on CREMI.
 
+## Paper-aligned UNETR Ablation
+
+The current paper-aligned experiment uses a UNETR affinity backbone and reports
+VOI plus adapted Rand error (ARAND). The goal is to isolate the effect of dbMiM
+pretraining:
+
+| arm | backbone | initialization | config | output prefix |
+|---|---|---|---|---|
+| UNETR pretrained | `UNETRAffinityNet` | dbMiM pretrained ViT encoder | `configs/finetune_cremi_real_unetr_pretrained.yaml` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_pretrained/` |
+| UNETR scratch | `UNETRAffinityNet` | random initialization | `configs/finetune_cremi_real_unetr_scratch.yaml` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_scratch/` |
+
+Training jobs submitted on 2026-06-17 through Shanghai changliu `med-model`
+with 8 GPUs per pod:
+
+| arm | UUID | TOS bootstrap bundle |
+|---|---|---|
+| UNETR pretrained | `0ad158c2-b5dc-4a25-a916-07be456a56bb` | `tos://agi-data/users/dchen02/dbmim/bundles/dbmim-finetune-cremi-unetr-pretrained.20260617T101657+0800.tar.gz` |
+| UNETR scratch | `a0b2978b-8237-4c0d-ba8a-fcadb8c79453` | `tos://agi-data/users/dchen02/dbmim/bundles/dbmim-finetune-cremi-unetr-scratch.20260617T101657+0800.tar.gz` |
+
+Evaluation stages:
+
+| arm | SiFlow stage | output prefix |
+|---|---|---|
+| UNETR pretrained | `eval-cremi-unetr-pretrained` | `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_pretrained/` |
+| UNETR scratch | `eval-cremi-unetr-scratch` | `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_scratch/` |
+
+Watchers are running from the login node and will submit the two eval stages
+when `finetuned_best.pt` or `finetuned_latest.pt` appears:
+
+| arm | watcher log |
+|---|---|
+| UNETR pretrained | `outputs/watchers/eval_unetr_pretrained_20260617T102435_setsid.log` |
+| UNETR scratch | `outputs/watchers/eval_unetr_scratch_20260617T102435_setsid.log` |
+
+Premature eval record to ignore: `d5e1a290-ac9c-4913-9407-8fb195e75ac3`
+was submitted before the watcher checkpoint probe was hardened, so the eval
+should be retried by the strict watcher after the UNETR checkpoint is actually
+available.
+
+Headline reporting should use `best_by_adapted_rand` from
+`cremi_segmentation_summary.json` and report `adapted_rand_error`, `voi_split`,
+`voi_merge`, and `voi_sum` from the same row.
+
 ## Baseline Weights
 
 - Pretrain job: `c197160f-467f-4693-b544-3f52e52c1d3a`
@@ -126,9 +169,11 @@ infrastructure for future loss experiments.
 
 For this codebase, the most stable enhancement path is:
 
-1. Keep graph connected components as the primary post-processing backend.
-2. Tune z/xy thresholds separately.
-3. Improve affinity calibration during finetuning with channel-weighted BCE/Dice
-   before spending more time on waterz/elf/mahotas RAG variants.
+1. Treat UNETR pretrained vs UNETR scratch as the main paper-aligned comparison.
+2. Keep graph connected components as the primary post-processing backend.
+3. Tune z/xy thresholds separately and report VOI/ARAND from the same best
+   adapted-Rand row.
 4. Treat generic CuPy sparse graph CC as a probe only. For real acceleration,
    implement a custom GPU union-find or blockwise stitching kernel.
+5. Keep waterz/elf/mahotas RAG variants as negative controls unless a stronger
+   merge policy is introduced.

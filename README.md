@@ -1,165 +1,176 @@
-# Self-supervised Neuron Segmentation with Multi-agent Reinforcement Learning (IJCAI 2023)
-This repository contains the official implementation of the paper **Self-supervised Neuron Segmentation with Multi-agent Reinforcement Learning**, presented at IJCAI 2023. You can find the paper [here](https://www.ijcai.org/proceedings/2023/0068.pdf).
+# dbMiM Neuron Segmentation
 
-<details>
-  <summary>Visitor Count</summary>
-  <img src="https://komarev.com/ghpvc/?username=ydchen0806&repo=dbMiM" alt="Visitor Count">
-</details>
+This repository is maintained around the current paper-aligned CREMI
+reproduction path:
 
-<div style="text-align: center;">
-  <img src="framework.png" alt="The pipeline of our proposed methods" width="100%" />
-  <p><b>Figure 1:</b> The pipeline of our proposed methods</p>
-</div>
+- Backbone: 3D UNETR affinity segmentation model.
+- Pretraining: dbMiM masked-image modeling on EM volumes with the same ViT
+  encoder keys used by the UNETR finetuning model.
+- Finetuning target: z/y/x nearest-neighbor affinities.
+- Evaluation: instance segmentation on CREMI with VOI and adapted Rand error
+  (ARAND).
+- Main question: does dbMiM pretraining improve UNETR finetuning over the same
+  UNETR architecture trained from scratch?
 
-<div style="text-align: center;">
-  <img src="decision_module.png" alt="The framework of our proposed decision module" width="50%" />
-  <p><b>Figure 2:</b> The framework of our proposed decision module</p>
-</div>
+The old private-path scripts and historical notes are not the maintained entry
+points. Use the files below for new experiments:
 
-## Environment Setup
-
-To streamline the setup process, we provide a Docker image that can be used to set up the environment with a single command. The Docker image is available at:
-
-```sh
-docker pull registry.cn-hangzhou.aliyuncs.com/cyd_dl/monai-vit:v26
+```text
+dbmim/models.py                         # DBMIM3DMAE and UNETRAffinityNet
+train_pretrain.py                       # dbMiM pretraining
+train_finetune.py                       # affinity finetuning
+scripts/evaluate_cremi_segmentation.py  # VOI/ARAND evaluation
+scripts/submit_siflow_dbmim.py          # TOS-bootstrap SiFlow jobs
+configs/pretrain_cremi_real.yaml
+configs/finetune_cremi_real_unetr_pretrained.yaml
+configs/finetune_cremi_real_unetr_scratch.yaml
 ```
-## Dataset Download
 
-The datasets required for pre-training and segmentation are as follows:
+## Experiment Design
 
-| Dataset Type          | Dataset Name           | Description                              | URL                                           |
-|-----------------------|------------------------|------------------------------------------|-----------------------------------------------|
-| Pre-training Dataset  | Region of FAFB Dataset | Fly brain dataset for pre-training       | [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain_data/tree/main)  |
-| Segmentation Dataset  | CREMI Dataset          | Challenge on circuit reconstruction datasets| [CREMI Dataset](https://cremi.org/)           |
-| Segmentation Dataset  | [AC3/AC4 ](https://software.rc.fas.harvard.edu/lichtman/vast/AC3AC4Package.zip) | AC3/AC4 Dataset | [Mouse Brain GoogleDrive](https://drive.google.com/drive/folders/1JAdoKchlWrHnbTXvnFn6pWWwx6VIiMH3?usp=sharing) |
+The primary ablation is controlled and intentionally narrow:
 
-### Pre-training Dataset: Region of FAFB
+| Arm | Backbone | Initialization | Config |
+|---|---|---|---|
+| UNETR + dbMiM pretrain | `UNETRAffinityNet` | CREMI dbMiM pretrained ViT encoder | `configs/finetune_cremi_real_unetr_pretrained.yaml` |
+| UNETR scratch | `UNETRAffinityNet` | random initialization | `configs/finetune_cremi_real_unetr_scratch.yaml` |
 
-The FAFB region dataset is used for pre-training. Please follow the instructions provided in the paper to acquire and preprocess this dataset. You can download it from the Hugging Face [EM Pretrain Dataset](https://huggingface.co/datasets/cyd0806/EM_pretrain_data/tree/main). Use the subfolder `FAFB_hdf` to match the paper's settings, or use additional relevant data to achieve better results.
+Both arms use the same data, crop size, optimizer, loss, decoder, postprocess
+grid, and evaluation script. The only intended difference is whether the UNETR
+transformer encoder starts from the dbMiM pretrained checkpoint.
 
-To use this dataset, please refer to the license provided [here](#license-important-).
+Evaluation reports:
 
-### Segmentation Dataset: CREMI
+- `adapted_rand_error`: ARAND, lower is better.
+- `voi_split`, `voi_merge`, `voi_sum`: variation of information, lower is
+  better.
+- `rand_fscore`: included for diagnostics, higher is better.
 
-The CREMI dataset is used for the segmentation tasks. Detailed instructions for downloading and preprocessing can be found on the [CREMI Challenge website](https://cremi.org/).
+## Local Checks
 
-## Usage Guide
+Run a synthetic smoke test before touching real jobs:
 
-The maintained training path is self-contained and avoids the private absolute
-paths that were used during early experiments. See `DBMIM_WORKFLOW.md` for the
-complete workflow.
-
-### 0. Smoke test
-
-```sh
+```bash
 bash scripts/run_smoke.sh
 ```
 
-This writes a small synthetic-data checkpoint pair:
+Compile the maintained Python entry points:
 
-- `/volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_smoke/pretrained_latest.pt`
-- `/volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_smoke/finetuned_latest.pt`
-
-### 1. Pretraining
-
-```sh
-python train_pretrain.py --config configs/pretrain_fafb.yaml
+```bash
+python -m py_compile \
+  dbmim/models.py \
+  train_pretrain.py \
+  train_finetune.py \
+  scripts/evaluate_cremi_segmentation.py \
+  scripts/submit_siflow_dbmim.py
 ```
 
-### 2. Finetuning
+Check that the UNETR finetune model can load the pretrained ViT encoder:
 
-```sh
-python train_finetune.py \
-  --config configs/finetune_cremi.yaml \
-  --pretrained /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_fafb_dbmim/pretrained_latest.pt
+```bash
+python - <<'PY'
+import torch
+from dbmim.utils import load_checkpoint
+from dbmim.models import UNETRAffinityNet, load_pretrained_backbone
+
+model = UNETRAffinityNet(
+    in_channels=1,
+    out_channels=3,
+    volume_size=(16, 128, 128),
+    patch_size=(4, 16, 16),
+    embed_dim=192,
+    depth=6,
+    num_heads=6,
+    feature_size=32,
+)
+y = model(torch.randn(1, 1, 16, 128, 128))
+print({"output_shape": tuple(y.shape)})
+ckpt = load_checkpoint("outputs/final_weights/pretrained_latest.pt", map_location="cpu")
+print({"loaded_encoder_keys": len(load_pretrained_backbone(model, ckpt))})
+PY
 ```
 
-### 3. SiFlow
+## SiFlow Jobs
 
-Dry-run:
+SiFlow jobs use TOS bootstrap because changliu pods should not rely on local
+paths or public downloads. Use `--resource-pool auto` for live quota selection.
+Training runs are submitted as 8-GPU DDP jobs; evaluation remains a
+single-process job because the evaluation script runs one model instance and
+sweeps post-processing thresholds inside that process.
 
-```sh
-python scripts/submit_siflow_dbmim.py --stage smoke
-python scripts/submit_siflow_dbmim.py --stage pretrain
-python scripts/submit_siflow_dbmim.py --stage finetune
+```bash
+python scripts/submit_siflow_dbmim.py \
+  --stage pretrain-cremi \
+  --resource-pool auto \
+  --gpus-per-pod 8 \
+  --submit
+
+python scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-pretrained \
+  --resource-pool auto \
+  --gpus-per-pod 8 \
+  --submit
+
+python scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-scratch \
+  --resource-pool auto \
+  --gpus-per-pod 8 \
+  --submit
 ```
 
-Submit only after data and environment paths are verified:
+After both finetuning checkpoints have been uploaded to TOS, run the aligned
+VOI/ARAND evaluation:
 
-```sh
-python scripts/submit_siflow_dbmim.py --stage pretrain --submit
+```bash
+python scripts/submit_siflow_dbmim.py \
+  --stage eval-cremi-unetr-pretrained \
+  --resource-pool auto \
+  --gpus-per-pod 1 \
+  --submit
+
+python scripts/submit_siflow_dbmim.py \
+  --stage eval-cremi-unetr-scratch \
+  --resource-pool auto \
+  --gpus-per-pod 1 \
+  --submit
 ```
 
-### 4. CREMI segmentation post-processing
+The evaluation sweeps anisotropic z/xy thresholds with the stable graph
+connected-components backend and the CuPy graph probe. The summary file is
+`cremi_segmentation_summary.json`; the best row is under
+`best_by_adapted_rand`.
 
-The finetuning head predicts z/y/x affinities. To evaluate neuron instances,
-convert affinities to connected components and compute adapted Rand / VI:
+## Outputs
 
-```sh
-python scripts/evaluate_cremi_segmentation.py \
-  --config configs/finetune_cremi_real.yaml \
-  --checkpoint outputs/finetune_cremi_real_dbmim/finetuned_best.pt \
-  --data-dir data/CREMI \
-  --output-dir outputs/eval_cremi_real_dbmim \
-  --crop-size 32 256 256 \
-  --stride 16 128 128 \
-  --thresholds 0.35 0.45 0.55 0.65 \
-  --min-size 32 \
-  --max-samples 3
+Current TOS prefixes:
+
+```text
+tos://agi-data/users/dchen02/dbmim/outputs/pretrain_cremi_real_dbmim/
+tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_pretrained/
+tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_scratch/
+tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_pretrained/
+tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_scratch/
 ```
 
-For the full CREMI SiFlow path, `eval-cremi` downloads the CREMI TOS asset and
-finetuned checkpoint, runs the post-processing evaluation, and uploads
-`outputs/eval_cremi_real_dbmim` back to TOS:
+Local final-weight copies, when available:
 
-```sh
-python scripts/submit_siflow_dbmim.py --stage eval-cremi --resource-pool med-dev --gpus-per-pod 1 --submit
+```text
+outputs/final_weights/pretrained_latest.pt
+outputs/final_weights/finetuned_best.pt
+outputs/final_weights/finetuned_latest.pt
 ```
 
-If finetuning is still running, launch the watcher so the eval job is submitted
-only after the checkpoint appears on TOS:
+See `EXPERIMENTS.md` for completed UUIDs, checkpoint paths, and ablation
+results.
 
-```sh
-nohup bash scripts/watch_and_submit_eval.sh > outputs/watchers/eval_submit_$(date +%Y%m%dT%H%M%S).log 2>&1 &
-```
+## Legacy Baseline
 
-# License (Important !!!)
-
-<details>
-<summary>Usage Notes</summary>
-
-### **Before the public release of the data, the following usage restrictions must be met:**
-
-1. **Non-commercial Use:** Users do not have the rights to copy, distribute, publish, or use the data for commercial purposes or develop and produce products. Any format or copy of the data is considered the same as the original data. Users may modify the content and convert the data format as needed but are not allowed to publish or provide services using the modified or converted data without permission.
-   
-2. **Research Purposes Only:** Users guarantee that the authorized data will only be used for their own research and will not share the data with third parties in any form.
-
-3. **Citation Requirements:** Research results based on the authorized data, including books, articles, conference papers, theses, policy reports, and other publications, must cite the data source according to citation norms, including the authors and the publisher of the data.
-
-4. **Prohibition of Profit-making Activities:** Users are not allowed to use the authorized data for any profit-making activities.
-
-5. **Termination of Data Use:** Users must terminate all use of the data and destroy the data (e.g., completely delete from computer hard drives and storage devices/spaces) upon leaving their team or organization or when the authorization is revoked by the copyright holder.
-
-### **Data Information**
-
-- **Sample Source:** Mouse MEC MultiBeam-SEM, Intelligent Institute Brain Imaging Platform (Wafer 4 at layer VI, wafer 25, wafer 26, and wafer 36 at layer II/III)
-- **Resolution:** 8nm x 8nm x 35nm
-- **Volume Size:** 1250 x 1250 x 125
-- **Annotation Completion Dates:** 2023.12.11 (w4), 2024.04.12 (w36)
-- **Authors:** Shi Te, Guo Jun, Yin Chunying, Zhang Ruobing
-- **Copyright Holder:** Institute of Artificial Intelligence, Hefei Comprehensive National Science Center
-
-### **Acknowledgment Norms**
-
-- **Chinese Name:** 合肥综合性国家科学中心人工智能研究院
-- **English Name:** Institute of Artificial Intelligence, Hefei Comprehensive National Science Center
-
-</details>
-
+The previous `MAEBackboneAffinityNet` head and the old post-processing/RAG
+experiments are kept for comparison only. They are not the paper-aligned
+backbone path. The recommended current baseline is UNETR scratch vs UNETR
+initialized from dbMiM pretraining.
 
 ## Citation
-
-If you find this code or dataset useful in your research, please consider citing our paper:
 
 ```bibtex
 @inproceedings{chen2023self,
@@ -171,11 +182,8 @@ If you find this code or dataset useful in your research, please consider citing
 }
 ```
 
-# To-Do List
-- [x] Open-sourced the core code
-- [x] Wrote the README for code usage
-- [x] Open-sourced the pre-training dataset
-- [ ] Upload the pre-trained weights
+## Data License Notes
 
-# Contact 
-If you need any help or are looking for cooperation feel free to contact us. cyd0806@mail.ustc.edu.cn
+Use external EM datasets only under their original licenses and access rules.
+Do not commit downloaded datasets, TOS credentials, Hugging Face tokens, SiFlow
+credentials, or generated large checkpoints.
