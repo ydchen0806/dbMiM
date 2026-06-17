@@ -49,6 +49,68 @@ def unwrap(model: torch.nn.Module) -> torch.nn.Module:
     return model.module if hasattr(model, "module") else model
 
 
+def _loss_cfg(train_cfg: dict) -> dict:
+    return train_cfg.get("loss", {}) if isinstance(train_cfg.get("loss", {}), dict) else {}
+
+
+def _broadcast_loss_tensor(value, device: torch.device, *, channels: int, name: str) -> torch.Tensor:
+    if isinstance(value, (list, tuple)):
+        if len(value) != channels:
+            raise ValueError(f"train.loss.{name} must have {channels} values, got {value}")
+        tensor = torch.tensor([float(v) for v in value], device=device, dtype=torch.float32).view(1, channels, 1, 1, 1)
+    else:
+        tensor = torch.tensor(float(value), device=device, dtype=torch.float32).view(1, 1, 1, 1, 1)
+    return tensor
+
+
+def affinity_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    train_cfg: dict,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Configurable affinity objective.
+
+    The default config is exactly the original BCE objective. Optional nested
+    ``train.loss`` keys enable channel weighting, Dice regularization, and a
+    focal factor for harder affinity edges.
+    """
+
+    cfg = _loss_cfg(train_cfg)
+    channels = int(logits.shape[1])
+    pos_weight_value = cfg.get("pos_weight", train_cfg.get("pos_weight", 1.0))
+    channel_weight_value = cfg.get("channel_weights", train_cfg.get("channel_weights", [1.0] * channels))
+    pos_weight = _broadcast_loss_tensor(pos_weight_value, logits.device, channels=channels, name="pos_weight")
+    channel_weight = _broadcast_loss_tensor(channel_weight_value, logits.device, channels=channels, name="channel_weights")
+
+    bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+    bce = torch.where(target > 0.5, bce * pos_weight, bce)
+    focal_gamma = float(cfg.get("focal_gamma", train_cfg.get("focal_gamma", 0.0)))
+    if focal_gamma > 0.0:
+        prob = torch.sigmoid(logits.detach())
+        pt = torch.where(target > 0.5, prob, 1.0 - prob).clamp(1e-4, 1.0)
+        bce = bce * (1.0 - pt).pow(focal_gamma)
+    bce_loss = (bce * channel_weight).sum() / channel_weight.expand_as(bce).sum().clamp_min(1.0)
+
+    dice_weight = float(cfg.get("dice_weight", train_cfg.get("dice_weight", 0.0)))
+    dice_loss = logits.new_tensor(0.0)
+    if dice_weight > 0.0:
+        prob = torch.sigmoid(logits)
+        reduce_dims = (0, 2, 3, 4)
+        smooth = float(cfg.get("dice_smooth", train_cfg.get("dice_smooth", 1.0)))
+        intersection = (prob * target).sum(dim=reduce_dims)
+        denominator = (prob + target).sum(dim=reduce_dims)
+        per_channel = 1.0 - (2.0 * intersection + smooth) / (denominator + smooth)
+        weights = channel_weight.view(channels)
+        dice_loss = (per_channel * weights).sum() / weights.sum().clamp_min(1.0)
+
+    bce_weight = float(cfg.get("bce_weight", train_cfg.get("bce_weight", 1.0)))
+    loss = bce_weight * bce_loss + dice_weight * dice_loss
+    return loss, {
+        "bce_loss": bce_loss.detach(),
+        "dice_loss": dice_loss.detach(),
+    }
+
+
 def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
     data_cfg = cfg.get("data", {})
     volume_size = tuple(data_cfg.get("volume_size", cfg.get("model", {}).get("volume_size", [16, 64, 64])))
@@ -76,9 +138,11 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
 
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> dict[str, float]:
+def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, train_cfg: dict) -> dict[str, float]:
     model.eval()
     loss_m = AverageMeter()
+    bce_m = AverageMeter()
+    dice_loss_m = AverageMeter()
     dice_m = AverageMeter()
     iou_m = AverageMeter()
     for batch in loader:
@@ -86,12 +150,20 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -
         labels = batch["label"].to(device, non_blocking=True)
         target = labels_to_affinities(labels).to(device)
         logits = model(image)
-        loss = F.binary_cross_entropy_with_logits(logits, target)
+        loss, loss_parts = affinity_loss(logits, target, train_cfg)
         bsz = image.shape[0]
         loss_m.update(float(loss.detach().cpu()), bsz)
+        bce_m.update(float(loss_parts["bce_loss"].cpu()), bsz)
+        dice_loss_m.update(float(loss_parts["dice_loss"].cpu()), bsz)
         dice_m.update(dice_from_logits(logits.detach().cpu(), target.detach().cpu()), bsz)
         iou_m.update(binary_iou_from_logits(logits.detach().cpu(), target.detach().cpu()), bsz)
-    return {"val_loss": loss_m.avg, "val_dice": dice_m.avg, "val_iou": iou_m.avg}
+    return {
+        "val_loss": loss_m.avg,
+        "val_bce_loss": bce_m.avg,
+        "val_dice_loss": dice_loss_m.avg,
+        "val_dice": dice_m.avg,
+        "val_iou": iou_m.avg,
+    }
 
 
 def main() -> None:
@@ -183,12 +255,11 @@ def main() -> None:
     log_every = int(train_cfg.get("log_every", 20))
     eval_every = int(train_cfg.get("eval_every", 1))
     save_every = int(train_cfg.get("save_every", 1))
-    pos_weight = torch.tensor(float(train_cfg.get("pos_weight", 1.0)), device=device)
-
     if is_main(rank):
         print(f"output_dir={output_dir}")
         print(f"dataset_size={len(dataset)} train={len(train_set)} val={len(val_set)} device={device} world_size={world_size}")
         print(f"model_trainable_params={count_parameters(unwrap(model))}")
+        print(f"loss_config={_loss_cfg(train_cfg)}")
     t0 = time.time()
     for epoch in range(start_epoch, epochs):
         if sampler is not None:
@@ -201,7 +272,7 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 logits = model(image)
-                loss = F.binary_cross_entropy_with_logits(logits, target, pos_weight=pos_weight)
+                loss, loss_parts = affinity_loss(logits, target, train_cfg)
             scaler.scale(loss).backward()
             if float(train_cfg.get("clip_grad", 0.0)) > 0:
                 scaler.unscale_(optimizer)
@@ -214,6 +285,8 @@ def main() -> None:
                     "epoch": epoch,
                     "step": global_step,
                     "train_loss": float(loss.detach().cpu()),
+                    "train_bce_loss": float(loss_parts["bce_loss"].cpu()),
+                    "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
                     "elapsed_sec": round(time.time() - t0, 2),
                 }
                 print(payload, flush=True)
@@ -223,7 +296,7 @@ def main() -> None:
 
         stats = {}
         if is_main(rank) and ((epoch + 1) % eval_every == 0 or epoch + 1 == epochs):
-            stats = evaluate(unwrap(model), val_loader, device)
+            stats = evaluate(unwrap(model), val_loader, device, train_cfg)
             stats.update({"epoch": epoch, "step": global_step})
             print(stats, flush=True)
             atomic_jsonl_append(log_path, stats)

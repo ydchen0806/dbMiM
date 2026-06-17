@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import sys
 import time
@@ -197,16 +198,25 @@ def run_backend(
     seed_distance: int,
     boundary_threshold: float,
     min_boundary: int,
+    score_mode: str = "mean",
+    rag_quantile: float = 0.25,
+    z_threshold: float | None = None,
+    xy_threshold: float | None = None,
     cache: dict[str, tuple[np.ndarray, float]] | None = None,
 ) -> np.ndarray:
+    graph_threshold = threshold
+    if z_threshold is not None or xy_threshold is not None:
+        z_thr = float(threshold if z_threshold is None else z_threshold)
+        xy_thr = float(threshold if xy_threshold is None else xy_threshold)
+        graph_threshold = (z_thr, xy_thr, xy_thr)
     if backend == "graph_cc":
-        return affinities_to_connected_components(affinities, threshold=threshold, min_size=min_size)
+        return affinities_to_connected_components(affinities, threshold=graph_threshold, min_size=min_size)
     if backend == "cc3d_mean":
         return cc3d_mean_affinity_components(affinities, threshold=threshold, min_size=min_size)
     if backend == "cupy_mean":
         return cupy_mean_affinity_components(affinities, threshold=threshold, min_size=min_size)
     if backend == "cupy_graph_cc":
-        return cupy_affinity_graph_connected_components(affinities, threshold=threshold)
+        return cupy_affinity_graph_connected_components(affinities, threshold=graph_threshold, min_size=min_size)
     if backend == "mahotas_watershed":
         key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
         if cache is not None and key in cache:
@@ -235,7 +245,7 @@ def run_backend(
         if cache is not None:
             cache[key] = (fragments, 0.0)
         return fragments
-    if backend == "mahotas_agglomeration":
+    if backend in {"mahotas_agglomeration", "seeded_rag"}:
         key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
         fragments = None
         if cache is not None and key in cache:
@@ -254,7 +264,11 @@ def run_backend(
             affinities,
             fragments,
             threshold=threshold,
+            z_threshold=z_threshold,
+            xy_threshold=xy_threshold,
             min_boundary=min_boundary,
+            score_mode=score_mode,
+            quantile=rag_quantile,
         )
     if backend == "scipy_agglomeration":
         key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}"
@@ -275,7 +289,11 @@ def run_backend(
             affinities,
             fragments,
             threshold=threshold,
+            z_threshold=z_threshold,
+            xy_threshold=xy_threshold,
             min_boundary=min_boundary,
+            score_mode=score_mode,
+            quantile=rag_quantile,
         )
     if backend == "waterz":
         return waterz_agglomeration(affinities, threshold=threshold)
@@ -302,6 +320,7 @@ def main() -> None:
             "cupy_graph_cc",
             "mahotas_watershed",
             "scipy_watershed",
+            "seeded_rag",
             "mahotas_agglomeration",
             "scipy_agglomeration",
             "waterz",
@@ -309,9 +328,18 @@ def main() -> None:
     )
     parser.add_argument("--min-size", type=int, default=0)
     parser.add_argument("--seed-method", default="maxima_distance", choices=["maxima_distance", "minima", "grid"])
-    parser.add_argument("--seed-distance", type=int, default=12)
-    parser.add_argument("--boundary-threshold", type=float, default=0.5)
-    parser.add_argument("--min-boundary", type=int, default=1)
+    parser.add_argument("--seed-distance", nargs="+", type=int, default=[12])
+    parser.add_argument("--boundary-threshold", nargs="+", type=float, default=[0.5])
+    parser.add_argument("--min-boundary", nargs="+", type=int, default=[1])
+    parser.add_argument(
+        "--score-mode",
+        nargs="+",
+        default=["mean"],
+        choices=["mean", "max", "min", "median", "q10", "q25", "q50", "q75", "quantile"],
+    )
+    parser.add_argument("--rag-quantile", nargs="+", type=float, default=[0.25])
+    parser.add_argument("--z-thresholds", nargs="+", type=float, default=None)
+    parser.add_argument("--xy-thresholds", nargs="+", type=float, default=None)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--save-seg", action="store_true")
@@ -339,6 +367,10 @@ def main() -> None:
     failures: list[dict[str, str | float]] = []
     probes = package_probe()
     print({"package_probe": probes}, flush=True)
+    watershed_backends = {"mahotas_watershed", "scipy_watershed"}
+    anisotropic_graph_backends = {"graph_cc", "cupy_graph_cc"}
+    agglomeration_backends = {"seeded_rag", "mahotas_agglomeration", "scipy_agglomeration"}
+    seed_backends = watershed_backends | agglomeration_backends
     for path in files:
         raw, label, crop = read_cremi_crop(path, crop_size, raw_keys, label_keys)
         print(
@@ -360,7 +392,26 @@ def main() -> None:
         aff_iou = binary_iou_from_logits(logits, target)
         backend_cache: dict[str, tuple[np.ndarray, float]] = {}
         for backend in args.backends:
-            for threshold in args.thresholds:
+            threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
+            seed_distances = args.seed_distance if backend in seed_backends else [args.seed_distance[0]]
+            boundary_thresholds = args.boundary_threshold if backend in seed_backends else [args.boundary_threshold[0]]
+            min_boundaries = args.min_boundary if backend in agglomeration_backends else [args.min_boundary[0]]
+            score_modes = args.score_mode if backend in agglomeration_backends else [args.score_mode[0]]
+            z_thresholds = [None]
+            xy_thresholds = [None]
+            if backend in agglomeration_backends | anisotropic_graph_backends:
+                z_thresholds = list(args.z_thresholds) if args.z_thresholds else [None]
+                xy_thresholds = list(args.xy_thresholds) if args.xy_thresholds else [None]
+            for threshold, seed_distance, boundary_threshold, min_boundary, score_mode, rag_quantile, z_threshold, xy_threshold in itertools.product(
+                threshold_values,
+                seed_distances,
+                boundary_thresholds,
+                min_boundaries,
+                score_modes,
+                args.rag_quantile if backend in agglomeration_backends else [args.rag_quantile[0]],
+                z_thresholds,
+                xy_thresholds,
+            ):
                 try:
                     t1 = time.perf_counter()
                     seg = run_backend(
@@ -369,9 +420,13 @@ def main() -> None:
                         threshold=threshold,
                         min_size=args.min_size,
                         seed_method=args.seed_method,
-                        seed_distance=args.seed_distance,
-                        boundary_threshold=args.boundary_threshold,
-                        min_boundary=args.min_boundary,
+                        seed_distance=int(seed_distance),
+                        boundary_threshold=float(boundary_threshold),
+                        min_boundary=int(min_boundary),
+                        score_mode=str(score_mode),
+                        rag_quantile=float(rag_quantile),
+                        z_threshold=None if z_threshold is None else float(z_threshold),
+                        xy_threshold=None if xy_threshold is None else float(xy_threshold),
                         cache=backend_cache,
                     )
                     postprocess_sec = time.perf_counter() - t1
@@ -383,6 +438,13 @@ def main() -> None:
                         "sample": path.name,
                         "backend": backend,
                         "threshold": float(threshold),
+                        "seed_distance": int(seed_distance),
+                        "boundary_threshold": float(boundary_threshold),
+                        "min_boundary": int(min_boundary),
+                        "score_mode": str(score_mode),
+                        "rag_quantile": float(rag_quantile),
+                        "z_threshold": "" if z_threshold is None else float(z_threshold),
+                        "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
                         "error": repr(exc),
                     }
                     print(failure, flush=True)
@@ -392,6 +454,13 @@ def main() -> None:
                     "sample": path.name,
                     "backend": backend,
                     "threshold": float(threshold),
+                    "seed_distance": int(seed_distance),
+                    "boundary_threshold": float(boundary_threshold),
+                    "min_boundary": int(min_boundary),
+                    "score_mode": str(score_mode),
+                    "rag_quantile": float(rag_quantile),
+                    "z_threshold": "" if z_threshold is None else float(z_threshold),
+                    "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
                     "affinity_dice": float(aff_dice),
                     "affinity_iou": float(aff_iou),
                     "inference_sec": float(infer_sec),
@@ -402,7 +471,13 @@ def main() -> None:
                 print(record, flush=True)
                 records.append(record)
                 if args.save_seg:
-                    out_npz = output_dir / f"{path.stem}_{backend}_thr{threshold:.2f}_seg.npz"
+                    z_tag = "none" if z_threshold is None else f"{float(z_threshold):.2f}"
+                    xy_tag = "none" if xy_threshold is None else f"{float(xy_threshold):.2f}"
+                    out_npz = output_dir / (
+                        f"{path.stem}_{backend}_thr{threshold:.2f}_sd{int(seed_distance)}_"
+                        f"bt{float(boundary_threshold):.2f}_mb{int(min_boundary)}_"
+                        f"{score_mode}_z{z_tag}_xy{xy_tag}_seg.npz"
+                    )
                     np.savez_compressed(out_npz, segmentation=seg.astype(np.uint64), crop=np.array([[sl.start, sl.stop] for sl in crop]))
 
     csv_path = output_dir / "cremi_segmentation_metrics.csv"
@@ -412,7 +487,6 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(records)
     thresholds = sorted({float(r["threshold"]) for r in records})
-    backends = sorted({str(r["backend"]) for r in records})
     summary: dict[str, object] = {
         "checkpoint": str(args.checkpoint),
         "data_dir": str(args.data_dir),
@@ -438,13 +512,26 @@ def main() -> None:
         "postprocess_sec",
         "metrics_sec",
     ]
-    for backend in backends:
-        for threshold in thresholds:
-            rows = [r for r in records if str(r["backend"]) == backend and float(r["threshold"]) == threshold]
-            mean_row: dict[str, float | int | str] = {"backend": backend, "threshold": threshold, "n": len(rows)}
-            for key in metric_keys:
-                mean_row[key] = float(np.mean([float(r[key]) for r in rows])) if rows else float("nan")
-            summary["per_backend_threshold"].append(mean_row)  # type: ignore[index]
+    group_keys = [
+        "backend",
+        "threshold",
+        "seed_distance",
+        "boundary_threshold",
+        "min_boundary",
+        "score_mode",
+        "rag_quantile",
+        "z_threshold",
+        "xy_threshold",
+    ]
+    grouped: dict[tuple[object, ...], list[dict[str, float | int | str]]] = {}
+    for record in records:
+        grouped.setdefault(tuple(record[key] for key in group_keys), []).append(record)
+    for key_tuple, rows in sorted(grouped.items(), key=lambda item: tuple(str(v) for v in item[0])):
+        mean_row: dict[str, float | int | str] = dict(zip(group_keys, key_tuple))
+        mean_row["n"] = len(rows)
+        for key in metric_keys:
+            mean_row[key] = float(np.mean([float(r[key]) for r in rows])) if rows else float("nan")
+        summary["per_backend_threshold"].append(mean_row)  # type: ignore[index]
     for threshold in thresholds:
         rows = [r for r in records if float(r["threshold"]) == threshold]
         mean_row: dict[str, float | int] = {"threshold": threshold, "n": len(rows)}

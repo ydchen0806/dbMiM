@@ -272,12 +272,90 @@ def _affinity_boundary_pairs(
     return lo * int(base) + hi, weight[keep]
 
 
+def _reduce_pair_scores(
+    packed: np.ndarray,
+    weights: np.ndarray,
+    score_mode: str = "mean",
+    quantile: float = 0.25,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if packed.size == 0:
+        return (
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.float32),
+            np.empty(0, dtype=np.int64),
+        )
+    order = np.argsort(packed)
+    packed = packed[order]
+    weights = weights[order].astype(np.float32, copy=False)
+    unique, starts, counts = np.unique(packed, return_index=True, return_counts=True)
+    mode = score_mode.lower()
+    if mode == "mean":
+        scores = np.add.reduceat(weights, starts) / np.maximum(counts, 1)
+    elif mode == "max":
+        scores = np.maximum.reduceat(weights, starts)
+    elif mode == "min":
+        scores = np.minimum.reduceat(weights, starts)
+    elif mode in {"median", "q50"}:
+        scores = np.array(
+            [np.quantile(weights[start : start + count], 0.50) for start, count in zip(starts, counts)],
+            dtype=np.float32,
+        )
+    elif mode in {"q10", "quantile10"}:
+        scores = np.array(
+            [np.quantile(weights[start : start + count], 0.10) for start, count in zip(starts, counts)],
+            dtype=np.float32,
+        )
+    elif mode in {"q25", "quantile25"}:
+        q = 0.25
+        scores = np.array(
+            [np.quantile(weights[start : start + count], q) for start, count in zip(starts, counts)],
+            dtype=np.float32,
+        )
+    elif mode == "quantile":
+        q = float(quantile)
+        scores = np.array(
+            [np.quantile(weights[start : start + count], q) for start, count in zip(starts, counts)],
+            dtype=np.float32,
+        )
+    elif mode in {"q75", "quantile75"}:
+        scores = np.array(
+            [np.quantile(weights[start : start + count], 0.75) for start, count in zip(starts, counts)],
+            dtype=np.float32,
+        )
+    else:
+        raise ValueError(f"unknown score_mode: {score_mode}")
+    return unique, scores.astype(np.float32, copy=False), counts.astype(np.int64, copy=False)
+
+
+def _select_pairs_by_score(
+    packed: np.ndarray,
+    weights: np.ndarray,
+    threshold: float,
+    min_boundary: int,
+    score_mode: str,
+    quantile: float,
+) -> np.ndarray:
+    unique, scores, counts = _reduce_pair_scores(
+        packed,
+        weights,
+        score_mode=score_mode,
+        quantile=quantile,
+    )
+    if unique.size == 0:
+        return unique
+    return unique[(scores >= float(threshold)) & (counts >= int(min_boundary))]
+
+
 def agglomerate_fragments_by_affinity(
     affinities: np.ndarray,
     fragments: np.ndarray,
     threshold: float = 0.5,
+    z_threshold: float | None = None,
+    xy_threshold: float | None = None,
     min_boundary: int = 1,
     use_channels: Sequence[int] = (0, 1, 2),
+    score_mode: str = "mean",
+    quantile: float = 0.25,
 ) -> np.ndarray:
     """Merge watershed fragments whose shared boundary affinity is high."""
 
@@ -291,31 +369,49 @@ def agglomerate_fragments_by_affinity(
     if max_id <= 1:
         return fragments.copy()
     base = max_id + 1
-    packed_parts: list[np.ndarray] = []
-    weight_parts: list[np.ndarray] = []
+    selected_parts: list[np.ndarray] = []
+    z_thr = float(threshold if z_threshold is None else z_threshold)
+    xy_thr = float(threshold if xy_threshold is None else xy_threshold)
     if 0 in use_channels and fragments.shape[0] > 1:
         packed, weight = _affinity_boundary_pairs(fragments[1:], fragments[:-1], affinities[0, 1:], base)
-        packed_parts.append(packed)
-        weight_parts.append(weight)
+        selected_parts.append(
+            _select_pairs_by_score(
+                packed,
+                weight,
+                threshold=z_thr,
+                min_boundary=min_boundary,
+                score_mode=score_mode,
+                quantile=quantile,
+            )
+        )
     if 1 in use_channels and fragments.shape[1] > 1:
         packed, weight = _affinity_boundary_pairs(fragments[:, 1:], fragments[:, :-1], affinities[1, :, 1:], base)
-        packed_parts.append(packed)
-        weight_parts.append(weight)
+        selected_parts.append(
+            _select_pairs_by_score(
+                packed,
+                weight,
+                threshold=xy_thr,
+                min_boundary=min_boundary,
+                score_mode=score_mode,
+                quantile=quantile,
+            )
+        )
     if 2 in use_channels and fragments.shape[2] > 1:
         packed, weight = _affinity_boundary_pairs(fragments[:, :, 1:], fragments[:, :, :-1], affinities[2, :, :, 1:], base)
-        packed_parts.append(packed)
-        weight_parts.append(weight)
-    packed_parts = [part for part in packed_parts if part.size]
-    weight_parts = [part for part in weight_parts if part.size]
-    if not packed_parts:
+        selected_parts.append(
+            _select_pairs_by_score(
+                packed,
+                weight,
+                threshold=xy_thr,
+                min_boundary=min_boundary,
+                score_mode=score_mode,
+                quantile=quantile,
+            )
+        )
+    selected_parts = [part for part in selected_parts if part.size]
+    if not selected_parts:
         return relabel_sequential(fragments)
-
-    packed_all = np.concatenate(packed_parts)
-    weights_all = np.concatenate(weight_parts)
-    unique_pairs, inverse, counts = np.unique(packed_all, return_inverse=True, return_counts=True)
-    sums = np.bincount(inverse, weights=weights_all)
-    means = sums / np.maximum(counts, 1)
-    selected = unique_pairs[(means >= float(threshold)) & (counts >= int(min_boundary))]
+    selected = np.unique(np.concatenate(selected_parts))
 
     uf = UnionFind(max_id + 1)
     for packed in selected:
@@ -335,6 +431,10 @@ def watershed_agglomeration(
     seed_distance: int = 12,
     boundary_threshold: float = 0.5,
     min_boundary: int = 1,
+    score_mode: str = "mean",
+    quantile: float = 0.25,
+    z_threshold: float | None = None,
+    xy_threshold: float | None = None,
 ) -> np.ndarray:
     fragments = watershed_fragments(
         affinities,
@@ -347,7 +447,11 @@ def watershed_agglomeration(
         affinities,
         fragments,
         threshold=threshold,
+        z_threshold=z_threshold,
+        xy_threshold=xy_threshold,
         min_boundary=min_boundary,
+        score_mode=score_mode,
+        quantile=quantile,
     )
 
 
@@ -413,6 +517,7 @@ def cupy_mean_affinity_components(
 def cupy_affinity_graph_connected_components(
     affinities: np.ndarray,
     threshold: float = 0.5,
+    min_size: int = 0,
 ) -> np.ndarray:
     """GPU affinity graph CC if pylibcugraph is available in the environment."""
 
@@ -448,6 +553,12 @@ def cupy_affinity_graph_connected_components(
     graph = coo_matrix((data, (rows, cols)), shape=(grid.size, grid.size)).tocsr()
     _, labels_gpu = connected_components(graph, directed=False, return_labels=True)
     labels = cp.asnumpy(labels_gpu).reshape(depth, height, width).astype(np.uint64) + 1
+    if min_size > 1:
+        ids, counts = np.unique(labels, return_counts=True)
+        small_ids = ids[counts < int(min_size)]
+        if small_ids.size:
+            labels[np.isin(labels, small_ids)] = 0
+            labels = relabel_sequential(labels)
     return labels
 
 
