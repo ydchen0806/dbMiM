@@ -24,10 +24,10 @@ with 8 GPUs per pod:
 
 Evaluation stages:
 
-| arm | SiFlow stage | output prefix |
-|---|---|---|
-| UNETR pretrained | `eval-cremi-unetr-pretrained` | `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_pretrained/` |
-| UNETR scratch | `eval-cremi-unetr-scratch` | `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_scratch/` |
+| arm | SiFlow stage | UUID | output prefix |
+|---|---|---|---|
+| UNETR pretrained | `eval-cremi-unetr-pretrained` | `74591aa2-b752-4ef8-8e19-dc2a5b0d4230` | `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_pretrained/` |
+| UNETR scratch | `eval-cremi-unetr-scratch` | `d7cd2251-0682-4b9d-9e84-8561e7927a2b` | `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_unetr_scratch/` |
 
 Watchers are running from the login node and will submit the two eval stages
 when `finetuned_best.pt` or `finetuned_latest.pt` appears:
@@ -45,6 +45,32 @@ available.
 Headline reporting should use `best_by_adapted_rand` from
 `cremi_segmentation_summary.json` and report `adapted_rand_error`, `voi_split`,
 `voi_merge`, and `voi_sum` from the same row.
+
+Completed result over CREMI A/B/C center crops (`32x256x256`, stride
+`16x128x128`, 24 threshold/backend settings):
+
+| arm | best backend | z threshold | xy threshold | ARAND | Rand F | VOI split | VOI merge | VOI sum | affinity Dice | affinity IoU |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| UNETR pretrained | graph_cc | 0.65 | 0.90 | 0.808767 | 0.191233 | 4.054326 | 0.000000 | 4.054326 | 0.961900 | 0.926685 |
+| UNETR scratch | graph_cc | 0.65 | 0.90 | 0.808767 | 0.191233 | 4.054326 | 0.000000 | 4.054326 | 0.961843 | 0.926580 |
+
+Training best validation rows from the tail logs:
+
+| arm | best epoch | step | val_dice | val_iou | val_loss |
+|---|---:|---:|---:|---:|---:|
+| UNETR pretrained | 1719 | 25800 | 0.966879 | 0.935917 | 0.360447 |
+| UNETR scratch | 1899 | 28500 | 0.966754 | 0.935687 | 0.379407 |
+
+This is a negative result for the current UNETR decoder/postprocess setup:
+dbMiM pretraining slightly improves affinity validation metrics, but the
+instance-segmentation metric selected by the threshold sweep is identical to
+scratch. Both UNETR arms are also worse than the earlier MAE-head graph-CC
+baseline (`ARAND 0.745897`, `VOI sum 4.344215`) on the same 3-sample CREMI
+evaluation. The next useful experiment is not more threshold search on this
+decoder; it should address affinity calibration/segmentation topology, e.g.
+stronger boundary-aware loss, longer/larger-context finetuning, or a
+postprocess objective that penalizes the all-merge failure mode reflected by
+`VOI merge = 0`.
 
 ## Baseline Weights
 
