@@ -104,6 +104,27 @@ Interpretation caveats:
 - Boundary-heavy changes should be judged by VOI/ARAND after threshold sweep,
   not just by loss.
 
+## LSD-style Auxiliary Head
+
+The R2 method branch adds a lightweight shape-descriptor auxiliary target,
+inspired by funkelab LSD but not a full funlib local-moment implementation.
+`labels_to_local_shape_descriptors` creates four target channels from instance
+labels: foreground, dz, dy, dx centroid offsets. Configs with
+`train.loss.lsd_weight > 0` must set `model.out_channels: 7`; the first three
+channels remain z/y/x affinities and the last four are supervised descriptor
+channels.
+
+Rules:
+
+- `train_finetune.py` must slice the first 3 channels before computing affinity
+  BCE/Dice and affinity validation Dice/IoU.
+- `scripts/evaluate_cremi_segmentation.py` must slice `logits[:, :3]` before
+  sigmoid and post-processing. Otherwise VOI/ARAND will silently decode
+  descriptor channels as affinities.
+- Compare LSD-pretrained against LSD-scratch and pretrained-r2 against
+  scratch-r2. Do not interpret a single LSD arm without the paired scratch
+  control.
+
 ## Pre-submit Smoke Tests
 
 Run:

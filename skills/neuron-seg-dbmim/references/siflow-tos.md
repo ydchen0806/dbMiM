@@ -121,3 +121,24 @@ Main checkpoint names:
 For long jobs, prefer adding a lightweight rank-0 heartbeat or periodic upload
 of `train_log.jsonl` / `finetune_log.jsonl` to TOS. Waiting until checkpoint
 save makes it impossible to inspect early loss when SDK logs are slow.
+
+As of the R2 restart, `scripts/submit_siflow_dbmim.py` wraps training stages
+with a shell sync loop. While the foreground training command runs, the loop
+periodically uploads:
+
+- `finetuned_latest.pt`
+- `finetuned_best.pt`
+- `pretrained_latest.pt`
+- `finetune_log.jsonl`
+- `pretrain_log.jsonl`
+
+The full output directory is uploaded once more after the training command
+exits. Watchers should therefore see checkpoints during training instead of
+waiting for process exit. If watchers still show only `checkpoint_wait`, check
+whether the job started, whether the output directory name matches the TOS
+prefix, and whether the training process reached its first `save_every` epoch.
+
+SiFlow SDK task stop/status calls can hang in network/proxy setup. For
+submission commands, use the project submitter or `submit_tos_bootstrap_job.py`
+with `--direct-network`; for ad hoc SDK scripts, unset proxy variables before
+creating the client.

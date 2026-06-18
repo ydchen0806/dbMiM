@@ -10,7 +10,12 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 from torch.utils.data.distributed import DistributedSampler
 
-from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset, labels_to_affinities
+from dbmim.datasets import (
+    EMVolumeDataset,
+    SyntheticEMDataset,
+    labels_to_affinities,
+    labels_to_local_shape_descriptors,
+)
 from dbmim.metrics import AverageMeter, binary_iou_from_logits, dice_from_logits
 from dbmim.models import (
     MAEBackboneAffinityNet,
@@ -116,6 +121,58 @@ def affinity_loss(
     }
 
 
+def finetune_loss(
+    logits: torch.Tensor,
+    affinity_target: torch.Tensor,
+    labels: torch.Tensor,
+    train_cfg: dict,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Affinity loss plus optional LSD-style auxiliary supervision."""
+
+    cfg = _loss_cfg(train_cfg)
+    affinity_channels = int(affinity_target.shape[1])
+    affinity_logits = logits[:, :affinity_channels]
+    loss, parts = affinity_loss(affinity_logits, affinity_target, train_cfg)
+    lsd_weight = float(cfg.get("lsd_weight", train_cfg.get("lsd_weight", 0.0)))
+    lsd_loss = logits.new_tensor(0.0)
+    lsd_fg_loss = logits.new_tensor(0.0)
+    lsd_offset_loss = logits.new_tensor(0.0)
+    if lsd_weight > 0.0:
+        lsd_channels = int(cfg.get("lsd_channels", train_cfg.get("lsd_channels", 4)))
+        lsd_logits = logits[:, affinity_channels : affinity_channels + lsd_channels]
+        if int(lsd_logits.shape[1]) != lsd_channels:
+            raise ValueError(
+                f"lsd_weight>0 requires {affinity_channels + lsd_channels} model output channels, "
+                f"got {int(logits.shape[1])}"
+            )
+        if lsd_channels != 4:
+            raise ValueError("current LSD-style descriptor expects train.loss.lsd_channels=4")
+        lsd_target = labels_to_local_shape_descriptors(labels).to(logits.device)
+        foreground = lsd_target[:, :1]
+        lsd_fg_loss = F.binary_cross_entropy_with_logits(lsd_logits[:, :1], foreground)
+        foreground_voxels = foreground.sum().clamp_min(1.0)
+        lsd_offset_loss = (
+            F.smooth_l1_loss(
+                torch.tanh(lsd_logits[:, 1:]) * foreground,
+                lsd_target[:, 1:] * foreground,
+                reduction="sum",
+            )
+            / (foreground_voxels * 3.0)
+        )
+        lsd_loss = float(cfg.get("lsd_fg_weight", 0.25)) * lsd_fg_loss + float(
+            cfg.get("lsd_offset_weight", 1.0)
+        ) * lsd_offset_loss
+        loss = loss + lsd_weight * lsd_loss
+    parts.update(
+        {
+            "lsd_loss": lsd_loss.detach(),
+            "lsd_fg_loss": lsd_fg_loss.detach(),
+            "lsd_offset_loss": lsd_offset_loss.detach(),
+        }
+    )
+    return loss, parts
+
+
 def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
     data_cfg = cfg.get("data", {})
     volume_size = tuple(data_cfg.get("volume_size", cfg.get("model", {}).get("volume_size", [16, 64, 64])))
@@ -184,6 +241,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
     loss_m = AverageMeter()
     bce_m = AverageMeter()
     dice_loss_m = AverageMeter()
+    lsd_loss_m = AverageMeter()
     dice_m = AverageMeter()
     iou_m = AverageMeter()
     for batch in loader:
@@ -191,17 +249,20 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         labels = batch["label"].to(device, non_blocking=True)
         target = labels_to_affinities(labels).to(device)
         logits = model(image)
-        loss, loss_parts = affinity_loss(logits, target, train_cfg)
+        loss, loss_parts = finetune_loss(logits, target, labels, train_cfg)
+        affinity_logits = logits[:, : target.shape[1]]
         bsz = image.shape[0]
         loss_m.update(float(loss.detach().cpu()), bsz)
         bce_m.update(float(loss_parts["bce_loss"].cpu()), bsz)
         dice_loss_m.update(float(loss_parts["dice_loss"].cpu()), bsz)
-        dice_m.update(dice_from_logits(logits.detach().cpu(), target.detach().cpu()), bsz)
-        iou_m.update(binary_iou_from_logits(logits.detach().cpu(), target.detach().cpu()), bsz)
+        lsd_loss_m.update(float(loss_parts["lsd_loss"].cpu()), bsz)
+        dice_m.update(dice_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
+        iou_m.update(binary_iou_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
     return {
         "val_loss": loss_m.avg,
         "val_bce_loss": bce_m.avg,
         "val_dice_loss": dice_loss_m.avg,
+        "val_lsd_loss": lsd_loss_m.avg,
         "val_dice": dice_m.avg,
         "val_iou": iou_m.avg,
     }
@@ -303,7 +364,7 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 logits = model(image)
-                loss, loss_parts = affinity_loss(logits, target, train_cfg)
+                loss, loss_parts = finetune_loss(logits, target, labels, train_cfg)
             scaler.scale(loss).backward()
             if float(train_cfg.get("clip_grad", 0.0)) > 0:
                 scaler.unscale_(optimizer)
@@ -318,6 +379,7 @@ def main() -> None:
                     "train_loss": float(loss.detach().cpu()),
                     "train_bce_loss": float(loss_parts["bce_loss"].cpu()),
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
+                    "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
                     "elapsed_sec": round(time.time() - t0, 2),
                 }
                 print(payload, flush=True)

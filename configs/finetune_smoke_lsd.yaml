@@ -1,0 +1,41 @@
+seed: 7
+device: cpu
+output_dir: outputs/smoke_lsd
+pretrained: ""
+data:
+  synthetic: true
+  synthetic_length: 8
+  volume_size: [16, 64, 64]
+model:
+  architecture: unetr_aniso
+  in_channels: 1
+  out_channels: 7
+  volume_size: [16, 64, 64]
+  patch_size: [4, 16, 16]
+  embed_dim: 64
+  depth: 2
+  num_heads: 4
+  feature_size: 16
+  dropout: 0.0
+train:
+  batch_size: 1
+  epochs: 1
+  max_steps: 2
+  num_workers: 0
+  lr: 0.0001
+  weight_decay: 0.0
+  amp: false
+  log_every: 1
+  eval_every: 1
+  save_every: 1
+  val_fraction: 0.25
+  clip_grad: 1.0
+  loss:
+    bce_weight: 1.0
+    dice_weight: 0.1
+    channel_weights: [1.25, 1.0, 1.0]
+    pos_weight: [1.1, 1.0, 1.0]
+    lsd_weight: 0.2
+    lsd_channels: 4
+    lsd_fg_weight: 0.25
+    lsd_offset_weight: 1.0

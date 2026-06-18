@@ -74,6 +74,73 @@ Each ablation has normal and large-crop eval watchers under
 submitted training footprint from 24 GPUs to 64 GPUs, before queued 1-GPU evals
 and the future long-pretrained finetune.
 
+### R2 restart with visible checkpoints and LSD-style auxiliary target
+
+The 2026-06-17 aniso jobs were not usable for fast decision making because the
+TOS bootstrap script uploaded training outputs only after the training command
+exited. Watchers therefore saw no intermediate checkpoint and most logs stayed
+at `checkpoint_wait`. Local watcher processes were killed on 2026-06-18. A
+second attempt to stop old remote SiFlow jobs through `client.tasks.stop` hung
+inside SDK network/proxy connection handling and was interrupted locally; treat
+remote stop state as unconfirmed until SiFlow task state is queried successfully.
+
+Open-source review shifted the next method attempt toward architecture/objective
+changes rather than CPU-only agglomeration:
+
+- PyTorch Connectomics keeps connectomics training, inference, decode and
+  evaluation as separate stages; this supports our current decision to keep
+  VOI/ARAND decode sweeps explicit instead of judging affinity Dice alone.
+- The funkelab LSD codebase motivates using instance-label-derived auxiliary
+  shape descriptors to improve boundary/instance segmentation. Our
+  implementation is a lightweight LSD-style centroid-offset target, not the
+  full funlib local-moment descriptor.
+- `affogato`/mutex watershed and GASP-style signed graph agglomeration remain
+  plausible post-processing branches, but they are dependency-heavy and do not
+  fix the current missing-checkpoint/training-objective problem. Keep
+  affinity graph connected components with z/xy threshold sweep as the stable
+  decode baseline for this round.
+
+Code changes for the R2 restart:
+
+- `labels_to_local_shape_descriptors` builds a 4-channel auxiliary target:
+  foreground, dz, dy, dx centroid offsets.
+- `train_finetune.py` now slices the first 3 output channels for affinity loss
+  and optionally supervises extra descriptor channels with
+  `train.loss.lsd_weight`.
+- `scripts/evaluate_cremi_segmentation.py` always slices model output to the
+  first 3 affinity channels before sigmoid/decode, so 7-channel LSD heads do
+  not change VOI/ARAND semantics.
+- `scripts/submit_siflow_dbmim.py` now starts a lightweight TOS sync loop for
+  training stages, periodically uploading `finetuned_latest.pt`,
+  `finetuned_best.pt`, and JSONL logs while training is still running; the final
+  directory upload still runs after the command exits.
+
+R2 controlled arms submitted on 2026-06-18 to Shanghai changliu `med-model`,
+`sci.g21-3`, 8 GPUs each. All use global batch 16, crop `32x160x160`,
+`max_steps: 30000`, `save_every: 2`, and explicit VOI/ARAND evaluation watchers:
+
+| arm | config | UUID | output TOS prefix | watcher |
+|---|---|---|---|---|
+| pretrained-r2 | `configs/finetune_cremi_real_unetr_aniso_pretrained_r2.yaml` | `9291405a-046f-4165-bbac-d0fdf71fb3eb` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_pretrained_r2/` | `outputs/watchers/eval_pretrained-r2_20260618T154324_setsid.log` |
+| scratch-r2 | `configs/finetune_cremi_real_unetr_aniso_scratch_r2.yaml` | `151ff158-429d-486e-9ffd-59bc71dbe458` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_scratch_r2/` | `outputs/watchers/eval_scratch-r2_20260618T154324_setsid.log` |
+| lsd-pretrained-r2 | `configs/finetune_cremi_real_unetr_aniso_lsd_pretrained_r2.yaml` | `2bbd5c24-2124-4d0e-89a2-326932ecd866` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_lsd_pretrained_r2/` | `outputs/watchers/eval_lsd-pretrained-r2_20260618T154324_setsid.log` |
+| lsd-scratch-r2 | `configs/finetune_cremi_real_unetr_aniso_lsd_scratch_r2.yaml` | `9cc450dd-ba4a-4c43-98ea-765aa363d768` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_lsd_scratch_r2/` | `outputs/watchers/eval_lsd-scratch-r2_20260618T154324_setsid.log` |
+
+Validation before submit:
+
+| check | result |
+|---|---|
+| Python compile maintained entrypoints | passed |
+| `configs/finetune_smoke_lsd.yaml` CPU smoke training | passed, 2 steps and validation |
+| aniso pretrained-r2 forward | output `1x3x32x160x160` |
+| aniso lsd-pretrained-r2 forward | output `1x7x32x160x160` |
+| eval dry-run for LSD r2 | checkpoint download path and config were correct |
+
+Do not report these R2 jobs as results until their watcher submits eval and the
+corresponding `cremi_segmentation_summary.json` exists. The first checkpoint
+should become visible much earlier than the previous run because the TOS sync
+loop uploads latest/best weights during training.
+
 ## Diagnostic Simplified UNETR Run
 
 This earlier run used the simplified `UNETRAffinityNet` decoder and a small

@@ -133,7 +133,7 @@ def predict_affinities(
                 tensor = torch.from_numpy(patch[None, None]).float().to(device)
                 with torch.amp.autocast("cuda", enabled=amp_enabled):
                     logits = model(tensor)
-                logits_np = logits.float().cpu().numpy()[0]
+                logits_np = logits[:, :3].float().cpu().numpy()[0]
                 logits_sum[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += logits_np
                 counts[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += 1.0
     affinities = 1.0 / (1.0 + np.exp(-(logits_sum / np.maximum(counts, 1.0))))

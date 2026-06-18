@@ -58,6 +58,36 @@ All jobs below were submitted on 2026-06-17 via Shanghai changliu with
 Watcher logs live in `outputs/watchers/`. If their tail only says
 `checkpoint_wait`, no checkpoint has been observed in TOS yet.
 
+## R2 Restart Snapshot
+
+On 2026-06-18 the old local watchers were killed because no intermediate
+checkpoint was visible. The root cause was the bootstrap script uploading
+training output directories only after the training process exited. A second
+attempt to stop the old remote SiFlow training UUIDs through the SDK hung in
+network/proxy connection setup and was interrupted locally; do not assume the
+remote tasks stopped unless a fresh SiFlow status query confirms it.
+
+R2 training jobs were submitted explicitly to Shanghai changliu `med-model`,
+`sci.g21-3`, 8 GPUs each:
+
+| stage | UUID | TOS output prefix |
+|---|---|---|
+| pretrained-r2 | `9291405a-046f-4165-bbac-d0fdf71fb3eb` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_pretrained_r2/` |
+| scratch-r2 | `151ff158-429d-486e-9ffd-59bc71dbe458` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_scratch_r2/` |
+| lsd-pretrained-r2 | `2bbd5c24-2124-4d0e-89a2-326932ecd866` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_lsd_pretrained_r2/` |
+| lsd-scratch-r2 | `9cc450dd-ba4a-4c43-98ea-765aa363d768` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_lsd_scratch_r2/` |
+
+R2 watcher logs:
+
+- `outputs/watchers/eval_pretrained-r2_20260618T154324_setsid.log`
+- `outputs/watchers/eval_scratch-r2_20260618T154324_setsid.log`
+- `outputs/watchers/eval_lsd-pretrained-r2_20260618T154324_setsid.log`
+- `outputs/watchers/eval_lsd-scratch-r2_20260618T154324_setsid.log`
+
+The R2 bootstrap now uploads `finetuned_latest.pt`, `finetuned_best.pt`, and
+JSONL logs periodically while training runs. Evaluation still waits for a
+checkpoint before submitting 1-GPU VOI/ARAND jobs.
+
 ## Historical Results To Treat Carefully
 
 - The simplified `UNETRAffinityNet` pretrained-vs-scratch run is a negative

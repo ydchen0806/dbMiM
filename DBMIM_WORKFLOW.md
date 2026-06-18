@@ -81,6 +81,40 @@ tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_scrat
 tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_longpretrained/
 ```
 
+Current R2 restart stages use the same anisotropic UNETR backbone with shorter
+decision-making runs and periodic TOS checkpoint sync:
+
+```bash
+python scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-aniso-pretrained-r2 \
+  --resource-pool med-model \
+  --gpus-per-pod 8 \
+  --submit
+
+python scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-aniso-scratch-r2 \
+  --resource-pool med-model \
+  --gpus-per-pod 8 \
+  --submit
+```
+
+The LSD-style auxiliary variants add a 4-channel descriptor head on top of the
+3 affinity channels. Evaluation still uses only the first 3 channels:
+
+```bash
+python scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-aniso-lsd-pretrained-r2 \
+  --resource-pool med-model \
+  --gpus-per-pod 8 \
+  --submit
+
+python scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-aniso-lsd-scratch-r2 \
+  --resource-pool med-model \
+  --gpus-per-pod 8 \
+  --submit
+```
+
 ## 3. Evaluate VOI and ARAND
 
 Local command shape:
@@ -150,6 +184,16 @@ stable speedup in earlier CREMI crops.
 The old `waterz`/`elf`/`mahotas` path is useful as a negative control only:
 it is slower or unavailable in offline pods and has not beaten the graph-CC
 baseline in the current runs.
+
+External connectomics codebases worth tracking:
+
+- PyTorch Connectomics for the explicit train/infer/decode/evaluate split and
+  decode parameter sweeps.
+- funkelab LSD for instance-label-derived shape descriptor supervision. This
+  repository currently implements only a lightweight centroid-offset
+  LSD-style auxiliary target to avoid adding fragile offline dependencies.
+- `affogato`/mutex watershed and GASP-style agglomeration for future
+  post-processing experiments after dependency packaging is stable.
 
 ## 5. Finished Baselines
 

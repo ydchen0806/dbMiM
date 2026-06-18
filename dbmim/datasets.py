@@ -305,6 +305,52 @@ def labels_to_affinities(labels: torch.Tensor) -> torch.Tensor:
     return aff.float()
 
 
+def labels_to_local_shape_descriptors(labels: torch.Tensor) -> torch.Tensor:
+    """Build a compact LSD-style target from instance labels.
+
+    Channels are foreground, dz, dy, dx. The offset channels point from each
+    foreground voxel to the instance centroid in normalized crop coordinates.
+    This is intentionally lightweight: it captures object-level shape context
+    without adding funlib/lsd as an offline dependency in SiFlow pods.
+    """
+
+    if labels.ndim == 3:
+        labels = labels.unsqueeze(0)
+    labels = labels.long()
+    bsz, depth, height, width = labels.shape
+    device = labels.device
+    desc = torch.zeros((bsz, 4, depth, height, width), device=device, dtype=torch.float32)
+    desc[:, 0] = (labels > 0).float()
+
+    z_axis = torch.linspace(-1.0, 1.0, depth, device=device, dtype=torch.float32)
+    y_axis = torch.linspace(-1.0, 1.0, height, device=device, dtype=torch.float32)
+    x_axis = torch.linspace(-1.0, 1.0, width, device=device, dtype=torch.float32)
+    z_grid, y_grid, x_grid = torch.meshgrid(z_axis, y_axis, x_axis, indexing="ij")
+
+    z_flat = z_grid.reshape(-1)
+    y_flat = y_grid.reshape(-1)
+    x_flat = x_grid.reshape(-1)
+    for batch_idx in range(bsz):
+        labels_b = labels[batch_idx]
+        flat = labels_b.reshape(-1)
+        unique, inverse, counts = torch.unique(flat, sorted=True, return_inverse=True, return_counts=True)
+        counts_f = counts.to(torch.float32).clamp_min(1.0)
+        sums_z = torch.zeros(unique.numel(), device=device, dtype=torch.float32)
+        sums_y = torch.zeros_like(sums_z)
+        sums_x = torch.zeros_like(sums_z)
+        sums_z.scatter_add_(0, inverse, z_flat)
+        sums_y.scatter_add_(0, inverse, y_flat)
+        sums_x.scatter_add_(0, inverse, x_flat)
+        center_z = sums_z[inverse] / counts_f[inverse]
+        center_y = sums_y[inverse] / counts_f[inverse]
+        center_x = sums_x[inverse] / counts_f[inverse]
+        foreground = (flat > 0).to(torch.float32)
+        desc[batch_idx, 1] = ((center_z - z_flat) * foreground).view(depth, height, width).clamp(-1.0, 1.0)
+        desc[batch_idx, 2] = ((center_y - y_flat) * foreground).view(depth, height, width).clamp(-1.0, 1.0)
+        desc[batch_idx, 3] = ((center_x - x_flat) * foreground).view(depth, height, width).clamp(-1.0, 1.0)
+    return desc
+
+
 def resize_volume_if_needed(x: torch.Tensor, size: tuple[int, int, int]) -> torch.Tensor:
     if tuple(x.shape[-3:]) == size:
         return x

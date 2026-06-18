@@ -19,6 +19,30 @@ TOSUTIL = Path("/volume/med-train/users/dchen02/bin/tosutil")
 TOS_OUTPUT_PREFIX = "tos://agi-data/users/dchen02/dbmim/outputs"
 CREMI_ASSET = "tos://agi-data/users/dchen02/dbmim/assets/cremi_abc_20160501.tar.gz"
 ABLATION_RUNS = {
+    "pretrained-r2": {
+        "config": "finetune_cremi_real_unetr_aniso_pretrained_r2.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_pretrained_r2",
+        "eval": "eval_cremi_unetr_aniso_pretrained_r2",
+        "large_eval": "eval_cremi_unetr_aniso_large_pretrained_r2",
+    },
+    "scratch-r2": {
+        "config": "finetune_cremi_real_unetr_aniso_scratch_r2.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_scratch_r2",
+        "eval": "eval_cremi_unetr_aniso_scratch_r2",
+        "large_eval": "eval_cremi_unetr_aniso_large_scratch_r2",
+    },
+    "lsd-pretrained-r2": {
+        "config": "finetune_cremi_real_unetr_aniso_lsd_pretrained_r2.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_lsd_pretrained_r2",
+        "eval": "eval_cremi_unetr_aniso_lsd_pretrained_r2",
+        "large_eval": "eval_cremi_unetr_aniso_large_lsd_pretrained_r2",
+    },
+    "lsd-scratch-r2": {
+        "config": "finetune_cremi_real_unetr_aniso_lsd_scratch_r2.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_lsd_scratch_r2",
+        "eval": "eval_cremi_unetr_aniso_lsd_scratch_r2",
+        "large_eval": "eval_cremi_unetr_aniso_large_lsd_scratch_r2",
+    },
     "no-dtrans": {
         "config": "finetune_cremi_real_unetr_aniso_no_dtrans.yaml",
         "output": "finetune_cremi_real_unetr_aniso_no_dtrans",
@@ -110,6 +134,68 @@ def _ablation_name_from_stage(stage: str) -> str | None:
     return None
 
 
+def _training_output_dir(stage: str) -> str | None:
+    if stage == "pretrain-cremi":
+        return "outputs/pretrain_cremi_real_dbmim"
+    if stage == "pretrain-cremi-long":
+        return "outputs/pretrain_cremi_real_long_dbmim"
+    if stage == "finetune-cremi":
+        return "outputs/finetune_cremi_real_dbmim"
+    if stage == "finetune-cremi-unetr-pretrained":
+        return "outputs/finetune_cremi_real_unetr_pretrained"
+    if stage == "finetune-cremi-unetr-scratch":
+        return "outputs/finetune_cremi_real_unetr_scratch"
+    if stage == "finetune-cremi-unetr-aniso-pretrained":
+        return "outputs/finetune_cremi_real_unetr_aniso_pretrained"
+    if stage == "finetune-cremi-unetr-aniso-scratch":
+        return "outputs/finetune_cremi_real_unetr_aniso_scratch"
+    if stage == "finetune-cremi-unetr-aniso-longpretrained":
+        return "outputs/finetune_cremi_real_unetr_aniso_longpretrained"
+    if stage == "finetune-cremi-zdice":
+        return "outputs/finetune_cremi_real_zdice"
+    if stage == "finetune-cremi-zdice-focal":
+        return "outputs/finetune_cremi_real_zdice_focal"
+    ablation_name = _ablation_name_from_stage(stage)
+    if stage in ABLATION_TRAIN_STAGES and ablation_name is not None:
+        return f"outputs/{ABLATION_RUNS[ablation_name]['output']}"
+    return None
+
+
+def _entrypoint_lines(entrypoint: str, sync_output_dir: str | None) -> list[str]:
+    if sync_output_dir is None:
+        return [entrypoint]
+    remote_dir = f"{TOS_OUTPUT_PREFIX}/{Path(sync_output_dir).name}"
+    return [
+        "DBMIM_SYNC_SEC=${DBMIM_SYNC_SEC:-300}",
+        "dbmim_sync_output_loop() {",
+        "  local out_dir=\"$1\"",
+        "  while true; do",
+        "    if [ -d \"$out_dir\" ]; then",
+        "      for f in finetuned_latest.pt finetuned_best.pt pretrained_latest.pt finetune_log.jsonl pretrain_log.jsonl; do",
+        "        if [ -f \"$out_dir/$f\" ]; then",
+        f"          bin/tosutil cp \"$out_dir/$f\" {remote_dir}/$f -conf=\"$TOS_CONF\" >/dev/null 2>&1 || true",
+        "        fi",
+        "      done",
+        "    fi",
+        "    sleep \"$DBMIM_SYNC_SEC\"",
+        "  done",
+        "}",
+        f"mkdir -p {sync_output_dir}",
+        f"dbmim_sync_output_loop {sync_output_dir} &",
+        "dbmim_sync_pid=$!",
+        "set +e",
+        entrypoint,
+        "dbmim_status=$?",
+        "set -e",
+        "kill \"$dbmim_sync_pid\" >/dev/null 2>&1 || true",
+        "wait \"$dbmim_sync_pid\" >/dev/null 2>&1 || true",
+        f"bin/tosutil cp {sync_output_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\" || true",
+        "if [ \"$dbmim_status\" -ne 0 ]; then",
+        "  exit \"$dbmim_status\"",
+        "fi",
+    ]
+
+
 def stamp() -> str:
     return time.strftime("%Y%m%dT%H%M%S") + f"_{time.time_ns() % 1_000_000_000:09d}"
 
@@ -164,8 +250,9 @@ def _patch_cremi_configs(bundle: Path) -> None:
         ft_cfg["data"]["image_paths"] = ["data/CREMI"]
         ft_cfg["data"]["label_paths"] = ["data/CREMI"]
         ft_cfg["train"]["epochs"] = max(int(ft_cfg["train"].get("epochs", 1)), 100000)
-        ft_cfg["train"]["eval_every"] = max(int(ft_cfg["train"].get("eval_every", 1)), 20)
-        ft_cfg["train"]["save_every"] = max(int(ft_cfg["train"].get("save_every", 1)), 20)
+        if "_r2" not in name:
+            ft_cfg["train"]["eval_every"] = max(int(ft_cfg["train"].get("eval_every", 1)), 20)
+            ft_cfg["train"]["save_every"] = max(int(ft_cfg["train"].get("save_every", 1)), 20)
         _write_yaml(finetune, ft_cfg)
 
 
@@ -198,6 +285,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
 
     prelude = []
     postlude = []
+    sync_output_dir = _training_output_dir(stage)
     if stage in CREMI_STAGES:
         prelude.extend(
             [
@@ -241,6 +329,18 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         prelude.extend(
             [
                 "mkdir -p outputs/finetune_cremi_real_dbmim outputs/finetune_cremi_real_unetr_pretrained outputs/finetune_cremi_real_unetr_scratch outputs/finetune_cremi_real_unetr_aniso_pretrained outputs/finetune_cremi_real_unetr_aniso_scratch outputs/finetune_cremi_real_unetr_aniso_longpretrained outputs/finetune_cremi_real_zdice outputs/finetune_cremi_real_zdice_focal outputs/eval_cremi_real_dbmim outputs/eval_cremi_unetr_pretrained outputs/eval_cremi_unetr_scratch outputs/eval_cremi_unetr_aniso_pretrained outputs/eval_cremi_unetr_aniso_scratch outputs/eval_cremi_unetr_aniso_longpretrained outputs/eval_cremi_unetr_aniso_large_pretrained outputs/eval_cremi_unetr_aniso_large_scratch outputs/eval_cremi_unetr_aniso_large_longpretrained outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe outputs/eval_cremi_rag_ablation outputs/eval_cremi_aniso_graph outputs/eval_cremi_scale64 outputs/eval_cremi_zdice outputs/eval_cremi_zdice_focal",
+            ]
+        )
+    if stage in {
+        "eval-cremi",
+        "eval-cremi-sweep",
+        "eval-cremi-gpu-probe",
+        "eval-cremi-rag-ablation",
+        "eval-cremi-aniso-graph",
+        "eval-cremi-scale64",
+    }:
+        prelude.extend(
+            [
                 "if bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_dbmim/finetuned_best.pt "
                 "outputs/finetune_cremi_real_dbmim/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
@@ -279,6 +379,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
             [
+                f"mkdir -p outputs/{model_prefix}",
                 "if bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
                 f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
@@ -321,78 +422,15 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "fi",
             ]
         )
-    if stage == "pretrain-cremi":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/pretrain_cremi_real_dbmim "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "pretrain-cremi-long":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/pretrain_cremi_real_long_dbmim "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/finetune_cremi_real_dbmim "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi-unetr-pretrained":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/finetune_cremi_real_unetr_pretrained "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi-unetr-scratch":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/finetune_cremi_real_unetr_scratch "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi-unetr-aniso-pretrained":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/finetune_cremi_real_unetr_aniso_pretrained "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi-unetr-aniso-scratch":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/finetune_cremi_real_unetr_aniso_scratch "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi-unetr-aniso-longpretrained":
-        postlude.extend(
-            [
-                "bin/tosutil cp outputs/finetune_cremi_real_unetr_aniso_longpretrained "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
     ablation_name = _ablation_name_from_stage(stage)
-    if stage in ABLATION_TRAIN_STAGES and ablation_name is not None:
-        postlude.extend(
-            [
-                f"bin/tosutil cp outputs/{ABLATION_RUNS[ablation_name]['output']} "
-                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
-            ]
-        )
-    if stage == "finetune-cremi-zdice":
+    if sync_output_dir is None and stage == "finetune-cremi-zdice":
         postlude.extend(
             [
                 "bin/tosutil cp outputs/finetune_cremi_real_zdice "
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
-    if stage == "finetune-cremi-zdice-focal":
+    if sync_output_dir is None and stage == "finetune-cremi-zdice-focal":
         postlude.extend(
             [
                 "bin/tosutil cp outputs/finetune_cremi_real_zdice_focal "
@@ -513,7 +551,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "    raise SystemExit('missing required python modules: '+','.join(missing))",
                 "PY",
                 *prelude,
-                entrypoint,
+                *_entrypoint_lines(entrypoint, sync_output_dir),
                 *postlude,
                 "",
             ]
