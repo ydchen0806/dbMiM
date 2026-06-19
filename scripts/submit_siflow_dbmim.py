@@ -73,10 +73,23 @@ ABLATION_RUNS = {
         "eval": "eval_cremi_unetr_aniso_context48",
         "large_eval": "eval_cremi_unetr_aniso_large_context48",
     },
+    "neg-boundary-pretrained-r3": {
+        "config": "finetune_cremi_real_unetr_aniso_neg_boundary_pretrained_r3.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_neg_boundary_pretrained_r3",
+        "eval": "eval_cremi_unetr_aniso_neg_boundary_pretrained_r3",
+        "large_eval": "eval_cremi_unetr_aniso_large_neg_boundary_pretrained_r3",
+    },
+    "neg-boundary-scratch-r3": {
+        "config": "finetune_cremi_real_unetr_aniso_neg_boundary_scratch_r3.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_neg_boundary_scratch_r3",
+        "eval": "eval_cremi_unetr_aniso_neg_boundary_scratch_r3",
+        "large_eval": "eval_cremi_unetr_aniso_large_neg_boundary_scratch_r3",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_LARGE_EVAL_STAGES = {f"eval-cremi-unetr-aniso-large-{name}" for name in ABLATION_RUNS}
+ABLATION_DIAG_STAGES = {f"diagnose-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 CREMI_STAGES = {
     "pretrain-cremi",
     "pretrain-cremi-long",
@@ -104,7 +117,7 @@ CREMI_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
-} | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES
+} | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES
 CREMI_EVAL_STAGES = {
     "eval-cremi",
     "eval-cremi-unetr-pretrained",
@@ -122,11 +135,16 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
-} | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES
+} | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES
 
 
 def _ablation_name_from_stage(stage: str) -> str | None:
-    for prefix in ["finetune-cremi-unetr-aniso-", "eval-cremi-unetr-aniso-large-", "eval-cremi-unetr-aniso-"]:
+    for prefix in [
+        "finetune-cremi-unetr-aniso-",
+        "eval-cremi-unetr-aniso-large-",
+        "eval-cremi-unetr-aniso-",
+        "diagnose-cremi-unetr-aniso-",
+    ]:
         if stage.startswith(prefix):
             name = stage[len(prefix) :]
             if name in ABLATION_RUNS:
@@ -265,6 +283,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         "train_pretrain.py",
         "train_finetune.py",
         "scripts/evaluate_cremi_segmentation.py",
+        "scripts/evaluate_cremi_diagnostics.py",
         "requirements-dbMIM.txt",
     ]:
         src = PROJECT / name
@@ -375,6 +394,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
     for name, spec in ABLATION_RUNS.items():
         eval_stage_map[f"eval-cremi-unetr-aniso-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
         eval_stage_map[f"eval-cremi-unetr-aniso-large-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
+        eval_stage_map[f"diagnose-cremi-unetr-aniso-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
     if stage in eval_stage_map:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
@@ -469,6 +489,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
     for name, spec in ABLATION_RUNS.items():
         eval_output_dirs[f"eval-cremi-unetr-aniso-{name}"] = f"outputs/{spec['eval']}"
         eval_output_dirs[f"eval-cremi-unetr-aniso-large-{name}"] = f"outputs/{spec['large_eval']}"
+        eval_output_dirs[f"diagnose-cremi-unetr-aniso-{name}"] = f"outputs/diagnose_cremi_unetr_aniso_{name}"
     if stage in eval_output_dirs:
         postlude.extend(
             [
@@ -590,6 +611,7 @@ def main() -> None:
             "eval-cremi-unetr-aniso-large-longpretrained",
             *sorted(ABLATION_EVAL_STAGES),
             *sorted(ABLATION_LARGE_EVAL_STAGES),
+            *sorted(ABLATION_DIAG_STAGES),
             "eval-cremi-sweep",
             "eval-cremi-gpu-probe",
             "eval-cremi-rag-ablation",
@@ -833,6 +855,31 @@ def main() -> None:
             "--device cuda"
         )
         prefix = f"dbmim-eval-cremi-unetr-aniso-{'large-' if large else ''}{ablation_name}"
+    elif args.stage in ABLATION_DIAG_STAGES:
+        ablation_name = _ablation_name_from_stage(args.stage)
+        if ablation_name is None:
+            raise ValueError(f"unknown diagnostic stage: {args.stage}")
+        spec = ABLATION_RUNS[ablation_name]
+        out_dir = f"diagnose_cremi_unetr_aniso_{ablation_name}"
+        entrypoint = (
+            "python scripts/evaluate_cremi_diagnostics.py "
+            f"--config configs/{spec['config']} "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            f"--output-dir outputs/{out_dir} "
+            "--crop-size 32 320 320 "
+            "--stride 16 80 80 "
+            "--backends graph_cc cupy_graph_cc "
+            "--min-size 0 "
+            "--z-thresholds 0.85 0.90 0.95 0.975 0.99 0.995 "
+            "--xy-thresholds 0.90 0.95 0.975 0.99 0.995 0.999 "
+            "--max-samples 3 "
+            "--device cuda "
+            "--include-oracle-affinity "
+            "--include-inverted-affinity "
+            "--diagnostics"
+        )
+        prefix = f"dbmim-diagnose-cremi-unetr-aniso-{ablation_name}"
     elif args.stage == "eval-cremi-sweep":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "

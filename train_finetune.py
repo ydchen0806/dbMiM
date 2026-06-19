@@ -88,23 +88,33 @@ def affinity_loss(
     cfg = _loss_cfg(train_cfg)
     channels = int(logits.shape[1])
     pos_weight_value = cfg.get("pos_weight", train_cfg.get("pos_weight", 1.0))
+    neg_weight_value = cfg.get("neg_weight", train_cfg.get("neg_weight", 1.0))
     channel_weight_value = cfg.get("channel_weights", train_cfg.get("channel_weights", [1.0] * channels))
     pos_weight = _broadcast_loss_tensor(pos_weight_value, logits.device, channels=channels, name="pos_weight")
+    neg_weight = _broadcast_loss_tensor(neg_weight_value, logits.device, channels=channels, name="neg_weight")
     channel_weight = _broadcast_loss_tensor(channel_weight_value, logits.device, channels=channels, name="channel_weights")
 
     bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
-    bce = torch.where(target > 0.5, bce * pos_weight, bce)
+    bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
     focal_gamma = float(cfg.get("focal_gamma", train_cfg.get("focal_gamma", 0.0)))
-    if focal_gamma > 0.0:
+    pos_focal_gamma = float(cfg.get("pos_focal_gamma", train_cfg.get("pos_focal_gamma", focal_gamma)))
+    neg_focal_gamma = float(cfg.get("neg_focal_gamma", train_cfg.get("neg_focal_gamma", focal_gamma)))
+    if max(pos_focal_gamma, neg_focal_gamma) > 0.0:
         prob = torch.sigmoid(logits.detach())
-        pt = torch.where(target > 0.5, prob, 1.0 - prob).clamp(1e-4, 1.0)
-        bce = bce * (1.0 - pt).pow(focal_gamma)
+        pos_pt = prob.clamp(1e-4, 1.0)
+        neg_pt = (1.0 - prob).clamp(1e-4, 1.0)
+        pos_factor = (1.0 - pos_pt).pow(pos_focal_gamma)
+        neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
+        bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
     bce_loss = (bce * channel_weight).sum() / channel_weight.expand_as(bce).sum().clamp_min(1.0)
 
     dice_weight = float(cfg.get("dice_weight", train_cfg.get("dice_weight", 0.0)))
+    boundary_dice_weight = float(cfg.get("boundary_dice_weight", train_cfg.get("boundary_dice_weight", 0.0)))
     dice_loss = logits.new_tensor(0.0)
-    if dice_weight > 0.0:
+    boundary_dice_loss = logits.new_tensor(0.0)
+    if dice_weight > 0.0 or boundary_dice_weight > 0.0:
         prob = torch.sigmoid(logits)
+    if dice_weight > 0.0:
         reduce_dims = (0, 2, 3, 4)
         smooth = float(cfg.get("dice_smooth", train_cfg.get("dice_smooth", 1.0)))
         intersection = (prob * target).sum(dim=reduce_dims)
@@ -112,12 +122,23 @@ def affinity_loss(
         per_channel = 1.0 - (2.0 * intersection + smooth) / (denominator + smooth)
         weights = channel_weight.view(channels)
         dice_loss = (per_channel * weights).sum() / weights.sum().clamp_min(1.0)
+    if boundary_dice_weight > 0.0:
+        reduce_dims = (0, 2, 3, 4)
+        smooth = float(cfg.get("boundary_dice_smooth", train_cfg.get("boundary_dice_smooth", 1.0)))
+        boundary_prob = 1.0 - prob
+        boundary_target = 1.0 - target
+        intersection = (boundary_prob * boundary_target).sum(dim=reduce_dims)
+        denominator = (boundary_prob + boundary_target).sum(dim=reduce_dims)
+        per_channel = 1.0 - (2.0 * intersection + smooth) / (denominator + smooth)
+        weights = channel_weight.view(channels)
+        boundary_dice_loss = (per_channel * weights).sum() / weights.sum().clamp_min(1.0)
 
     bce_weight = float(cfg.get("bce_weight", train_cfg.get("bce_weight", 1.0)))
-    loss = bce_weight * bce_loss + dice_weight * dice_loss
+    loss = bce_weight * bce_loss + dice_weight * dice_loss + boundary_dice_weight * boundary_dice_loss
     return loss, {
         "bce_loss": bce_loss.detach(),
         "dice_loss": dice_loss.detach(),
+        "boundary_dice_loss": boundary_dice_loss.detach(),
     }
 
 
@@ -241,6 +262,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
     loss_m = AverageMeter()
     bce_m = AverageMeter()
     dice_loss_m = AverageMeter()
+    boundary_dice_loss_m = AverageMeter()
     lsd_loss_m = AverageMeter()
     dice_m = AverageMeter()
     iou_m = AverageMeter()
@@ -255,6 +277,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         loss_m.update(float(loss.detach().cpu()), bsz)
         bce_m.update(float(loss_parts["bce_loss"].cpu()), bsz)
         dice_loss_m.update(float(loss_parts["dice_loss"].cpu()), bsz)
+        boundary_dice_loss_m.update(float(loss_parts["boundary_dice_loss"].cpu()), bsz)
         lsd_loss_m.update(float(loss_parts["lsd_loss"].cpu()), bsz)
         dice_m.update(dice_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
         iou_m.update(binary_iou_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
@@ -262,6 +285,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         "val_loss": loss_m.avg,
         "val_bce_loss": bce_m.avg,
         "val_dice_loss": dice_loss_m.avg,
+        "val_boundary_dice_loss": boundary_dice_loss_m.avg,
         "val_lsd_loss": lsd_loss_m.avg,
         "val_dice": dice_m.avg,
         "val_iou": iou_m.avg,
@@ -379,6 +403,7 @@ def main() -> None:
                     "train_loss": float(loss.detach().cpu()),
                     "train_bce_loss": float(loss_parts["bce_loss"].cpu()),
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
+                    "train_boundary_dice_loss": float(loss_parts["boundary_dice_loss"].cpu()),
                     "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
                     "elapsed_sec": round(time.time() - t0, 2),
                 }

@@ -516,7 +516,7 @@ def cupy_mean_affinity_components(
 
 def cupy_affinity_graph_connected_components(
     affinities: np.ndarray,
-    threshold: float = 0.5,
+    threshold: float | Sequence[float] = 0.5,
     min_size: int = 0,
 ) -> np.ndarray:
     """GPU affinity graph CC if pylibcugraph is available in the environment."""
@@ -644,8 +644,8 @@ def segmentation_metrics(
         rand_fscore=fscore,
         rand_precision=precision,
         rand_recall=recall,
-        voi_split=max(0.0, h_joint - h_pred),
-        voi_merge=max(0.0, h_joint - h_gt),
+        voi_split=max(0.0, h_joint - h_gt),
+        voi_merge=max(0.0, h_joint - h_pred),
         n_pred=n_pred,
         n_gt=n_gt,
         n_voxels=int(pred.size),

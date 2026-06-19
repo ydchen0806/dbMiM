@@ -141,6 +141,87 @@ corresponding `cremi_segmentation_summary.json` exists. The first checkpoint
 should become visible much earlier than the previous run because the TOS sync
 loop uploads latest/best weights during training.
 
+### R2 metric audit and high-threshold diagnostic
+
+The R2 training and regular eval jobs completed successfully. The original
+regular eval used `z_thresholds=0.45..0.85` and `xy_thresholds=0.65..0.95`.
+Those summaries showed high affinity Dice but pathological instance counts:
+the best rows often had only `~5-30` predicted components against hundreds of
+GT objects on the CREMI A/B/C center crops. That is severe over-merging.
+
+A metric bug was found and fixed on 2026-06-19: the code labels for
+`voi_split` and `voi_merge` were reversed. `voi_sum` and ARAND were unaffected,
+but old reports must not be used to interpret split-vs-merge direction. The
+correct convention now used in `dbmim/postprocess.py` is:
+
+- `voi_split = H(pred | gt) = H(joint) - H(gt)`
+- `voi_merge = H(gt | pred) = H(joint) - H(pred)`
+
+The audit script `scripts/evaluate_cremi_diagnostics.py` was added to compare
+predicted affinities, inverted affinities, and GT-oracle affinities under a
+high-threshold sweep (`z=0.85..0.995`, `xy=0.90..0.999`). Four diagnostic jobs
+were submitted and completed on Shanghai changliu `med-model`, 1 GPU each:
+
+| arm | UUID | records |
+|---|---|---:|
+| pretrained-r2 | `bab93c1b-486f-42dd-9cca-522b9b24a89b` | 648 |
+| scratch-r2 | `58e9b17a-56d2-4430-a8ec-8928957e4ea5` | 648 |
+| lsd-pretrained-r2 | `190f4067-a399-4f83-9037-49bcc9b836f8` | 648 |
+| lsd-scratch-r2 | `95ff2382-4261-406d-b1f4-7088ed164132` | 648 |
+
+The summaries below are reconstructed from SiFlow stdout because local
+`tosutil cp` for small summary files intermittently hangs. Full logs and
+reconstructed JSON summaries are under
+`outputs/remote_summaries/diagnostics_20260619/`.
+
+| arm | selection | backend | z | xy | ARAND | VOI split | VOI merge | VOI sum | mean n_pred | mean n_gt | affinity Dice |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| pretrained-r2 | best ARAND | graph_cc | 0.900 | 0.995 | 0.526873 | 3.765988 | 0.134087 | 3.900074 | 396630.0 | 330.3 | 0.984380 |
+| pretrained-r2 | best VOI | graph_cc | 0.975 | 0.975 | 0.552197 | 2.975070 | 0.462220 | 3.437290 | 219228.7 | 330.3 | 0.984380 |
+| scratch-r2 | best ARAND/VOI | graph_cc/cupy_graph_cc | 0.975 | 0.975 | 0.516351 | 2.852703 | 0.388002 | 3.240705 | 221945.3 | 330.3 | 0.984894 |
+| lsd-pretrained-r2 | best ARAND | graph_cc | 0.950 | 0.990 | 0.532239 | 4.025202 | 0.141561 | 4.166763 | 447583.3 | 330.3 | 0.982628 |
+| lsd-pretrained-r2 | best VOI | graph_cc | 0.950 | 0.975 | 0.565188 | 2.866629 | 0.677204 | 3.543833 | 201634.3 | 330.3 | 0.982628 |
+| lsd-scratch-r2 | best ARAND | graph_cc | 0.950 | 0.990 | 0.534778 | 4.294881 | 0.104806 | 4.399687 | 502435.7 | 330.3 | 0.982315 |
+| lsd-scratch-r2 | best VOI | cupy_graph_cc | 0.950 | 0.975 | 0.540957 | 2.963289 | 0.566733 | 3.530022 | 224053.7 | 330.3 | 0.982315 |
+
+GT-oracle affinities through the same graph-CC pipeline give ARAND `0.049749`
+and VOI sum `0.271016` averaged across the same crops (`mean n_pred=387.7`,
+`mean n_gt=330.3`). Inverted affinities fail with VOI `~17.25`. This confirms
+that the metric formula, affinity channel convention, and graph-CC backend are
+basically sane. The learned affinities are the issue: low thresholds
+over-merge badly, while high thresholds jump to hundreds of thousands of tiny
+components. The current BCE/Dice objective produces saturated affinities with
+a very narrow usable threshold window.
+
+### R3 negative-boundary objective
+
+To attack the failure mode directly, the finetune loss now supports:
+
+- `train.loss.neg_weight`: weight for target-zero affinity edges;
+- `train.loss.pos_focal_gamma` and `train.loss.neg_focal_gamma`: separate focal
+  exponents for positive and negative edges;
+- `train.loss.boundary_dice_weight`: Dice term on `1 - affinity`, i.e. boundary
+  edges.
+
+Two controlled R3 jobs were submitted on 2026-06-19 to Shanghai changliu
+`med-model`, `sci.g21-3`, 8 GPUs each:
+
+| arm | config | UUID | output TOS prefix |
+|---|---|---|---|
+| neg-boundary-pretrained-r3 | `configs/finetune_cremi_real_unetr_aniso_neg_boundary_pretrained_r3.yaml` | `83278d27-05cd-40c3-91a8-7d9b2a56ab4d` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_neg_boundary_pretrained_r3/` |
+| neg-boundary-scratch-r3 | `configs/finetune_cremi_real_unetr_aniso_neg_boundary_scratch_r3.yaml` | `057445b0-735d-4623-8efa-7c834c6fb877` | `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_neg_boundary_scratch_r3/` |
+
+Both jobs started normally and printed the intended loss config:
+`neg_weight=[3,3,3]`, `neg_focal_gamma=2`, `boundary_dice_weight=0.25`.
+Watchers were started from the login node for normal eval and diagnostic eval:
+
+| purpose | watcher log |
+|---|---|
+| R3 pretrained eval | `outputs/watchers/eval_neg_boundary_pretrained_r3_20260619T070710.log` |
+| R3 scratch eval | `outputs/watchers/eval_neg_boundary_scratch_r3_20260619T070710.log` |
+| R3 pretrained diagnostic | `outputs/watchers/diagnose_neg_boundary_pretrained_r3_20260619T070710.log` |
+| R3 scratch diagnostic | `outputs/watchers/diagnose_neg_boundary_scratch_r3_20260619T070710.log` |
+
 ## Diagnostic Simplified UNETR Run
 
 This earlier run used the simplified `UNETRAffinityNet` decoder and a small

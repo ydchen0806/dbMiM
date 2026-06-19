@@ -5,9 +5,15 @@
 Primary CREMI neuron segmentation metrics:
 
 - `adapted_rand_error` / ARAND: lower is better.
-- `voi_split`: false-split component of variation of information.
-- `voi_merge`: false-merge component of variation of information.
+- `voi_split`: false-split component of variation of information,
+  `H(pred | gt) = H(joint) - H(gt)`.
+- `voi_merge`: false-merge component of variation of information,
+  `H(gt | pred) = H(joint) - H(pred)`.
 - `voi_sum = voi_split + voi_merge`: lower is better.
+
+The code before 2026-06-19 had the `voi_split` and `voi_merge` labels swapped.
+`voi_sum` and ARAND were unaffected, but do not use older reports to infer
+split-versus-merge direction.
 
 The evaluation summary should contain both:
 
@@ -51,6 +57,32 @@ python scripts/evaluate_cremi_segmentation.py \
   --device cuda
 ```
 
+For debugging suspicious VOI/ARAND values, run
+`scripts/evaluate_cremi_diagnostics.py`. It evaluates predicted, inverted, and
+GT-oracle affinities with high z/xy thresholds and records `n_pred` versus
+`n_gt`:
+
+```bash
+python scripts/evaluate_cremi_diagnostics.py \
+  --config configs/finetune_cremi_real_unetr_aniso_pretrained_r2.yaml \
+  --checkpoint outputs/finetune_cremi_real_unetr_aniso_pretrained_r2/finetuned_best.pt \
+  --data-dir data/CREMI \
+  --output-dir outputs/diagnose_cremi_unetr_aniso_pretrained_r2 \
+  --crop-size 32 320 320 \
+  --stride 16 80 80 \
+  --backends graph_cc cupy_graph_cc \
+  --min-size 0 \
+  --z-thresholds 0.85 0.90 0.95 0.975 0.99 0.995 \
+  --xy-thresholds 0.90 0.95 0.975 0.99 0.995 0.999 \
+  --max-samples 3 \
+  --device cuda \
+  --include-oracle-affinity \
+  --include-inverted-affinity \
+  --diagnostics
+```
+
+SiFlow has matching `diagnose-cremi-unetr-aniso-<name>` stages.
+
 Use large-crop evals as robustness checks:
 
 - crop `64x512x512`
@@ -81,6 +113,13 @@ Negative or fragile controls:
 
 - Separate z and xy affinity thresholds matter for anisotropic EM volumes.
 - All channels should not necessarily share one threshold.
+- Always compare `n_pred` and `n_gt`. Very small `n_pred` means over-merging;
+  enormous `n_pred` means over-splitting even if affinity Dice is high.
+- R2 diagnostics showed learned affinities were saturated: low thresholds
+  over-merged, while high thresholds (`xy~0.975-0.995`) over-split into
+  hundreds of thousands of components on `32x320x320` crops.
+- GT-oracle affinities reached VOI sum about `0.27` on the same crops, so the
+  graph-CC convention and metric path are not the main failure.
 - Graph CC is a strong simple baseline. Beat it before investing in complex
   watershed/agglomeration.
 - CuPy sparse graph CC is not the same as a custom CUDA union-find; do not

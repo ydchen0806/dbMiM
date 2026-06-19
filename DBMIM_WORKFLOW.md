@@ -174,6 +174,38 @@ report VOI from the same row. Also inspect `best_by_voi_sum`; this catches
 bad all-merge or over-merge rows that can otherwise hide behind a single
 selection metric.
 
+For metric/post-processing audits, use the diagnostic evaluator:
+
+```bash
+python scripts/evaluate_cremi_diagnostics.py \
+  --config configs/finetune_cremi_real_unetr_aniso_pretrained_r2.yaml \
+  --checkpoint outputs/finetune_cremi_real_unetr_aniso_pretrained_r2/finetuned_best.pt \
+  --data-dir data/CREMI \
+  --output-dir outputs/diagnose_cremi_unetr_aniso_pretrained_r2 \
+  --crop-size 32 320 320 \
+  --stride 16 80 80 \
+  --backends graph_cc cupy_graph_cc \
+  --min-size 0 \
+  --z-thresholds 0.85 0.90 0.95 0.975 0.99 0.995 \
+  --xy-thresholds 0.90 0.95 0.975 0.99 0.995 0.999 \
+  --max-samples 3 \
+  --device cuda \
+  --include-oracle-affinity \
+  --include-inverted-affinity \
+  --diagnostics
+```
+
+SiFlow stages are available as
+`diagnose-cremi-unetr-aniso-<ablation-name>`, for example:
+
+```bash
+python scripts/submit_siflow_dbmim.py \
+  --stage diagnose-cremi-unetr-aniso-pretrained-r2 \
+  --resource-pool med-model \
+  --gpus-per-pod 1 \
+  --submit
+```
+
 ## 4. Notes on Post-processing
 
 The stable production backend is affinity-graph connected components with a
@@ -184,6 +216,29 @@ stable speedup in earlier CREMI crops.
 The old `waterz`/`elf`/`mahotas` path is useful as a negative control only:
 it is slower or unavailable in offline pods and has not beaten the graph-CC
 baseline in the current runs.
+
+The 2026-06-19 audit found that the old code had `voi_split` and `voi_merge`
+labels reversed; `voi_sum` and ARAND were unaffected. New reports use
+`voi_split = H(pred | gt)` and `voi_merge = H(gt | pred)`. On R2, GT-oracle
+affinities through graph CC reached VOI sum `0.271`, while learned affinities
+jumped from severe over-merging at low thresholds to severe over-splitting at
+high thresholds. Treat affinity Dice around `0.98` as insufficient evidence of
+good segmentation; always inspect `n_pred` versus `n_gt`.
+
+The active R3 method is the negative-boundary objective:
+
+```yaml
+train:
+  loss:
+    neg_weight: [3.0, 3.0, 3.0]
+    neg_focal_gamma: 2.0
+    boundary_dice_weight: 0.25
+```
+
+Use paired stages
+`finetune-cremi-unetr-aniso-neg-boundary-pretrained-r3` and
+`finetune-cremi-unetr-aniso-neg-boundary-scratch-r3` for the next controlled
+pretraining-effect comparison.
 
 External connectomics codebases worth tracking:
 
