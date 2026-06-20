@@ -102,10 +102,24 @@ R5 pretrained training signs are healthier than R4:
 - TOS checkpoint prefix:
   `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5/`.
 
-The R5 eval already confirmed true full-volume sample A scope:
+The R5 eval confirmed true full-volume sample A scope:
 `raw_shape [125,1250,1250]`, crop `[[0,125],[0,1250],[0,1250]]`, checkpoint
 `outputs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5/finetuned_latest.pt`.
-Wait for waterz VOI rows before making a method claim.
+
+First raw `pred` waterz/skimage rows are in the normal CREMI scale:
+
+| threshold | VOI sum | VOI split | VOI merge | ARAND | n_pred | n_gt |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.05 | 0.742093 | 0.449843 | 0.292251 | 0.126184 | 27535 | 37366 |
+| 0.10 | 0.759984 | 0.430677 | 0.329307 | 0.161975 | 23599 | 37366 |
+| 0.20 | 0.747036 | 0.410954 | 0.336082 | 0.162093 | 19172 | 37366 |
+| 0.30 | 0.735735 | 0.396551 | 0.339184 | 0.161714 | 16231 | 37366 |
+| 0.50 | 0.717879 | 0.371610 | 0.346268 | 0.161406 | 12209 | 37366 |
+
+This strongly supports the root-cause diagnosis: the previous VOI 8-10 range
+was caused mainly by broken supervised augmentation/target training, not by the
+VOI implementation itself. Continue the pretrained R5 run to 30k and start/keep
+the scratch R5 control for the pretraining-effect comparison.
 
 ## R2 Restart Snapshot
 

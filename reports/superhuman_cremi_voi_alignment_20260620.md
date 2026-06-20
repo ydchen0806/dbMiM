@@ -195,13 +195,36 @@ The R5 full-volume eval has confirmed:
 - modules available in pod:
   `scipy`, `mahotas`, `cc3d`, `waterz`, `cupy`; `elf` absent.
 
-At the time of this report update, waterz/VOI rows were still running. The
-decision rule is:
+First R5 full-volume sample-A waterz/skimage results from the latest checkpoint
+are now in the expected CREMI scale. Raw `pred` affinity, waterz
+`hist_quantile`, `seed_distance=10`, `boundary_threshold=0.5`,
+`ignore_label=0`:
 
-- If R5 full-volume VOI improves substantially versus R4 but remains above
-  SuperHuman scale, keep training to 30k and evaluate later checkpoints.
-- If R5 remains near VOI 8-10 after synchronized supervision, stop blind
-  training and switch to targeted method changes: boundary head calibration,
-  direct boundary AP/F1 validation, watershed seed ablation, and possibly a
-  stronger SuperHuman-style 2D U-Net affinity baseline as a teacher/checkpoint
-  sanity reference.
+| threshold | VOI sum | VOI split | VOI merge | ARAND | Rand F | n_pred | n_gt |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.05 | 0.742093 | 0.449843 | 0.292251 | 0.126184 | 0.873816 | 27535 | 37366 |
+| 0.10 | 0.759984 | 0.430677 | 0.329307 | 0.161975 | 0.838025 | 23599 | 37366 |
+| 0.20 | 0.747036 | 0.410954 | 0.336082 | 0.162093 | 0.837907 | 19172 | 37366 |
+| 0.30 | 0.735735 | 0.396551 | 0.339184 | 0.161714 | 0.838286 | 16231 | 37366 |
+| 0.50 | 0.717879 | 0.371610 | 0.346268 | 0.161406 | 0.838594 | 12209 | 37366 |
+
+Interpretation:
+
+- The user's concern was correct: VOI around 8-10 was not a normal outcome for
+  this task.
+- After fixing synchronized supervised augmentation and switching to
+  SuperHuman-style training targets/loss, the same full-volume sample-A eval
+  moved from the earlier R4/R3 failure range (`VOI_sum` roughly 8-10) to
+  `VOI_sum=0.717879` at threshold 0.50 and `ARAND=0.126184` at threshold 0.05.
+- This is a real method/implementation recovery, not a threshold-only artifact:
+  the full volume, metric backend, waterz dependency, and sample-A label count
+  were all verified in the eval log.
+
+Next decision rule:
+
+- Keep the pretrained R5 run to 30k unless later checkpoints regress.
+- Let the scratch R5 control start when quota frees; this is now the clean
+  pretraining-effect comparison.
+- Add checkpoint sweeps at 10k/20k/30k and sample B/C full-volume evaluation.
+- Then run small ablations around `widen_border_radius`, weighted MSE vs BCE,
+  and seed/threshold choices; do not spend more cycles on the old R4 path.
