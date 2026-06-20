@@ -89,3 +89,32 @@ The next improvement should not be another blind threshold sweep. Priority shoul
 3. Add calibration before waterz: temperature/logit shift or per-channel affine calibration selected on validation VOI.
 4. Revisit watershed seed generation: current XY boundary is too low because affinities are too high; seed/boundary thresholds need calibration after logits are fixed.
 5. If mean-affinity waterz is required, use newer waterz but fix the SiFlow ABI/runtime issue before treating it as stable.
+
+## 2026-06-20 continuation: calibration probe and R4 training
+
+Added eval-time calibration sweep support to `scripts/evaluate_cremi_segmentation.py`:
+
+- `--calibration-biases`: z/y/x logit-bias triplets.
+- `--calibration-temperatures`: logit temperature values.
+- Records now include `affinity_variant`, per-channel bias, and temperature.
+
+Submitted SiFlow jobs:
+
+- calibration probe, R3 pretrained, 1 GPU med-model: `29eb99f1-959a-4907-a19a-3a45b9ebb1de`.
+- R4 SuperHuman-style pretrained finetune, 4 GPU med-model: `8364c135-4987-4aea-8e29-9f7a6d4f3bed`.
+
+Calibration probe on full `sample_A_20160501.hdf`:
+
+- raw pred, threshold 0.3: `voi_sum=9.958972`, `voi_split=2.360805`, `voi_merge=7.598168`, `n_pred=531`.
+- bias `z=-0.5,y=-1,x=-1`, threshold 0.3: `voi_sum=9.951857`, `voi_split=2.370400`, `voi_merge=7.581457`, `n_pred=2734`.
+- bias `z=-1,y=-2,x=-2`, threshold 0.5: `voi_sum=9.945377`, `voi_split=2.364737`, `voi_merge=7.580639`, `n_pred=938`.
+- bias `z=-1,y=-2,x=-2`, threshold 0.3: `voi_sum=11.564190`, over-splits (`voi_split=5.037334`, `n_pred=8780`).
+- bias `z=-1.5,y=-3,x=-3`, threshold 0.3: `voi_sum=8.709598`, `voi_split=6.473930`, `voi_merge=2.235668`, `n_pred=95415`.
+
+Interpretation: simple logit calibration can trade merge for split and improves the best observed full-volume sample-A VOI from 9.96 to 8.71, but this is still far from the expected ~1.x regime and is not a reliable method. The useful direction remains training-time boundary supervision / target balancing, not inference-only bias sweep.
+
+R4 training status at last check:
+
+- task `8364c135-4987-4aea-8e29-9f7a6d4f3bed` Running.
+- around epoch 15 / step 15.9k after ~16 min.
+- train loss has dropped from ~0.58 early to frequent 0.33-0.50 samples, but remains noisy; boundary dice loss is still high and must be checked by full-volume waterz once a checkpoint is saved.

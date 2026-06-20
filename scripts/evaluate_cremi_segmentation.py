@@ -111,6 +111,7 @@ def predict_affinities(
     window_size: tuple[int, int, int],
     stride: tuple[int, int, int],
     device: torch.device,
+    return_logits: bool = False,
 ) -> np.ndarray:
     model.eval()
     volume = normalize_volume(raw)
@@ -140,8 +141,36 @@ def predict_affinities(
                 logits_np = logits[:, :3].float().cpu().numpy()[0]
                 logits_sum[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += logits_np
                 counts[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += 1.0
-    affinities = 1.0 / (1.0 + np.exp(-(logits_sum / np.maximum(counts, 1.0))))
+    logits_avg = logits_sum / np.maximum(counts, 1.0)
+    if return_logits:
+        return logits_avg[:, :depth, :height, :width]
+    affinities = 1.0 / (1.0 + np.exp(-logits_avg))
     return affinities[:, :depth, :height, :width]
+
+
+def sigmoid_np(values: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(values, -50.0, 50.0)))
+
+
+def parse_channel_triplets(values: list[float]) -> list[tuple[float, float, float]]:
+    if len(values) % 3 != 0:
+        raise ValueError(f"expected values in z/y/x triplets, got {len(values)} values")
+    return [tuple(float(v) for v in values[i : i + 3]) for i in range(0, len(values), 3)]
+
+
+def make_calibrated_variants(
+    logits: np.ndarray,
+    bias_values: list[tuple[float, float, float]],
+    temperature_values: list[float],
+) -> list[tuple[str, np.ndarray, tuple[float, float, float], float]]:
+    variants: list[tuple[str, np.ndarray, tuple[float, float, float], float]] = []
+    bias_arrs = [np.asarray(bias, dtype=np.float32).reshape(3, 1, 1, 1) for bias in bias_values]
+    for bias, bias_arr in zip(bias_values, bias_arrs):
+        for temperature in temperature_values:
+            temp = max(float(temperature), 1e-6)
+            name = f"bias_z{bias[0]:+.2f}_y{bias[1]:+.2f}_x{bias[2]:+.2f}_t{temp:.2f}"
+            variants.append((name, sigmoid_np((logits + bias_arr) / temp).astype(np.float32, copy=False), bias, temp))
+    return variants
 
 
 def build_model(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.Module:
@@ -371,6 +400,20 @@ def main() -> None:
     parser.add_argument("--replicate-affinity-boundary", action="store_true")
     parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="internal")
     parser.add_argument(
+        "--calibration-biases",
+        nargs="+",
+        type=float,
+        default=[0.0, 0.0, 0.0],
+        help="z/y/x logit bias triplets for eval-time affinity calibration",
+    )
+    parser.add_argument(
+        "--calibration-temperatures",
+        nargs="+",
+        type=float,
+        default=[1.0],
+        help="logit temperatures for eval-time affinity calibration",
+    )
+    parser.add_argument(
         "--waterz-scoring",
         nargs="+",
         default="hist_quantile",
@@ -401,6 +444,8 @@ def main() -> None:
     probes = package_probe()
     print({"package_probe": probes}, flush=True)
     waterz_scorings = args.waterz_scoring if isinstance(args.waterz_scoring, list) else [args.waterz_scoring]
+    calibration_biases = parse_channel_triplets([float(v) for v in args.calibration_biases])
+    calibration_temperatures = [float(v) for v in args.calibration_temperatures]
     watershed_backends = {"mahotas_watershed", "scipy_watershed"}
     anisotropic_graph_backends = {"graph_cc", "cupy_graph_cc"}
     agglomeration_backends = {"seeded_rag", "mahotas_agglomeration", "scipy_agglomeration"}
@@ -417,81 +462,124 @@ def main() -> None:
             flush=True,
         )
         t0 = time.perf_counter()
-        aff = predict_affinities(model, raw, model_window, stride, device)
+        logits_np = predict_affinities(model, raw, model_window, stride, device, return_logits=True)
+        aff = sigmoid_np(logits_np).astype(np.float32, copy=False)
         infer_sec = time.perf_counter() - t0
         target_aff = labels_to_affinities(
             torch.from_numpy(label.astype(np.int64))[None],
             replicate_boundary=args.replicate_affinity_boundary,
         ).numpy()[0]
-        logits = torch.from_numpy(np.log(np.clip(aff, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - aff, 1e-6, 1.0)))
         target = torch.from_numpy(target_aff)
-        aff_dice = dice_from_logits(logits, target)
-        aff_iou = binary_iou_from_logits(logits, target)
-        aff_record = affinity_stats("pred", aff)
-        aff_record.update(
-            {
-                "sample": path.name,
-                "affinity_dice": float(aff_dice),
-                "affinity_iou": float(aff_iou),
-                "inference_sec": float(infer_sec),
-            }
-        )
-        print(aff_record, flush=True)
-        affinity_records.append(aff_record)
-        backend_cache: dict[str, tuple[np.ndarray, float]] = {}
-        for backend in args.backends:
-            threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
-            seed_distances = args.seed_distance if backend in seed_backends else [args.seed_distance[0]]
-            boundary_thresholds = args.boundary_threshold if backend in seed_backends else [args.boundary_threshold[0]]
-            min_boundaries = args.min_boundary if backend in agglomeration_backends else [args.min_boundary[0]]
-            score_modes = args.score_mode if backend in agglomeration_backends else [args.score_mode[0]]
-            waterz_scoring_values = waterz_scorings if backend == "waterz" else [waterz_scorings[0]]
-            z_thresholds = [None]
-            xy_thresholds = [None]
-            if backend in agglomeration_backends | anisotropic_graph_backends:
-                z_thresholds = list(args.z_thresholds) if args.z_thresholds else [None]
-                xy_thresholds = list(args.xy_thresholds) if args.xy_thresholds else [None]
-            for threshold, seed_distance, boundary_threshold, min_boundary, score_mode, rag_quantile, waterz_scoring, z_threshold, xy_threshold in itertools.product(
-                threshold_values,
-                seed_distances,
-                boundary_thresholds,
-                min_boundaries,
-                score_modes,
-                args.rag_quantile if backend in agglomeration_backends else [args.rag_quantile[0]],
-                waterz_scoring_values,
-                z_thresholds,
-                xy_thresholds,
-            ):
-                try:
-                    t1 = time.perf_counter()
-                    seg = run_backend(
-                        aff,
-                        backend=backend,
-                        threshold=threshold,
-                        min_size=args.min_size,
-                        seed_method=args.seed_method,
-                        seed_distance=int(seed_distance),
-                        boundary_threshold=float(boundary_threshold),
-                        min_boundary=int(min_boundary),
-                        score_mode=str(score_mode),
-                        rag_quantile=float(rag_quantile),
-                        z_threshold=None if z_threshold is None else float(z_threshold),
-                        xy_threshold=None if xy_threshold is None else float(xy_threshold),
-                        waterz_scoring=str(waterz_scoring),
-                        cache=backend_cache,
-                    )
-                    postprocess_sec = time.perf_counter() - t1
-                    t2 = time.perf_counter()
-                    metrics = segmentation_metrics(
-                        seg,
-                        label,
-                        ignore_label=args.ignore_label,
-                        backend=args.metric_backend,
-                    )
-                    metrics_sec = time.perf_counter() - t2
-                except Exception as exc:
-                    failure = {
+        variants = [("pred", aff, (0.0, 0.0, 0.0), 1.0)]
+        variants.extend(make_calibrated_variants(logits_np, calibration_biases, calibration_temperatures))
+        seen_variant_names: set[str] = set()
+        for variant_name, variant_aff, calibration_bias, calibration_temperature in variants:
+            if variant_name in seen_variant_names:
+                continue
+            seen_variant_names.add(variant_name)
+            variant_logits = torch.from_numpy(
+                np.log(np.clip(variant_aff, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - variant_aff, 1e-6, 1.0))
+            )
+            aff_dice = dice_from_logits(variant_logits, target)
+            aff_iou = binary_iou_from_logits(variant_logits, target)
+            aff_record = affinity_stats(variant_name, variant_aff)
+            aff_record.update(
+                {
+                    "sample": path.name,
+                    "calibration_bias_z": float(calibration_bias[0]),
+                    "calibration_bias_y": float(calibration_bias[1]),
+                    "calibration_bias_x": float(calibration_bias[2]),
+                    "calibration_temperature": float(calibration_temperature),
+                    "affinity_dice": float(aff_dice),
+                    "affinity_iou": float(aff_iou),
+                    "inference_sec": float(infer_sec),
+                }
+            )
+            print(aff_record, flush=True)
+            affinity_records.append(aff_record)
+            backend_cache: dict[str, tuple[np.ndarray, float]] = {}
+            for backend in args.backends:
+                threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
+                seed_distances = args.seed_distance if backend in seed_backends else [args.seed_distance[0]]
+                boundary_thresholds = args.boundary_threshold if backend in seed_backends else [args.boundary_threshold[0]]
+                min_boundaries = args.min_boundary if backend in agglomeration_backends else [args.min_boundary[0]]
+                score_modes = args.score_mode if backend in agglomeration_backends else [args.score_mode[0]]
+                waterz_scoring_values = waterz_scorings if backend == "waterz" else [waterz_scorings[0]]
+                z_thresholds = [None]
+                xy_thresholds = [None]
+                if backend in agglomeration_backends | anisotropic_graph_backends:
+                    z_thresholds = list(args.z_thresholds) if args.z_thresholds else [None]
+                    xy_thresholds = list(args.xy_thresholds) if args.xy_thresholds else [None]
+                for threshold, seed_distance, boundary_threshold, min_boundary, score_mode, rag_quantile, waterz_scoring, z_threshold, xy_threshold in itertools.product(
+                    threshold_values,
+                    seed_distances,
+                    boundary_thresholds,
+                    min_boundaries,
+                    score_modes,
+                    args.rag_quantile if backend in agglomeration_backends else [args.rag_quantile[0]],
+                    waterz_scoring_values,
+                    z_thresholds,
+                    xy_thresholds,
+                ):
+                    try:
+                        t1 = time.perf_counter()
+                        seg = run_backend(
+                            variant_aff,
+                            backend=backend,
+                            threshold=threshold,
+                            min_size=args.min_size,
+                            seed_method=args.seed_method,
+                            seed_distance=int(seed_distance),
+                            boundary_threshold=float(boundary_threshold),
+                            min_boundary=int(min_boundary),
+                            score_mode=str(score_mode),
+                            rag_quantile=float(rag_quantile),
+                            z_threshold=None if z_threshold is None else float(z_threshold),
+                            xy_threshold=None if xy_threshold is None else float(xy_threshold),
+                            waterz_scoring=str(waterz_scoring),
+                            cache=backend_cache,
+                        )
+                        postprocess_sec = time.perf_counter() - t1
+                        t2 = time.perf_counter()
+                        metrics = segmentation_metrics(
+                            seg,
+                            label,
+                            ignore_label=args.ignore_label,
+                            backend=args.metric_backend,
+                        )
+                        metrics_sec = time.perf_counter() - t2
+                    except Exception as exc:
+                        failure = {
+                            "sample": path.name,
+                            "affinity_variant": variant_name,
+                            "calibration_bias_z": float(calibration_bias[0]),
+                            "calibration_bias_y": float(calibration_bias[1]),
+                            "calibration_bias_x": float(calibration_bias[2]),
+                            "calibration_temperature": float(calibration_temperature),
+                            "backend": backend,
+                            "threshold": float(threshold),
+                            "seed_distance": int(seed_distance),
+                            "boundary_threshold": float(boundary_threshold),
+                            "min_boundary": int(min_boundary),
+                            "score_mode": str(score_mode),
+                            "rag_quantile": float(rag_quantile),
+                            "waterz_scoring": str(waterz_scoring),
+                            "z_threshold": "" if z_threshold is None else float(z_threshold),
+                            "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
+                            "error": repr(exc),
+                        }
+                        print(failure, flush=True)
+                        failures.append(failure)
+                        if args.fail_on_backend_error:
+                            raise
+                        continue
+                    record: dict[str, float | int | str] = {
                         "sample": path.name,
+                        "affinity_variant": variant_name,
+                        "calibration_bias_z": float(calibration_bias[0]),
+                        "calibration_bias_y": float(calibration_bias[1]),
+                        "calibration_bias_x": float(calibration_bias[2]),
+                        "calibration_temperature": float(calibration_temperature),
                         "backend": backend,
                         "threshold": float(threshold),
                         "seed_distance": int(seed_distance),
@@ -502,43 +590,29 @@ def main() -> None:
                         "waterz_scoring": str(waterz_scoring),
                         "z_threshold": "" if z_threshold is None else float(z_threshold),
                         "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
-                        "error": repr(exc),
+                        "affinity_dice": float(aff_dice),
+                        "affinity_iou": float(aff_iou),
+                        "inference_sec": float(infer_sec),
+                        "postprocess_sec": float(postprocess_sec),
+                        "metrics_sec": float(metrics_sec),
+                        **metric_dict(metrics),
                     }
-                    print(failure, flush=True)
-                    failures.append(failure)
-                    if args.fail_on_backend_error:
-                        raise
-                    continue
-                record: dict[str, float | int | str] = {
-                    "sample": path.name,
-                    "backend": backend,
-                    "threshold": float(threshold),
-                    "seed_distance": int(seed_distance),
-                    "boundary_threshold": float(boundary_threshold),
-                    "min_boundary": int(min_boundary),
-                    "score_mode": str(score_mode),
-                    "rag_quantile": float(rag_quantile),
-                    "waterz_scoring": str(waterz_scoring),
-                    "z_threshold": "" if z_threshold is None else float(z_threshold),
-                    "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
-                    "affinity_dice": float(aff_dice),
-                    "affinity_iou": float(aff_iou),
-                    "inference_sec": float(infer_sec),
-                    "postprocess_sec": float(postprocess_sec),
-                    "metrics_sec": float(metrics_sec),
-                    **metric_dict(metrics),
-                }
-                print(record, flush=True)
-                records.append(record)
-                if args.save_seg:
-                    z_tag = "none" if z_threshold is None else f"{float(z_threshold):.2f}"
-                    xy_tag = "none" if xy_threshold is None else f"{float(xy_threshold):.2f}"
-                    out_npz = output_dir / (
-                        f"{path.stem}_{backend}_thr{threshold:.2f}_sd{int(seed_distance)}_"
-                        f"bt{float(boundary_threshold):.2f}_mb{int(min_boundary)}_"
-                        f"{score_mode}_z{z_tag}_xy{xy_tag}_seg.npz"
-                    )
-                    np.savez_compressed(out_npz, segmentation=seg.astype(np.uint64), crop=np.array([[sl.start, sl.stop] for sl in crop]))
+                    print(record, flush=True)
+                    records.append(record)
+                    if args.save_seg:
+                        z_tag = "none" if z_threshold is None else f"{float(z_threshold):.2f}"
+                        xy_tag = "none" if xy_threshold is None else f"{float(xy_threshold):.2f}"
+                        safe_variant = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in variant_name)
+                        out_npz = output_dir / (
+                            f"{path.stem}_{safe_variant}_{backend}_thr{threshold:.2f}_sd{int(seed_distance)}_"
+                            f"bt{float(boundary_threshold):.2f}_mb{int(min_boundary)}_"
+                            f"{score_mode}_z{z_tag}_xy{xy_tag}_seg.npz"
+                        )
+                        np.savez_compressed(
+                            out_npz,
+                            segmentation=seg.astype(np.uint64),
+                            crop=np.array([[sl.start, sl.stop] for sl in crop]),
+                        )
 
     csv_path = output_dir / "cremi_segmentation_metrics.csv"
     if records:
@@ -566,6 +640,8 @@ def main() -> None:
         "package_probe": probes,
         "metric_backend": args.metric_backend,
         "replicate_affinity_boundary": bool(args.replicate_affinity_boundary),
+        "calibration_biases": [list(bias) for bias in calibration_biases],
+        "calibration_temperatures": calibration_temperatures,
         "waterz_scoring": list(waterz_scorings),
         "failures": failures,
         "per_threshold": [],
@@ -586,6 +662,11 @@ def main() -> None:
         "metrics_sec",
     ]
     group_keys = [
+        "affinity_variant",
+        "calibration_bias_z",
+        "calibration_bias_y",
+        "calibration_bias_x",
+        "calibration_temperature",
         "backend",
         "threshold",
         "seed_distance",
