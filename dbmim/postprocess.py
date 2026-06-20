@@ -566,19 +566,31 @@ def waterz_agglomeration(
     affinities: np.ndarray,
     threshold: float = 0.5,
     fragments: np.ndarray | None = None,
+    scoring_function: str = "hist_quantile",
 ) -> np.ndarray:
     import waterz  # type: ignore
 
     if fragments is None:
         fragments = watershed_fragments(affinities, backend="mahotas", seed_method="maxima_distance")
-    scoring_function = "OneMinus<HistogramQuantileAffinity<RegionGraphType, 50, ScoreValue, 256>>"
+    waterz_fragments = np.asarray(fragments, dtype=np.uint64).copy(order="C")
+    scoring_aliases = {
+        "hist_quantile": "OneMinus<HistogramQuantileAffinity<RegionGraphType, 50, ScoreValue, 256>>",
+        "hist_quantile_false": (
+            "OneMinus<HistogramQuantileAffinity<RegionGraphType, 50, ScoreValue, 256, false>>"
+        ),
+        "min": "OneMinus<MinAffinity<RegionGraphType, ScoreValue>>",
+        "max": "OneMinus<MaxAffinity<RegionGraphType, ScoreValue>>",
+    }
+    if scoring_function == "mean":
+        raise ValueError("waterz v0.8 does not provide MeanAffinityProvider; use hist_quantile, min, or max")
+    scoring = scoring_aliases.get(scoring_function, scoring_function)
     return np.asarray(
         list(
             waterz.agglomerate(
                 affinities,
                 [float(threshold)],
-                fragments=fragments,
-                scoring_function=scoring_function,
+                fragments=waterz_fragments,
+                scoring_function=scoring,
                 discretize_queue=256,
             )
         )[0]
@@ -602,7 +614,36 @@ def segmentation_metrics(
     pred: np.ndarray,
     target: np.ndarray,
     ignore_label: int | None = 0,
+    backend: str = "internal",
 ) -> SegmentationMetrics:
+    if backend == "skimage":
+        from skimage.metrics import adapted_rand_error, variation_of_information  # type: ignore
+
+        ignore_labels = () if ignore_label is None else (ignore_label,)
+        arand, precision, recall = adapted_rand_error(target, pred, ignore_labels=ignore_labels)
+        voi_split, voi_merge = variation_of_information(target, pred, ignore_labels=ignore_labels)
+        if ignore_label is None:
+            pred_eval = np.asarray(pred).reshape(-1)
+            target_eval = np.asarray(target).reshape(-1)
+        else:
+            target_flat = np.asarray(target).reshape(-1)
+            keep = target_flat != ignore_label
+            pred_eval = np.asarray(pred).reshape(-1)[keep]
+            target_eval = target_flat[keep]
+        return SegmentationMetrics(
+            adapted_rand_error=float(arand),
+            rand_fscore=1.0 - float(arand),
+            rand_precision=float(precision),
+            rand_recall=float(recall),
+            voi_split=float(voi_split),
+            voi_merge=float(voi_merge),
+            n_pred=int(np.unique(pred_eval).size),
+            n_gt=int(np.unique(target_eval).size),
+            n_voxels=int(pred_eval.size),
+        )
+    if backend != "internal":
+        raise ValueError(f"unknown metric backend: {backend}")
+
     pred = np.asarray(pred).reshape(-1)
     target = np.asarray(target).reshape(-1)
     if pred.shape != target.shape:

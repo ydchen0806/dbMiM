@@ -5,6 +5,7 @@ __pycache__/
 
 data/
 outputs/
+third_party/
 *.pt
 *.pth
 *.ckpt

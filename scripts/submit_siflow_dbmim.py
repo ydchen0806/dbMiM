@@ -85,11 +85,26 @@ ABLATION_RUNS = {
         "eval": "eval_cremi_unetr_aniso_neg_boundary_scratch_r3",
         "large_eval": "eval_cremi_unetr_aniso_large_neg_boundary_scratch_r3",
     },
+    "superhuman-pretrained-r4": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r4.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r4",
+        "eval": "eval_cremi_unetr_aniso_superhuman_pretrained_r4",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_pretrained_r4",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_pretrained_r4",
+    },
+    "superhuman-scratch-r4": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_scratch_r4.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_scratch_r4",
+        "eval": "eval_cremi_unetr_aniso_superhuman_scratch_r4",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_scratch_r4",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_scratch_r4",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_LARGE_EVAL_STAGES = {f"eval-cremi-unetr-aniso-large-{name}" for name in ABLATION_RUNS}
 ABLATION_DIAG_STAGES = {f"diagnose-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
+ABLATION_SUPERHUMAN_EVAL_STAGES = {f"eval-cremi-unetr-aniso-superhuman-{name}" for name in ABLATION_RUNS}
 CREMI_STAGES = {
     "pretrain-cremi",
     "pretrain-cremi-long",
@@ -117,7 +132,7 @@ CREMI_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
-} | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES
+} | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | ABLATION_SUPERHUMAN_EVAL_STAGES
 CREMI_EVAL_STAGES = {
     "eval-cremi",
     "eval-cremi-unetr-pretrained",
@@ -135,13 +150,14 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
-} | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES
+} | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | ABLATION_SUPERHUMAN_EVAL_STAGES
 
 
 def _ablation_name_from_stage(stage: str) -> str | None:
     for prefix in [
         "finetune-cremi-unetr-aniso-",
         "eval-cremi-unetr-aniso-large-",
+        "eval-cremi-unetr-aniso-superhuman-",
         "eval-cremi-unetr-aniso-",
         "diagnose-cremi-unetr-aniso-",
     ]:
@@ -295,6 +311,19 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
             shutil.copy2(src, dst)
     if WHEELHOUSE.exists():
         shutil.copytree(WHEELHOUSE, out / "wheelhouse")
+    superhuman_wheelhouse = PROJECT / "outputs" / "wheelhouse_superhuman_eval"
+    if superhuman_wheelhouse.exists():
+        shutil.copytree(superhuman_wheelhouse, out / "wheelhouse_superhuman_eval")
+    waterz_source = PROJECT.parent / "_refs" / "waterz_v08"
+    if not waterz_source.exists():
+        waterz_source = PROJECT.parent / "_refs" / "waterz"
+    if stage in ABLATION_SUPERHUMAN_EVAL_STAGES and waterz_source.exists():
+        shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
+    boost_headers = PROJECT / "third_party" / "boost_1_84_0" / "boost"
+    if stage in ABLATION_SUPERHUMAN_EVAL_STAGES and boost_headers.exists():
+        boost_dst = out / "third_party" / "boost" / "include" / "boost"
+        boost_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(boost_headers, boost_dst)
     if stage in CREMI_STAGES:
         _patch_cremi_configs(out)
     if TOSUTIL.exists():
@@ -350,6 +379,27 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
                 "mkdir -p outputs/finetune_cremi_real_dbmim outputs/finetune_cremi_real_unetr_pretrained outputs/finetune_cremi_real_unetr_scratch outputs/finetune_cremi_real_unetr_aniso_pretrained outputs/finetune_cremi_real_unetr_aniso_scratch outputs/finetune_cremi_real_unetr_aniso_longpretrained outputs/finetune_cremi_real_zdice outputs/finetune_cremi_real_zdice_focal outputs/eval_cremi_real_dbmim outputs/eval_cremi_unetr_pretrained outputs/eval_cremi_unetr_scratch outputs/eval_cremi_unetr_aniso_pretrained outputs/eval_cremi_unetr_aniso_scratch outputs/eval_cremi_unetr_aniso_longpretrained outputs/eval_cremi_unetr_aniso_large_pretrained outputs/eval_cremi_unetr_aniso_large_scratch outputs/eval_cremi_unetr_aniso_large_longpretrained outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe outputs/eval_cremi_rag_ablation outputs/eval_cremi_aniso_graph outputs/eval_cremi_scale64 outputs/eval_cremi_zdice outputs/eval_cremi_zdice_focal",
             ]
         )
+    if stage in ABLATION_SUPERHUMAN_EVAL_STAGES:
+        prelude.extend(
+            [
+                "if [ -d wheelhouse_superhuman_eval ]; then",
+                "  python -m pip install --user --no-index --find-links wheelhouse_superhuman_eval scikit-image",
+                "fi",
+                "if ! python - <<'PY'\nimport importlib.util\nraise SystemExit(0 if importlib.util.find_spec('waterz') else 1)\nPY\nthen",
+                "  if [ -d third_party/waterz ]; then",
+                "    if [ -d third_party/boost/include ]; then",
+                "      export CPLUS_INCLUDE_PATH=\"$PWD/third_party/boost/include:${CPLUS_INCLUDE_PATH:-}\"",
+                "      export BOOST_INCLUDEDIR=\"$PWD/third_party/boost/include\"",
+                "    fi",
+                "    if [ -d /usr/include/boost ] || [ -d third_party/boost/include/boost ] || [ -n \"${BOOST_ROOT:-}\" ] || [ -n \"${BOOST_INCLUDEDIR:-}\" ]; then",
+                "      python -m pip install --user --no-build-isolation --no-index --find-links wheelhouse_superhuman_eval third_party/waterz",
+                "    else",
+                "      echo 'waterz build skipped: boost headers missing in this image' >&2",
+                "    fi",
+                "  fi",
+                "fi",
+            ]
+        )
     if stage in {
         "eval-cremi",
         "eval-cremi-sweep",
@@ -395,6 +445,7 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         eval_stage_map[f"eval-cremi-unetr-aniso-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
         eval_stage_map[f"eval-cremi-unetr-aniso-large-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
         eval_stage_map[f"diagnose-cremi-unetr-aniso-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
+        eval_stage_map[f"eval-cremi-unetr-aniso-superhuman-{name}"] = (spec["output"], "DBMIM_EVAL_CKPT")
     if stage in eval_stage_map:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
@@ -490,6 +541,10 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         eval_output_dirs[f"eval-cremi-unetr-aniso-{name}"] = f"outputs/{spec['eval']}"
         eval_output_dirs[f"eval-cremi-unetr-aniso-large-{name}"] = f"outputs/{spec['large_eval']}"
         eval_output_dirs[f"diagnose-cremi-unetr-aniso-{name}"] = f"outputs/diagnose_cremi_unetr_aniso_{name}"
+        safe_name = name.replace("-", "_")
+        eval_output_dirs[f"eval-cremi-unetr-aniso-superhuman-{name}"] = (
+            f"outputs/{spec.get('superhuman_eval', f'eval_cremi_unetr_aniso_superhuman_waterz_{safe_name}')}"
+        )
     if stage in eval_output_dirs:
         postlude.extend(
             [
@@ -612,6 +667,7 @@ def main() -> None:
             *sorted(ABLATION_EVAL_STAGES),
             *sorted(ABLATION_LARGE_EVAL_STAGES),
             *sorted(ABLATION_DIAG_STAGES),
+            *sorted(ABLATION_SUPERHUMAN_EVAL_STAGES),
             "eval-cremi-sweep",
             "eval-cremi-gpu-probe",
             "eval-cremi-rag-ablation",
@@ -880,6 +936,41 @@ def main() -> None:
             "--diagnostics"
         )
         prefix = f"dbmim-diagnose-cremi-unetr-aniso-{ablation_name}"
+    elif args.stage in ABLATION_SUPERHUMAN_EVAL_STAGES:
+        ablation_name = _ablation_name_from_stage(args.stage)
+        if ablation_name is None:
+            raise ValueError(f"unknown SuperHuman eval stage: {args.stage}")
+        spec = ABLATION_RUNS[ablation_name]
+        out_dir = spec.get("superhuman_eval", f"eval_cremi_unetr_aniso_superhuman_waterz_{ablation_name.replace('-', '_')}")
+        entrypoint = (
+            "python - <<'PY'\n"
+            "import importlib.util\n"
+            "missing=[m for m in ['skimage','waterz','mahotas'] if importlib.util.find_spec(m) is None]\n"
+            "print({'superhuman_eval_missing_modules': missing})\n"
+            "if missing:\n"
+            "    raise SystemExit('missing SuperHuman eval modules: '+','.join(missing))\n"
+            "PY\n"
+            "python scripts/evaluate_cremi_segmentation.py "
+            f"--config configs/{spec['config']} "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            f"--output-dir outputs/{out_dir} "
+            "--crop-size 0 0 0 "
+            "--stride 16 80 80 "
+            "--thresholds 0.30 0.40 0.50 0.60 0.70 "
+            "--backends waterz "
+            "--min-size 0 "
+            "--seed-method maxima_distance "
+            "--seed-distance 10 "
+            "--boundary-threshold 0.5 "
+            "--waterz-scoring hist_quantile "
+            "--metric-backend skimage "
+            "--replicate-affinity-boundary "
+            "--max-samples 3 "
+            "--device cuda "
+            "--fail-on-backend-error"
+        )
+        prefix = f"dbmim-eval-cremi-unetr-aniso-superhuman-{ablation_name}"
     elif args.stage == "eval-cremi-sweep":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "

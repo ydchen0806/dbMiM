@@ -142,6 +142,13 @@ def affinity_loss(
     }
 
 
+def make_affinity_target(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor:
+    return labels_to_affinities(
+        labels,
+        replicate_boundary=bool(train_cfg.get("replicate_affinity_boundary", False)),
+    )
+
+
 def finetune_loss(
     logits: torch.Tensor,
     affinity_target: torch.Tensor,
@@ -269,7 +276,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
     for batch in loader:
         image = batch["image"].to(device, non_blocking=True)
         labels = batch["label"].to(device, non_blocking=True)
-        target = labels_to_affinities(labels).to(device)
+        target = make_affinity_target(labels, train_cfg).to(device)
         logits = model(image)
         loss, loss_parts = finetune_loss(logits, target, labels, train_cfg)
         affinity_logits = logits[:, : target.shape[1]]
@@ -384,7 +391,7 @@ def main() -> None:
         for batch in loader:
             image = batch["image"].to(device, non_blocking=True)
             labels = batch["label"].to(device, non_blocking=True)
-            target = labels_to_affinities(labels).to(device)
+            target = make_affinity_target(labels, train_cfg).to(device)
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 logits = model(image)

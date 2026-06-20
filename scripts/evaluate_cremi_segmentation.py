@@ -73,6 +73,10 @@ def center_slices(shape: tuple[int, int, int], crop_size: tuple[int, int, int]) 
     return tuple(slices)  # type: ignore[return-value]
 
 
+def normalize_crop_size(crop_size: tuple[int, int, int], model_window: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(0 if c <= 0 else max(c, w) for c, w in zip(crop_size, model_window))
+
+
 def read_cremi_crop(
     path: Path,
     crop_size: tuple[int, int, int],
@@ -164,6 +168,20 @@ def metric_dict(obj) -> dict[str, float | int]:
     }
 
 
+def affinity_stats(name: str, affinities: np.ndarray) -> dict[str, float | str]:
+    stats: dict[str, float | str] = {"affinity_variant": name}
+    for channel, channel_name in enumerate(["z", "y", "x"]):
+        values = affinities[channel].reshape(-1).astype(np.float32, copy=False)
+        stats[f"{channel_name}_mean"] = float(np.mean(values))
+        stats[f"{channel_name}_std"] = float(np.std(values))
+        stats[f"{channel_name}_p01"] = float(np.quantile(values, 0.01))
+        stats[f"{channel_name}_p05"] = float(np.quantile(values, 0.05))
+        stats[f"{channel_name}_p50"] = float(np.quantile(values, 0.50))
+        stats[f"{channel_name}_p95"] = float(np.quantile(values, 0.95))
+        stats[f"{channel_name}_p99"] = float(np.quantile(values, 0.99))
+    return stats
+
+
 def package_probe() -> dict[str, object]:
     import importlib.util
 
@@ -193,6 +211,7 @@ def run_backend(
     rag_quantile: float = 0.25,
     z_threshold: float | None = None,
     xy_threshold: float | None = None,
+    waterz_scoring: str = "hist_quantile",
     cache: dict[str, tuple[np.ndarray, float]] | None = None,
 ) -> np.ndarray:
     graph_threshold = threshold
@@ -287,7 +306,21 @@ def run_backend(
             quantile=rag_quantile,
         )
     if backend == "waterz":
-        return waterz_agglomeration(affinities, threshold=threshold)
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+        fragments = None
+        if cache is not None and key in cache:
+            fragments = cache[key][0]
+        if fragments is None:
+            fragments = watershed_fragments(
+                affinities,
+                backend="mahotas",
+                seed_method=seed_method,
+                seed_distance=seed_distance,
+                boundary_threshold=boundary_threshold,
+            )
+            if cache is not None:
+                cache[key] = (fragments, 0.0)
+        return waterz_agglomeration(affinities, threshold=threshold, fragments=fragments, scoring_function=waterz_scoring)
     raise ValueError(f"unknown backend: {backend}")
 
 
@@ -335,6 +368,15 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--save-seg", action="store_true")
     parser.add_argument("--ignore-label", type=int, default=0)
+    parser.add_argument("--replicate-affinity-boundary", action="store_true")
+    parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="internal")
+    parser.add_argument(
+        "--waterz-scoring",
+        nargs="+",
+        default="hist_quantile",
+        help="waterz scoring alias: hist_quantile, hist_quantile_false, mean, or a full waterz scoring string",
+    )
+    parser.add_argument("--fail-on-backend-error", action="store_true")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -343,9 +385,8 @@ def main() -> None:
     model = build_model(cfg, Path(args.checkpoint), device)
     model_window = tuple(int(v) for v in model.volume_size)
     stride = tuple(args.stride) if args.stride is not None else tuple(max(1, v // 2) for v in model_window)
-    crop_size = tuple(int(v) for v in args.crop_size)
-    if any(c < w for c, w in zip(crop_size, model_window)):
-        crop_size = tuple(max(c, w) for c, w in zip(crop_size, model_window))
+    requested_crop_size = tuple(int(v) for v in args.crop_size)
+    crop_size = normalize_crop_size(requested_crop_size, model_window)
 
     data_cfg = cfg.get("data", {})
     raw_keys = data_cfg.get("image_keys") or ["volumes/raw", "raw", "main"]
@@ -355,9 +396,11 @@ def main() -> None:
         files = files[: args.max_samples]
 
     records: list[dict[str, float | int | str]] = []
+    affinity_records: list[dict[str, float | int | str]] = []
     failures: list[dict[str, str | float]] = []
     probes = package_probe()
     print({"package_probe": probes}, flush=True)
+    waterz_scorings = args.waterz_scoring if isinstance(args.waterz_scoring, list) else [args.waterz_scoring]
     watershed_backends = {"mahotas_watershed", "scipy_watershed"}
     anisotropic_graph_backends = {"graph_cc", "cupy_graph_cc"}
     agglomeration_backends = {"seeded_rag", "mahotas_agglomeration", "scipy_agglomeration"}
@@ -376,11 +419,25 @@ def main() -> None:
         t0 = time.perf_counter()
         aff = predict_affinities(model, raw, model_window, stride, device)
         infer_sec = time.perf_counter() - t0
-        target_aff = labels_to_affinities(torch.from_numpy(label.astype(np.int64))[None]).numpy()[0]
+        target_aff = labels_to_affinities(
+            torch.from_numpy(label.astype(np.int64))[None],
+            replicate_boundary=args.replicate_affinity_boundary,
+        ).numpy()[0]
         logits = torch.from_numpy(np.log(np.clip(aff, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - aff, 1e-6, 1.0)))
         target = torch.from_numpy(target_aff)
         aff_dice = dice_from_logits(logits, target)
         aff_iou = binary_iou_from_logits(logits, target)
+        aff_record = affinity_stats("pred", aff)
+        aff_record.update(
+            {
+                "sample": path.name,
+                "affinity_dice": float(aff_dice),
+                "affinity_iou": float(aff_iou),
+                "inference_sec": float(infer_sec),
+            }
+        )
+        print(aff_record, flush=True)
+        affinity_records.append(aff_record)
         backend_cache: dict[str, tuple[np.ndarray, float]] = {}
         for backend in args.backends:
             threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
@@ -388,18 +445,20 @@ def main() -> None:
             boundary_thresholds = args.boundary_threshold if backend in seed_backends else [args.boundary_threshold[0]]
             min_boundaries = args.min_boundary if backend in agglomeration_backends else [args.min_boundary[0]]
             score_modes = args.score_mode if backend in agglomeration_backends else [args.score_mode[0]]
+            waterz_scoring_values = waterz_scorings if backend == "waterz" else [waterz_scorings[0]]
             z_thresholds = [None]
             xy_thresholds = [None]
             if backend in agglomeration_backends | anisotropic_graph_backends:
                 z_thresholds = list(args.z_thresholds) if args.z_thresholds else [None]
                 xy_thresholds = list(args.xy_thresholds) if args.xy_thresholds else [None]
-            for threshold, seed_distance, boundary_threshold, min_boundary, score_mode, rag_quantile, z_threshold, xy_threshold in itertools.product(
+            for threshold, seed_distance, boundary_threshold, min_boundary, score_mode, rag_quantile, waterz_scoring, z_threshold, xy_threshold in itertools.product(
                 threshold_values,
                 seed_distances,
                 boundary_thresholds,
                 min_boundaries,
                 score_modes,
                 args.rag_quantile if backend in agglomeration_backends else [args.rag_quantile[0]],
+                waterz_scoring_values,
                 z_thresholds,
                 xy_thresholds,
             ):
@@ -418,11 +477,17 @@ def main() -> None:
                         rag_quantile=float(rag_quantile),
                         z_threshold=None if z_threshold is None else float(z_threshold),
                         xy_threshold=None if xy_threshold is None else float(xy_threshold),
+                        waterz_scoring=str(waterz_scoring),
                         cache=backend_cache,
                     )
                     postprocess_sec = time.perf_counter() - t1
                     t2 = time.perf_counter()
-                    metrics = segmentation_metrics(seg, label, ignore_label=args.ignore_label)
+                    metrics = segmentation_metrics(
+                        seg,
+                        label,
+                        ignore_label=args.ignore_label,
+                        backend=args.metric_backend,
+                    )
                     metrics_sec = time.perf_counter() - t2
                 except Exception as exc:
                     failure = {
@@ -434,12 +499,15 @@ def main() -> None:
                         "min_boundary": int(min_boundary),
                         "score_mode": str(score_mode),
                         "rag_quantile": float(rag_quantile),
+                        "waterz_scoring": str(waterz_scoring),
                         "z_threshold": "" if z_threshold is None else float(z_threshold),
                         "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
                         "error": repr(exc),
                     }
                     print(failure, flush=True)
                     failures.append(failure)
+                    if args.fail_on_backend_error:
+                        raise
                     continue
                 record: dict[str, float | int | str] = {
                     "sample": path.name,
@@ -450,6 +518,7 @@ def main() -> None:
                     "min_boundary": int(min_boundary),
                     "score_mode": str(score_mode),
                     "rag_quantile": float(rag_quantile),
+                    "waterz_scoring": str(waterz_scoring),
                     "z_threshold": "" if z_threshold is None else float(z_threshold),
                     "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
                     "affinity_dice": float(aff_dice),
@@ -477,15 +546,27 @@ def main() -> None:
             writer = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
             writer.writeheader()
             writer.writerows(records)
+    affinity_csv_path = output_dir / "cremi_affinity_stats.csv"
+    if affinity_records:
+        with affinity_csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(affinity_records[0].keys()))
+            writer.writeheader()
+            writer.writerows(affinity_records)
     thresholds = sorted({float(r["threshold"]) for r in records})
     summary: dict[str, object] = {
         "checkpoint": str(args.checkpoint),
         "data_dir": str(args.data_dir),
+        "requested_crop_size": list(requested_crop_size),
         "crop_size": list(crop_size),
         "window_size": list(model_window),
         "stride": list(stride),
         "num_records": len(records),
+        "num_affinity_records": len(affinity_records),
+        "affinity_records": affinity_records,
         "package_probe": probes,
+        "metric_backend": args.metric_backend,
+        "replicate_affinity_boundary": bool(args.replicate_affinity_boundary),
+        "waterz_scoring": list(waterz_scorings),
         "failures": failures,
         "per_threshold": [],
         "per_backend_threshold": [],
@@ -512,6 +593,7 @@ def main() -> None:
         "min_boundary",
         "score_mode",
         "rag_quantile",
+        "waterz_scoring",
         "z_threshold",
         "xy_threshold",
     ]

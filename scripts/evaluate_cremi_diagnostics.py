@@ -27,6 +27,7 @@ from evaluate_cremi_segmentation import (
     build_model,
     list_cremi_files,
     metric_dict,
+    normalize_crop_size,
     predict_affinities,
     read_cremi_crop,
     run_backend,
@@ -113,6 +114,8 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--ignore-label", type=int, default=0)
+    parser.add_argument("--replicate-affinity-boundary", action="store_true")
+    parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="internal")
     parser.add_argument("--include-oracle-affinity", action="store_true")
     parser.add_argument("--include-inverted-affinity", action="store_true")
     parser.add_argument("--diagnostics", action="store_true")
@@ -124,9 +127,8 @@ def main() -> None:
     model = build_model(cfg, Path(args.checkpoint), device)
     model_window = tuple(int(v) for v in model.volume_size)
     stride = tuple(args.stride) if args.stride is not None else tuple(max(1, v // 2) for v in model_window)
-    crop_size = tuple(int(v) for v in args.crop_size)
-    if any(c < w for c, w in zip(crop_size, model_window)):
-        crop_size = tuple(max(c, w) for c, w in zip(crop_size, model_window))
+    requested_crop_size = tuple(int(v) for v in args.crop_size)
+    crop_size = normalize_crop_size(requested_crop_size, model_window)
 
     data_cfg = cfg.get("data", {})
     raw_keys = data_cfg.get("image_keys") or ["volumes/raw", "raw", "main"]
@@ -155,7 +157,10 @@ def main() -> None:
         t0 = time.perf_counter()
         pred_aff = predict_affinities(model, raw, model_window, stride, device)
         infer_sec = time.perf_counter() - t0
-        oracle_aff = labels_to_affinities(torch.from_numpy(label.astype(np.int64))[None]).numpy()[0]
+        oracle_aff = labels_to_affinities(
+            torch.from_numpy(label.astype(np.int64))[None],
+            replicate_boundary=args.replicate_affinity_boundary,
+        ).numpy()[0]
 
         pred_logits = _prob_to_logit(pred_aff)
         oracle_target = torch.from_numpy(oracle_aff.astype(np.float32, copy=False))
@@ -209,7 +214,12 @@ def main() -> None:
                     )
                     postprocess_sec = time.perf_counter() - t1
                     t2 = time.perf_counter()
-                    metrics = segmentation_metrics(seg, label, ignore_label=args.ignore_label)
+                    metrics = segmentation_metrics(
+                        seg,
+                        label,
+                        ignore_label=args.ignore_label,
+                        backend=args.metric_backend,
+                    )
                     metrics_sec = time.perf_counter() - t2
                 except Exception as exc:
                     failure = {
@@ -267,6 +277,7 @@ def main() -> None:
     summary: dict[str, object] = {
         "checkpoint": str(args.checkpoint),
         "data_dir": str(args.data_dir),
+        "requested_crop_size": list(requested_crop_size),
         "crop_size": list(crop_size),
         "window_size": list(model_window),
         "stride": list(stride),
@@ -277,6 +288,8 @@ def main() -> None:
         "ignore_label": int(args.ignore_label),
         "num_records": len(records),
         "num_affinity_records": len(affinity_records),
+        "metric_backend": args.metric_backend,
+        "replicate_affinity_boundary": bool(args.replicate_affinity_boundary),
         "failures": failures,
         "per_affinity_backend_threshold": per_group,
     }

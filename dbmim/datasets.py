@@ -292,8 +292,13 @@ class EMVolumeDataset(Dataset):
         return item
 
 
-def labels_to_affinities(labels: torch.Tensor) -> torch.Tensor:
-    """Convert instance labels [B,D,H,W] to nearest-neighbor z/y/x affinities."""
+def labels_to_affinities(labels: torch.Tensor, replicate_boundary: bool = False) -> torch.Tensor:
+    """Convert instance labels [B,D,H,W] to nearest-neighbor z/y/x affinities.
+
+    SuperHuman's ``seg_to_aff(..., pad="replicate")`` treats the first
+    z/y/x boundary plane as a valid foreground self-edge. The default keeps the
+    previous dbMiM behavior for backward-compatible experiments.
+    """
     if labels.ndim == 3:
         labels = labels.unsqueeze(0)
     labels = labels.long()
@@ -302,6 +307,10 @@ def labels_to_affinities(labels: torch.Tensor) -> torch.Tensor:
     aff[:, 0, 1:] = (labels[:, 1:] == labels[:, :-1]) & (labels[:, 1:] > 0)
     aff[:, 1, :, 1:] = (labels[:, :, 1:] == labels[:, :, :-1]) & (labels[:, :, 1:] > 0)
     aff[:, 2, :, :, 1:] = (labels[:, :, :, 1:] == labels[:, :, :, :-1]) & (labels[:, :, :, 1:] > 0)
+    if replicate_boundary:
+        aff[:, 0, 0] = labels[:, 0] > 0
+        aff[:, 1, :, 0] = labels[:, :, 0] > 0
+        aff[:, 2, :, :, 0] = labels[:, :, :, 0] > 0
     return aff.float()
 
 
