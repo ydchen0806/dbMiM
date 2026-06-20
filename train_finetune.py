@@ -266,6 +266,7 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, train_cfg: dict) -> dict[str, float]:
     model.eval()
+    max_batches = int(train_cfg.get("eval_max_batches", 0))
     loss_m = AverageMeter()
     bce_m = AverageMeter()
     dice_loss_m = AverageMeter()
@@ -273,7 +274,9 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
     lsd_loss_m = AverageMeter()
     dice_m = AverageMeter()
     iou_m = AverageMeter()
-    for batch in loader:
+    for batch_idx, batch in enumerate(loader):
+        if max_batches and batch_idx >= max_batches:
+            break
         image = batch["image"].to(device, non_blocking=True)
         labels = batch["label"].to(device, non_blocking=True)
         target = make_affinity_target(labels, train_cfg).to(device)
@@ -316,7 +319,10 @@ def main() -> None:
 
     train_cfg = cfg.get("train", {})
     val_fraction = float(train_cfg.get("val_fraction", 0.1))
-    val_len = max(1, int(round(len(dataset) * val_fraction))) if len(dataset) > 1 else 0
+    if val_fraction > 0.0 and len(dataset) > 1:
+        val_len = min(len(dataset) - 1, max(1, int(round(len(dataset) * val_fraction))))
+    else:
+        val_len = 0
     train_len = len(dataset) - val_len
     if val_len > 0:
         train_set, val_set = random_split(
@@ -325,7 +331,7 @@ def main() -> None:
             generator=torch.Generator().manual_seed(int(cfg.get("seed", 0))),
         )
     else:
-        train_set, val_set = dataset, dataset
+        train_set, val_set = dataset, None
     sampler = DistributedSampler(train_set, shuffle=True) if distributed else None
     loader = DataLoader(
         train_set,
@@ -336,12 +342,16 @@ def main() -> None:
         pin_memory=(device.type == "cuda"),
         drop_last=True,
     )
-    val_loader = DataLoader(
-        val_set,
-        batch_size=int(train_cfg.get("batch_size", 2)),
-        shuffle=False,
-        num_workers=int(train_cfg.get("num_workers", 2)),
-        pin_memory=(device.type == "cuda"),
+    val_loader = (
+        DataLoader(
+            val_set,
+            batch_size=int(train_cfg.get("batch_size", 2)),
+            shuffle=False,
+            num_workers=int(train_cfg.get("num_workers", 2)),
+            pin_memory=(device.type == "cuda"),
+        )
+        if val_set is not None
+        else None
     )
 
     model = build_affinity_model(cfg).to(device)
@@ -378,9 +388,13 @@ def main() -> None:
     log_every = int(train_cfg.get("log_every", 20))
     eval_every = int(train_cfg.get("eval_every", 1))
     save_every = int(train_cfg.get("save_every", 1))
+    save_steps = int(train_cfg.get("save_steps", 0))
     if is_main(rank):
         print(f"output_dir={output_dir}")
-        print(f"dataset_size={len(dataset)} train={len(train_set)} val={len(val_set)} device={device} world_size={world_size}")
+        print(
+            f"dataset_size={len(dataset)} train={len(train_set)} "
+            f"val={0 if val_set is None else len(val_set)} device={device} world_size={world_size}"
+        )
         print(f"model_trainable_params={count_parameters(unwrap(model))}")
         print(f"loss_config={_loss_cfg(train_cfg)}")
     t0 = time.time()
@@ -416,11 +430,32 @@ def main() -> None:
                 }
                 print(payload, flush=True)
                 atomic_jsonl_append(log_path, payload)
+            if save_steps and global_step % save_steps == 0:
+                if distributed:
+                    dist.barrier()
+                if is_main(rank):
+                    payload = {
+                        "model": unwrap(model).state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "best_score": best_score,
+                        "config": cfg,
+                        "last_eval": {},
+                    }
+                    save_checkpoint(output_dir / f"checkpoint_step_{global_step:08d}.pt", payload)
+                    save_checkpoint(output_dir / "finetuned_latest.pt", payload)
+                if distributed:
+                    dist.barrier()
             if max_steps and global_step >= max_steps:
                 break
 
         stats = {}
-        should_eval = (epoch + 1) % eval_every == 0 or epoch + 1 == epochs
+        should_eval = (
+            eval_every > 0
+            and val_loader is not None
+            and ((epoch + 1) % eval_every == 0 or epoch + 1 == epochs)
+        )
         if distributed and should_eval:
             dist.barrier()
         if is_main(rank) and should_eval:
@@ -444,7 +479,9 @@ def main() -> None:
         if distributed and should_eval:
             dist.barrier()
 
-        should_save = (epoch + 1) % save_every == 0 or epoch + 1 == epochs or (max_steps and global_step >= max_steps)
+        should_save = (save_every > 0 and (epoch + 1) % save_every == 0) or epoch + 1 == epochs or (
+            max_steps and global_step >= max_steps
+        )
         if distributed and should_save:
             dist.barrier()
         if is_main(rank) and should_save:

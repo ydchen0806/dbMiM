@@ -33,9 +33,11 @@ train:
   weight_decay: 0.01
   amp: true
   log_every: 20
-  eval_every: 2
-  save_every: 2
-  val_fraction: 0.34
+  eval_every: 0
+  eval_max_batches: 0
+  save_every: 0
+  save_steps: 1000
+  val_fraction: 0.0
   clip_grad: 1.0
   replicate_affinity_boundary: true
   loss:
