@@ -118,3 +118,90 @@ R4 training status at last check:
 - task `8364c135-4987-4aea-8e29-9f7a6d4f3bed` Running.
 - around epoch 15 / step 15.9k after ~16 min.
 - train loss has dropped from ~0.58 early to frequent 0.33-0.50 samples, but remains noisy; boundary dice loss is still high and must be checked by full-volume waterz once a checkpoint is saved.
+
+## 2026-06-20 continuation: root-cause fix and R5 SuperHuman training
+
+The main training bug found after comparing our pipeline against SuperHuman was
+not in VOI itself. `EMVolumeDataset.__getitem__` applied random flips and
+intensity/noise augmentation to the image tensor before attaching the label.
+The instance label was therefore not flipped with the image. This made
+supervised affinity finetuning internally inconsistent and explains the
+previous over-connected affinity outputs and non-convergent VOI behavior.
+
+Code fixes now applied:
+
+- `dbmim/datasets.py`
+  - Added `augment_image_and_label` so z/y/x flips are shared by image and
+    label, while intensity/noise remain image-only.
+  - Added optional SuperHuman/Kisuk-style 2D instance-border invalidation via
+    `widen_instance_boundaries_2d`.
+- `train_finetune.py`
+  - Added SuperHuman-style weighted MSE affinity supervision
+    (`loss.loss_type: weighted_mse`) with per-sample/channel binary balancing.
+  - Passes `data.widen_border` and `data.widen_border_radius` into
+    `EMVolumeDataset`.
+- `configs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5.yaml`
+  and `configs/finetune_cremi_real_unetr_aniso_superhuman_scratch_r5.yaml`
+  - Use `unetr_aniso`, `32x160x160` crops, synchronized augmentation,
+    widened labels, replicate affinity boundary targets, weighted MSE, and
+    boundary Dice auxiliary loss.
+- `scripts/submit_siflow_dbmim.py`
+  - Added R5 training/evaluation stages and calibration output sync.
+
+Local validation:
+
+- `python -m py_compile dbmim/datasets.py train_finetune.py scripts/submit_siflow_dbmim.py` passed.
+- A smoke check verified synchronized label flips, `widen_instance_boundaries_2d`,
+  and `affinity_loss(... loss_type=weighted_mse)` backward pass.
+
+R5 submitted jobs:
+
+- stopped 8-GPU attempts due real `sci.g21-3` instance availability:
+  - pretrained med-model: `26b6b0c5-5c9c-497f-80b7-4daef7a305ce`
+  - scratch med-model: `8e5119d9-681d-41f7-afd4-4d318e18e0e6`
+  - pretrained shared: `452f68a8-dc34-4a60-a3a6-85e9d9cf86c7`
+- active pretrained R5 4-GPU med-model training:
+  `f9f74d70-4798-400f-a189-afad4c1d7e4e`
+- queued scratch R5 4-GPU med-model control:
+  `162150c0-9350-4254-bdce-c599b7fdcfa4`
+- active full-volume sample-A waterz/skimage calibration eval for pretrained
+  R5 latest checkpoint, 1 GPU med-model:
+  `9cabcc88-d7ed-4936-89ca-e2891904b648`
+
+R5 pretrained training evidence:
+
+- Loaded pretrained ViT encoder: `loaded_pretrained_keys=77`.
+- Dataset size: 12288 random crops, distributed world size 4, per-GPU batch 2,
+  effective global batch 8.
+- Loss config:
+  `weighted_mse + 0.05 affinity Dice + 0.35 boundary Dice`, channel weights
+  `[1.25, 1.0, 1.0]`.
+- Early loss dropped much more cleanly than R4:
+  - step 600: `train_loss=0.321`, main/old-log `train_bce_loss=0.120`,
+    boundary Dice loss `0.552`
+  - step 10k: typical `train_loss=0.10-0.19`, main/old-log
+    `train_bce_loss=0.05-0.10`, boundary Dice loss `0.14-0.27`
+  - step 12.2k: still stable around `train_loss=0.10-0.12`
+- Current TOS checkpoint prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5/`
+  with `finetuned_latest.pt` already present.
+
+The R5 full-volume eval has confirmed:
+
+- `raw_shape: [125, 1250, 1250]`
+- `crop: [[0, 125], [0, 1250], [0, 1250]]`
+- checkpoint:
+  `outputs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5/finetuned_latest.pt`
+- modules available in pod:
+  `scipy`, `mahotas`, `cc3d`, `waterz`, `cupy`; `elf` absent.
+
+At the time of this report update, waterz/VOI rows were still running. The
+decision rule is:
+
+- If R5 full-volume VOI improves substantially versus R4 but remains above
+  SuperHuman scale, keep training to 30k and evaluate later checkpoints.
+- If R5 remains near VOI 8-10 after synchronized supervision, stop blind
+  training and switch to targeted method changes: boundary head calibration,
+  direct boundary AP/F1 validation, watershed seed ablation, and possibly a
+  stronger SuperHuman-style 2D U-Net affinity baseline as a teacher/checkpoint
+  sanity reference.

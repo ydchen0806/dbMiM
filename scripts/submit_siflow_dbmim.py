@@ -99,6 +99,20 @@ ABLATION_RUNS = {
         "large_eval": "eval_cremi_unetr_aniso_large_superhuman_scratch_r4",
         "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_scratch_r4",
     },
+    "superhuman-pretrained-r5": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5",
+        "eval": "eval_cremi_unetr_aniso_superhuman_pretrained_r5",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_pretrained_r5",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_pretrained_r5",
+    },
+    "superhuman-scratch-r5": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_scratch_r5.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_scratch_r5",
+        "eval": "eval_cremi_unetr_aniso_superhuman_scratch_r5",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_scratch_r5",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_scratch_r5",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -109,6 +123,8 @@ SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-pretrained-r3",
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-scratch-r3",
     "eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r4",
+    "eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r5",
+    "eval-cremi-unetr-aniso-superhuman-calibration-superhuman-scratch-r5",
 }
 SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION_STAGES
 CREMI_STAGES = {
@@ -206,7 +222,7 @@ def _entrypoint_lines(entrypoint: str, sync_output_dir: str | None) -> list[str]
         return [entrypoint]
     remote_dir = f"{TOS_OUTPUT_PREFIX}/{Path(sync_output_dir).name}"
     return [
-        "DBMIM_SYNC_SEC=${DBMIM_SYNC_SEC:-300}",
+        "DBMIM_SYNC_SEC=${DBMIM_SYNC_SEC:-60}",
         "dbmim_sync_output_loop() {",
         "  local out_dir=\"$1\"",
         "  while true; do",
@@ -465,6 +481,14 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r4",
         "DBMIM_EVAL_CKPT",
     )
+    eval_stage_map["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r5"] = (
+        "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5",
+        "DBMIM_EVAL_CKPT",
+    )
+    eval_stage_map["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-scratch-r5"] = (
+        "finetune_cremi_real_unetr_aniso_superhuman_scratch_r5",
+        "DBMIM_EVAL_CKPT",
+    )
     if stage in eval_stage_map:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
@@ -572,6 +596,12 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
     )
     eval_output_dirs["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r4"] = (
         "outputs/eval_cremi_unetr_aniso_superhuman_calibration_superhuman_pretrained_r4"
+    )
+    eval_output_dirs["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r5"] = (
+        "outputs/eval_cremi_unetr_aniso_superhuman_calibration_superhuman_pretrained_r5"
+    )
+    eval_output_dirs["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-scratch-r5"] = (
+        "outputs/eval_cremi_unetr_aniso_superhuman_calibration_superhuman_scratch_r5"
     )
     if stage in eval_output_dirs:
         postlude.extend(
@@ -965,7 +995,19 @@ def main() -> None:
         )
         prefix = f"dbmim-diagnose-cremi-unetr-aniso-{ablation_name}"
     elif args.stage in SUPERHUMAN_CALIBRATION_STAGES:
-        if args.stage.endswith("superhuman-pretrained-r4"):
+        if args.stage.endswith("superhuman-pretrained-r5"):
+            config = "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5.yaml"
+            out_dir = "eval_cremi_unetr_aniso_superhuman_calibration_superhuman_pretrained_r5"
+            suffix = "superhuman-pretrained-r5"
+            thresholds = "0.05 0.10 0.20 0.30 0.50"
+            calibration_biases = "0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0"
+        elif args.stage.endswith("superhuman-scratch-r5"):
+            config = "finetune_cremi_real_unetr_aniso_superhuman_scratch_r5.yaml"
+            out_dir = "eval_cremi_unetr_aniso_superhuman_calibration_superhuman_scratch_r5"
+            suffix = "superhuman-scratch-r5"
+            thresholds = "0.05 0.10 0.20 0.30 0.50"
+            calibration_biases = "0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0"
+        elif args.stage.endswith("superhuman-pretrained-r4"):
             config = "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r4.yaml"
             out_dir = "eval_cremi_unetr_aniso_superhuman_calibration_superhuman_pretrained_r4"
             suffix = "superhuman-pretrained-r4"

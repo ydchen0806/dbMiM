@@ -21,6 +21,12 @@ The active scientific question is whether dbMiM pretraining improves CREMI
 neuron segmentation with a paper-aligned anisotropic UNETR backbone and
 VOI/ARAND evaluation.
 
+As of 2026-06-20, the earlier R3/R4 supervised finetuning results are
+invalidated as scientific evidence because the dataset applied random geometric
+flips to the image but not to the instance label. This broke image/label
+alignment during supervised affinity training. Keep their logs only as
+debugging history.
+
 Current controlled arms:
 
 - `aniso UNETR pretrained`: existing dbMiM pretrained ViT encoder, loaded into
@@ -57,6 +63,49 @@ All jobs below were submitted on 2026-06-17 via Shanghai changliu with
 
 Watcher logs live in `outputs/watchers/`. If their tail only says
 `checkpoint_wait`, no checkpoint has been observed in TOS yet.
+
+## R5 Root-Cause Fix Snapshot
+
+On 2026-06-20 the supervised dataset and loss were fixed to align with the
+SuperHuman/Kisuk affinity-training style:
+
+- `dbmim/datasets.py` now uses synchronized image/label flips through
+  `augment_image_and_label`.
+- `data.widen_border: true` performs 2D in-plane instance-border invalidation
+  before affinity generation.
+- `train_finetune.py` supports `loss.loss_type: weighted_mse`, a
+  SuperHuman-style per-sample/channel binary ratio weighting over sigmoid
+  affinities.
+- R5 configs are:
+  - `configs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5.yaml`
+  - `configs/finetune_cremi_real_unetr_aniso_superhuman_scratch_r5.yaml`
+
+Current R5 SiFlow jobs:
+
+| arm | UUID | status at last update | notes |
+|---|---|---|---|
+| pretrained R5 4-GPU train | `f9f74d70-4798-400f-a189-afad4c1d7e4e` | Running | med-model, global batch 8, loaded 77 pretrained keys |
+| scratch R5 4-GPU train | `162150c0-9350-4254-bdce-c599b7fdcfa4` | Queueing | med-model actual availability was only 1-2 GPUs |
+| pretrained R5 full-volume sample-A eval | `9cabcc88-d7ed-4936-89ca-e2891904b648` | Running | 1 GPU med-model, waterz/skimage, sample A full volume |
+
+Stopped R5 attempts due insufficient actual `sci.g21-3` availability:
+
+- `26b6b0c5-5c9c-497f-80b7-4daef7a305ce`: pretrained 8-GPU med-model.
+- `8e5119d9-681d-41f7-afd4-4d318e18e0e6`: scratch 8-GPU med-model.
+- `452f68a8-dc34-4a60-a3a6-85e9d9cf86c7`: pretrained 8-GPU shared pool.
+
+R5 pretrained training signs are healthier than R4:
+
+- step 600: `train_loss` about `0.321`, boundary Dice loss about `0.552`.
+- step 10k-12k: common `train_loss` about `0.10-0.19`, boundary Dice loss
+  about `0.14-0.27`.
+- TOS checkpoint prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5/`.
+
+The R5 eval already confirmed true full-volume sample A scope:
+`raw_shape [125,1250,1250]`, crop `[[0,125],[0,1250],[0,1250]]`, checkpoint
+`outputs/finetune_cremi_real_unetr_aniso_superhuman_pretrained_r5/finetuned_latest.pt`.
+Wait for waterz VOI rows before making a method claim.
 
 ## R2 Restart Snapshot
 

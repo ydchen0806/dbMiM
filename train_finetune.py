@@ -73,6 +73,21 @@ def _broadcast_loss_tensor(value, device: torch.device, *, channels: int, name: 
     return tensor
 
 
+def _binary_ratio_weight(target: torch.Tensor, alpha: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
+    """SuperHuman-style per-sample/channel binary class rebalancing."""
+
+    target_bin = (target > 0.5).to(torch.float32)
+    pos_fraction = target_bin.mean(dim=(2, 3, 4), keepdim=True).clamp(0.05, 0.99)
+    pos_heavy = pos_fraction > 0.5
+    pos_weight = alpha * (1.0 - pos_fraction) / pos_fraction.clamp_min(eps)
+    neg_weight = alpha * pos_fraction / (1.0 - pos_fraction).clamp_min(eps)
+    return torch.where(
+        pos_heavy,
+        target_bin + neg_weight * (1.0 - target_bin),
+        pos_weight * target_bin + (1.0 - target_bin),
+    )
+
+
 def affinity_loss(
     logits: torch.Tensor,
     target: torch.Tensor,
@@ -94,19 +109,29 @@ def affinity_loss(
     neg_weight = _broadcast_loss_tensor(neg_weight_value, logits.device, channels=channels, name="neg_weight")
     channel_weight = _broadcast_loss_tensor(channel_weight_value, logits.device, channels=channels, name="channel_weights")
 
-    bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
-    bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
-    focal_gamma = float(cfg.get("focal_gamma", train_cfg.get("focal_gamma", 0.0)))
-    pos_focal_gamma = float(cfg.get("pos_focal_gamma", train_cfg.get("pos_focal_gamma", focal_gamma)))
-    neg_focal_gamma = float(cfg.get("neg_focal_gamma", train_cfg.get("neg_focal_gamma", focal_gamma)))
-    if max(pos_focal_gamma, neg_focal_gamma) > 0.0:
-        prob = torch.sigmoid(logits.detach())
-        pos_pt = prob.clamp(1e-4, 1.0)
-        neg_pt = (1.0 - prob).clamp(1e-4, 1.0)
-        pos_factor = (1.0 - pos_pt).pow(pos_focal_gamma)
-        neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
-        bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
-    bce_loss = (bce * channel_weight).sum() / channel_weight.expand_as(bce).sum().clamp_min(1.0)
+    loss_type = str(cfg.get("loss_type", train_cfg.get("loss_type", "bce"))).lower()
+    if loss_type in {"mse", "weighted_mse", "superhuman_mse"}:
+        prob_main = torch.sigmoid(logits)
+        main = (prob_main - target).pow(2)
+        if loss_type in {"weighted_mse", "superhuman_mse"}:
+            main = main * _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
+        bce_loss = (main * channel_weight).sum() / channel_weight.expand_as(main).sum().clamp_min(1.0)
+    elif loss_type in {"bce", "weighted_bce"}:
+        bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+        bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
+        focal_gamma = float(cfg.get("focal_gamma", train_cfg.get("focal_gamma", 0.0)))
+        pos_focal_gamma = float(cfg.get("pos_focal_gamma", train_cfg.get("pos_focal_gamma", focal_gamma)))
+        neg_focal_gamma = float(cfg.get("neg_focal_gamma", train_cfg.get("neg_focal_gamma", focal_gamma)))
+        if max(pos_focal_gamma, neg_focal_gamma) > 0.0:
+            prob = torch.sigmoid(logits.detach())
+            pos_pt = prob.clamp(1e-4, 1.0)
+            neg_pt = (1.0 - prob).clamp(1e-4, 1.0)
+            pos_factor = (1.0 - pos_pt).pow(pos_focal_gamma)
+            neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
+            bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
+        bce_loss = (bce * channel_weight).sum() / channel_weight.expand_as(bce).sum().clamp_min(1.0)
+    else:
+        raise ValueError(f"unknown train.loss.loss_type: {loss_type}")
 
     dice_weight = float(cfg.get("dice_weight", train_cfg.get("dice_weight", 0.0)))
     boundary_dice_weight = float(cfg.get("boundary_dice_weight", train_cfg.get("boundary_dice_weight", 0.0)))
@@ -137,6 +162,7 @@ def affinity_loss(
     loss = bce_weight * bce_loss + dice_weight * dice_loss + boundary_dice_weight * boundary_dice_loss
     return loss, {
         "bce_loss": bce_loss.detach(),
+        "main_loss": bce_loss.detach(),
         "dice_loss": dice_loss.detach(),
         "boundary_dice_loss": boundary_dice_loss.detach(),
     }
@@ -223,6 +249,8 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
         label_keys=data_cfg.get("label_keys"),
         length_multiplier=int(data_cfg.get("length_multiplier", 1)),
         augment=bool(data_cfg.get("augment", True)),
+        widen_border=bool(data_cfg.get("widen_border", False)),
+        widen_border_radius=int(data_cfg.get("widen_border_radius", 1)),
         seed=int(cfg.get("seed", 0)),
     )
 
@@ -422,6 +450,7 @@ def main() -> None:
                     "epoch": epoch,
                     "step": global_step,
                     "train_loss": float(loss.detach().cpu()),
+                    "train_main_loss": float(loss_parts["main_loss"].cpu()),
                     "train_bce_loss": float(loss_parts["bce_loss"].cpu()),
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
                     "train_boundary_dice_loss": float(loss_parts["boundary_dice_loss"].cpu()),

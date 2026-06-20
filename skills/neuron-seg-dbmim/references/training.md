@@ -104,6 +104,48 @@ Interpretation caveats:
 - Boundary-heavy changes should be judged by VOI/ARAND after threshold sweep,
   not just by loss.
 
+## Supervised Augmentation Contract
+
+For instance segmentation finetuning, geometric augmentation must be shared by
+the raw image and instance label. A 2026-06-20 audit found that older
+`EMVolumeDataset.__getitem__` flipped only the image and attached the unflipped
+label afterward. That makes affinity targets inconsistent with the input and
+can produce deceptively low patch losses with unusable full-volume segmentation.
+
+Current contract:
+
+- use `augment_image_and_label(image, label)` for all random z/y/x flips;
+- keep intensity gain/bias and Gaussian noise image-only;
+- apply border widening to labels before generating affinity targets;
+- test any future augmentation change with a synthetic label pattern and fixed
+  RNG seed.
+
+Do not interpret R3/R4 supervised results as method evidence unless the exact
+bundle is known to include synchronized image/label flips.
+
+## SuperHuman-Style R5 Loss
+
+The R5 SuperHuman-aligned configs use:
+
+```yaml
+data:
+  widen_border: true
+  widen_border_radius: 1
+train:
+  replicate_affinity_boundary: true
+  loss:
+    loss_type: weighted_mse
+    weight_alpha: 1.0
+    dice_weight: 0.05
+    boundary_dice_weight: 0.35
+    channel_weights: [1.25, 1.0, 1.0]
+```
+
+`weighted_mse` computes sigmoid-affinity MSE and reweights positive/negative
+edges per sample/channel by their binary ratio. The log field may still be
+named `train_bce_loss` in older running bundles, but for R5 it is the main
+weighted MSE term. Newer code also logs `train_main_loss`.
+
 ## LSD-style Auxiliary Head
 
 The R2 method branch adds a lightweight shape-descriptor auxiliary target,

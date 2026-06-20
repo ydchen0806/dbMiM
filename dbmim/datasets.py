@@ -57,20 +57,61 @@ def random_crop_3d(
     return volume[z0 : z0 + cd, y0 : y0 + ch, x0 : x0 + cw]
 
 
-def augment_volume(volume: torch.Tensor) -> torch.Tensor:
+def augment_image_and_label(
+    volume: torch.Tensor,
+    label: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     if torch.rand(()) < 0.5:
         volume = volume.flip(-1)
+        if label is not None:
+            label = label.flip(-1)
     if torch.rand(()) < 0.5:
         volume = volume.flip(-2)
+        if label is not None:
+            label = label.flip(-2)
     if torch.rand(()) < 0.2:
         volume = volume.flip(-3)
+        if label is not None:
+            label = label.flip(-3)
     if torch.rand(()) < 0.35:
         gain = 0.85 + 0.30 * torch.rand((), device=volume.device)
         bias = 0.10 * (torch.rand((), device=volume.device) - 0.5)
         volume = (volume * gain + bias).clamp(0.0, 1.0)
     if torch.rand(()) < 0.25:
         volume = (volume + torch.randn_like(volume) * 0.03).clamp(0.0, 1.0)
+    return volume, label
+
+
+def augment_volume(volume: torch.Tensor) -> torch.Tensor:
+    volume, _ = augment_image_and_label(volume, None)
     return volume
+
+
+def widen_instance_boundaries_2d(labels: np.ndarray, radius: int = 1) -> np.ndarray:
+    """SuperHuman/Kisuk-style in-plane instance border invalidation."""
+
+    labels = np.asarray(labels)
+    if radius <= 0:
+        return labels
+    if labels.ndim != 3:
+        raise ValueError(f"expected [D,H,W] labels, got shape={labels.shape}")
+    try:
+        from scipy import ndimage  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("scipy is required for data.widen_border=true") from exc
+    out = labels.copy()
+    size = (2 * int(radius) + 1, 2 * int(radius) + 1)
+    for z in range(out.shape[0]):
+        plane = out[z]
+        if plane.size == 0:
+            continue
+        max_id = plane.max(initial=0)
+        plane_no_zero = plane.copy()
+        plane_no_zero[plane_no_zero == 0] = max_id + 1
+        local_max = ndimage.maximum_filter(plane, size=size, mode="reflect")
+        local_min = ndimage.minimum_filter(plane_no_zero, size=size, mode="reflect")
+        plane[local_max != local_min] = 0
+    return out
 
 
 class SyntheticEMDataset(Dataset):
@@ -125,6 +166,8 @@ class EMVolumeDataset(Dataset):
         label_keys: Iterable[str] | None = None,
         length_multiplier: int = 1,
         augment: bool = True,
+        widen_border: bool = False,
+        widen_border_radius: int = 1,
         seed: int = 0,
     ) -> None:
         self.paths = self._expand_paths([Path(p) for p in paths])
@@ -134,6 +177,8 @@ class EMVolumeDataset(Dataset):
         self.volume_size = volume_size
         self.length_multiplier = max(1, length_multiplier)
         self.augment = augment
+        self.widen_border = widen_border
+        self.widen_border_radius = int(widen_border_radius)
         self.seed = seed
         if not self.paths:
             raise ValueError("EMVolumeDataset requires at least one input path")
@@ -269,8 +314,6 @@ class EMVolumeDataset(Dataset):
             image_np = normalize_volume(self._read_volume(image_path, label=False))
             image_np = random_crop_3d(image_np, self.volume_size, rng)
         image = torch.from_numpy(image_np).float().unsqueeze(0)
-        if self.augment:
-            image = augment_volume(image)
         item = {"image": image}
         if self.label_paths is not None:
             label_rng = random.Random(self.seed + index)
@@ -288,7 +331,16 @@ class EMVolumeDataset(Dataset):
                 if label_np.ndim == 2:
                     label_np = label_np[None, ...]
                 label_np = random_crop_3d(label_np, self.volume_size, label_rng)
+            if self.widen_border:
+                label_np = widen_instance_boundaries_2d(label_np, radius=self.widen_border_radius)
             item["label"] = torch.from_numpy(label_np.astype(np.int64))
+        if self.augment:
+            if "label" in item:
+                image_aug, label_aug = augment_image_and_label(item["image"], item["label"])
+                item["image"] = image_aug
+                item["label"] = label_aug if label_aug is not None else item["label"]
+            else:
+                item["image"] = augment_volume(item["image"])
         return item
 
 

@@ -15,6 +15,12 @@ The code before 2026-06-19 had the `voi_split` and `voi_merge` labels swapped.
 `voi_sum` and ARAND were unaffected, but do not use older reports to infer
 split-versus-merge direction.
 
+The current SuperHuman-aligned path uses
+`skimage.metrics.adapted_rand_error(target, pred, ignore_labels=(0,))` and
+`skimage.metrics.variation_of_information(target, pred, ignore_labels=(0,))`.
+For CREMI neuron labels where `0` is ignore/background, this is the expected
+ARAND/VOI convention.
+
 The evaluation summary should contain both:
 
 - `best_by_adapted_rand`
@@ -35,6 +41,11 @@ The user expects normal CREMI volume-level VOI to be around the literature
 scale, not the inflated/diagnostic values from tiny crops. If VOI looks around
 4 on a small crop, suspect evaluation scope, thresholding, or post-processing
 before making a scientific claim.
+
+For true whole-volume R5 checks, `--crop-size 0 0 0` should be preserved as a
+full-volume sentinel. Verify logs show `raw_shape [125,1250,1250]` and crop
+`[[0,125],[0,1250],[0,1250]]`; older code accidentally coerced non-positive
+crop sizes back to the model window.
 
 ## Standard Eval Shape
 
@@ -127,6 +138,25 @@ Negative or fragile controls:
 - Full-volume post-processing can become a memory problem. Plan blockwise or
   streaming graph construction before scaling from crop to whole volume.
 - The min-size filter can change VOI/ARAND. Record it with every result.
+
+## SuperHuman Waterz Lessons
+
+For SuperHuman-style evaluation:
+
+- Build 2D watershed fragments from xy boundary map
+  `1 - 0.5 * (aff_y + aff_x)`.
+- Use mahotas `maxima_distance` seeds and waterz agglomeration as the stable
+  offline path.
+- `waterz` v0.8 is stable enough when bundled with Boost headers, but it does
+  not support the newer `MeanAffinityProvider` scoring string. Use
+  `hist_quantile`/`OneMinus<HistogramQuantileAffinity<RegionGraphType, 75, ScoreValue, false>>`
+  unless a newer waterz ABI is fixed and tested.
+- Waterz can mutate the fragments array during agglomeration. Always pass a
+  contiguous copy for each threshold/variant; otherwise threshold sweeps are
+  contaminated by previous thresholds.
+- Eval-time logit bias can trade merge for split, but R3/R4 calibration only
+  moved full-volume sample-A VOI from about 9-10 to about 8-9. Treat that as a
+  diagnostic, not a final method.
 
 ## Reporting Checklist
 
