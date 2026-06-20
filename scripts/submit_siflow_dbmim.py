@@ -108,6 +108,7 @@ ABLATION_SUPERHUMAN_EVAL_STAGES = {f"eval-cremi-unetr-aniso-superhuman-{name}" f
 SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-pretrained-r3",
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-scratch-r3",
+    "eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r4",
 }
 SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION_STAGES
 CREMI_STAGES = {
@@ -460,6 +461,10 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
         "finetune_cremi_real_unetr_aniso_neg_boundary_scratch_r3",
         "DBMIM_EVAL_CKPT",
     )
+    eval_stage_map["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r4"] = (
+        "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r4",
+        "DBMIM_EVAL_CKPT",
+    )
     if stage in eval_stage_map:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
@@ -564,6 +569,9 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
     )
     eval_output_dirs["eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-scratch-r3"] = (
         "outputs/eval_cremi_unetr_aniso_superhuman_calibration_neg_boundary_scratch_r3"
+    )
+    eval_output_dirs["eval-cremi-unetr-aniso-superhuman-calibration-superhuman-pretrained-r4"] = (
+        "outputs/eval_cremi_unetr_aniso_superhuman_calibration_superhuman_pretrained_r4"
     )
     if stage in eval_output_dirs:
         postlude.extend(
@@ -957,14 +965,24 @@ def main() -> None:
         )
         prefix = f"dbmim-diagnose-cremi-unetr-aniso-{ablation_name}"
     elif args.stage in SUPERHUMAN_CALIBRATION_STAGES:
-        if args.stage.endswith("pretrained-r3"):
+        if args.stage.endswith("superhuman-pretrained-r4"):
+            config = "finetune_cremi_real_unetr_aniso_superhuman_pretrained_r4.yaml"
+            out_dir = "eval_cremi_unetr_aniso_superhuman_calibration_superhuman_pretrained_r4"
+            suffix = "superhuman-pretrained-r4"
+            thresholds = "0.05 0.10 0.20 0.30"
+            calibration_biases = "0 0 0 -0.5 -1.0 -1.0 -1.0 -2.0 -2.0"
+        elif args.stage.endswith("pretrained-r3"):
             config = "finetune_cremi_real_unetr_aniso_neg_boundary_pretrained_r3.yaml"
             out_dir = "eval_cremi_unetr_aniso_superhuman_calibration_neg_boundary_pretrained_r3"
             suffix = "neg-boundary-pretrained-r3"
+            thresholds = "0.30 0.50"
+            calibration_biases = "0 0 0 -0.5 -1.0 -1.0 -1.0 -2.0 -2.0 -1.5 -3.0 -3.0"
         else:
             config = "finetune_cremi_real_unetr_aniso_neg_boundary_scratch_r3.yaml"
             out_dir = "eval_cremi_unetr_aniso_superhuman_calibration_neg_boundary_scratch_r3"
             suffix = "neg-boundary-scratch-r3"
+            thresholds = "0.30 0.50"
+            calibration_biases = "0 0 0 -0.5 -1.0 -1.0 -1.0 -2.0 -2.0 -1.5 -3.0 -3.0"
         entrypoint = (
             "python - <<'PY'\n"
             "import importlib.util\n"
@@ -980,7 +998,7 @@ def main() -> None:
             f"--output-dir outputs/{out_dir} "
             "--crop-size 0 0 0 "
             "--stride 16 80 80 "
-            "--thresholds 0.30 0.50 "
+            f"--thresholds {thresholds} "
             "--backends waterz "
             "--min-size 0 "
             "--seed-method maxima_distance "
@@ -989,7 +1007,7 @@ def main() -> None:
             "--waterz-scoring hist_quantile "
             "--metric-backend skimage "
             "--replicate-affinity-boundary "
-            "--calibration-biases 0 0 0 -0.5 -1.0 -1.0 -1.0 -2.0 -2.0 -1.5 -3.0 -3.0 "
+            f"--calibration-biases {calibration_biases} "
             "--calibration-temperatures 1.0 "
             "--max-samples 1 "
             "--device cuda "
