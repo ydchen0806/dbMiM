@@ -466,14 +466,14 @@ def make_bundle(entrypoint: str, stage: str) -> Path:
             [
                 f"mkdir -p outputs/{model_prefix}",
                 "if bin/tosutil cp "
-                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
-                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"; then",
-                f"  export {env_key}=outputs/{model_prefix}/finetuned_best.pt",
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                f"  export {env_key}=outputs/{model_prefix}/finetuned_latest.pt",
                 "else",
                 "  bin/tosutil cp "
-                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
-                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"",
-                f"  export {env_key}=outputs/{model_prefix}/finetuned_latest.pt",
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                f"  export {env_key}=outputs/{model_prefix}/finetuned_best.pt",
                 "fi",
             ]
         )
