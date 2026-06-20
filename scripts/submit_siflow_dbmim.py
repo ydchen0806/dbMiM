@@ -261,6 +261,7 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_long_cfg["train"]["save_every"] = max(int(pre_long_cfg["train"].get("save_every", 1)), 10)
         _write_yaml(pretrain_long, pre_long_cfg)
 
+    ablation_configs = {spec["config"] for spec in ABLATION_RUNS.values()}
     for name, out_dir in [
         ("finetune_cremi_real.yaml", "outputs/finetune_cremi_real_dbmim"),
         ("finetune_cremi_real_unetr_pretrained.yaml", "outputs/finetune_cremi_real_unetr_pretrained"),
@@ -289,7 +290,7 @@ def _patch_cremi_configs(bundle: Path) -> None:
         ft_cfg["data"]["image_paths"] = ["data/CREMI"]
         ft_cfg["data"]["label_paths"] = ["data/CREMI"]
         ft_cfg["train"]["epochs"] = max(int(ft_cfg["train"].get("epochs", 1)), 100000)
-        if "_r2" not in name:
+        if name not in ablation_configs:
             ft_cfg["train"]["eval_every"] = max(int(ft_cfg["train"].get("eval_every", 1)), 20)
             ft_cfg["train"]["save_every"] = max(int(ft_cfg["train"].get("save_every", 1)), 20)
         _write_yaml(finetune, ft_cfg)
