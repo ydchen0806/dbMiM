@@ -593,6 +593,17 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14",
         "pretrained_output": "pretrain_em_membrane_dbmim_r14",
     },
+    "em-shwmse-maws-bcar-rank-mempretrained-r14": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_mempretrained_r14.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_mempretrained_r14",
+        "pretrained_output": "pretrain_em_membrane_dbmim_r14",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}

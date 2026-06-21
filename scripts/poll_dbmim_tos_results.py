@@ -89,6 +89,7 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_mempretrained_r14"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_mempretrained_r14"),
     ],
 }
 
@@ -118,6 +119,9 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_allpretrained_r14q": "38b18ca3-d4c8-4fd2-94d9-632f590d92ce",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_allpretrained_r14q": "2f63a6dc-c7a6-4e8b-97de-34ab80985b40",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws15_bcar_rank_allpretrained_r14q": "30cb7b4a-ac52-402a-9085-c97749ab5f2b",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_mempretrained_r14": "f4c00499-19a5-4fb2-99a8-99adf54bad4d",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14": "d23472e9-567f-4bd3-9e04-24f450dbab85",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_mempretrained_r14": "9494b4fa-f6e6-410c-90ba-052bb8e70d01",
 }
 
 

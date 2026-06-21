@@ -152,3 +152,30 @@ ablation grid:
 | `em-shwmse-maws-allpretrained-r14q` | yes, 0.75 | no | no |
 | `em-shwmse-maws-bcar-rank-allpretrained-r14q` | yes, 0.75 | yes | no |
 | `em-shwmse-maws15-bcar-rank-allpretrained-r14q` | yes, 1.5 | yes | no |
+
+## 2026-06-21 Full R14 Submissions
+
+The 120k-step MA-dbMiM pretraining completed and synchronized
+`tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_membrane_dbmim_r14/pretrained_latest.pt`
+plus 2k-step intermediate checkpoints. This run used the CREMI-only fallback
+path because the all-EM TOS prefix still contains manifests but no HDF5 volumes.
+
+The quick R14q A/B/C sweep favored MAWS+BCAR-rank with `lambda_maws=0.75`:
+
+| run | best VOI | ARAND at best VOI | note |
+|---|---:|---:|---|
+| `bcar-rank-allpretrained-r14q` | 1.0818 | 0.1965 | 12k quick screen |
+| `maws-allpretrained-r14q` | 1.0745 | 0.2011 | MAWS-only |
+| `maws-bcar-rank-allpretrained-r14q` | 1.0407 | 0.1929 | best full A/B/C quick result |
+| `maws15-bcar-rank-allpretrained-r14q` | 1.0441 | 0.1973 | stronger MAWS was not better |
+
+The `bcar-calib-allpretrained-r14q` fallback summary currently contains only
+sample A (`n=1`) and is therefore not used as an A/B/C conclusion.
+
+Three full 40k-step MA-dbMiM fine-tuning jobs were submitted on cpt-train:
+
+| run | UUID | purpose |
+|---|---|---|
+| `em-shwmse-mempretrained-r14` | `f4c00499-19a5-4fb2-99a8-99adf54bad4d` | Tests MA-dbMiM pretraining without BCAR/MAWS. |
+| `em-shwmse-bcar-mempretrained-r14` | `d23472e9-567f-4bd3-9e04-24f450dbab85` | Tests MA-dbMiM plus original BCAR rank+calibration. |
+| `em-shwmse-maws-bcar-rank-mempretrained-r14` | `9494b4fa-f6e6-410c-90ba-052bb8e70d01` | Strongest current method: MA-dbMiM + MAWS + BCAR rank. |
