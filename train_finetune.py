@@ -109,6 +109,59 @@ def _superhuman_spatial_norm(logits: torch.Tensor, valid_mask: torch.Tensor | No
     return torch.tensor(float(bsz * depth * height * width), device=logits.device, dtype=torch.float32).clamp_min(1.0)
 
 
+def boundary_calibrated_affinity_ranking_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    cfg: dict,
+    valid_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Rank positive affinities above boundary affinities for waterz sweeps.
+
+    Voxel BCE/MSE optimizes local affinity values, but waterz is mostly driven by
+    the ordering of merge scores. BCAR pushes foreground-neighbor logits above
+    boundary logits with a margin and lightly calibrates z vs xy logit means.
+    """
+
+    margin = float(cfg.get("bcar_margin", cfg.get("rank_margin", 1.0)))
+    max_pairs = int(cfg.get("bcar_max_pairs", cfg.get("rank_max_pairs", 4096)))
+    pos_threshold = float(cfg.get("bcar_pos_threshold", 0.75))
+    neg_threshold = float(cfg.get("bcar_neg_threshold", 0.25))
+    z_xy_gap = float(cfg.get("bcar_z_xy_gap", 0.0))
+
+    mask = torch.ones_like(target, dtype=torch.bool)
+    if valid_mask is not None:
+        mask = valid_mask.to(device=target.device, dtype=torch.bool)
+    pos_mask = (target >= pos_threshold) & mask
+    neg_mask = (target <= neg_threshold) & mask
+    rank_losses = []
+    calib_losses = []
+    for channel in range(int(logits.shape[1])):
+        pos = logits[:, channel][pos_mask[:, channel]]
+        neg = logits[:, channel][neg_mask[:, channel]]
+        if pos.numel() > 0 and neg.numel() > 0:
+            if max_pairs > 0:
+                if pos.numel() > max_pairs:
+                    pos = pos[torch.randperm(pos.numel(), device=pos.device)[:max_pairs]]
+                if neg.numel() > max_pairs:
+                    neg = neg[torch.randperm(neg.numel(), device=neg.device)[:max_pairs]]
+            rank_losses.append(F.softplus(margin - pos.mean() + neg.mean()))
+        channel_valid = mask[:, channel]
+        if channel_valid.any():
+            calib_losses.append(logits[:, channel][channel_valid].mean())
+
+    if rank_losses:
+        rank_loss = torch.stack(rank_losses).mean()
+    else:
+        rank_loss = logits.new_tensor(0.0)
+    if len(calib_losses) == 3:
+        z_mean = calib_losses[0]
+        xy_mean = 0.5 * (calib_losses[1] + calib_losses[2])
+        calib_loss = (z_mean - xy_mean + z_xy_gap).pow(2)
+    else:
+        calib_loss = logits.new_tensor(0.0)
+    return rank_loss, calib_loss
+
+
 def make_affinity_valid_mask(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor | None:
     cfg = _loss_cfg(train_cfg)
     if not bool(cfg.get("ignore_label_edges", train_cfg.get("ignore_label_edges", False))):
@@ -246,12 +299,31 @@ def affinity_loss(
         boundary_dice_loss = (per_channel * weights).sum() / weights.sum().clamp_min(1.0)
 
     bce_weight = float(cfg.get("bce_weight", train_cfg.get("bce_weight", 1.0)))
-    loss = bce_weight * bce_loss + dice_weight * dice_loss + boundary_dice_weight * boundary_dice_loss
+    bcar_weight = float(cfg.get("bcar_weight", train_cfg.get("bcar_weight", 0.0)))
+    bcar_calibration_weight = float(cfg.get("bcar_calibration_weight", train_cfg.get("bcar_calibration_weight", 0.0)))
+    bcar_rank_loss = logits.new_tensor(0.0)
+    bcar_calibration_loss = logits.new_tensor(0.0)
+    if bcar_weight > 0.0 or bcar_calibration_weight > 0.0:
+        bcar_rank_loss, bcar_calibration_loss = boundary_calibrated_affinity_ranking_loss(
+            logits,
+            target,
+            cfg,
+            valid_mask=valid_mask,
+        )
+    loss = (
+        bce_weight * bce_loss
+        + dice_weight * dice_loss
+        + boundary_dice_weight * boundary_dice_loss
+        + bcar_weight * bcar_rank_loss
+        + bcar_calibration_weight * bcar_calibration_loss
+    )
     return loss, {
         "bce_loss": bce_loss.detach(),
         "main_loss": bce_loss.detach(),
         "dice_loss": dice_loss.detach(),
         "boundary_dice_loss": boundary_dice_loss.detach(),
+        "bcar_rank_loss": bcar_rank_loss.detach(),
+        "bcar_calibration_loss": bcar_calibration_loss.detach(),
         "valid_fraction": logits.new_tensor(1.0)
         if valid_mask is None
         else valid_mask.float().mean().detach(),
@@ -474,6 +546,8 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
     dice_loss_m = AverageMeter()
     boundary_dice_loss_m = AverageMeter()
     lsd_loss_m = AverageMeter()
+    bcar_rank_m = AverageMeter()
+    bcar_calibration_m = AverageMeter()
     dice_m = AverageMeter()
     iou_m = AverageMeter()
     for batch_idx, batch in enumerate(loader):
@@ -491,6 +565,8 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         dice_loss_m.update(float(loss_parts["dice_loss"].cpu()), bsz)
         boundary_dice_loss_m.update(float(loss_parts["boundary_dice_loss"].cpu()), bsz)
         lsd_loss_m.update(float(loss_parts["lsd_loss"].cpu()), bsz)
+        bcar_rank_m.update(float(loss_parts["bcar_rank_loss"].cpu()), bsz)
+        bcar_calibration_m.update(float(loss_parts["bcar_calibration_loss"].cpu()), bsz)
         dice_m.update(dice_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
         iou_m.update(binary_iou_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
     return {
@@ -499,6 +575,8 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         "val_dice_loss": dice_loss_m.avg,
         "val_boundary_dice_loss": boundary_dice_loss_m.avg,
         "val_lsd_loss": lsd_loss_m.avg,
+        "val_bcar_rank_loss": bcar_rank_m.avg,
+        "val_bcar_calibration_loss": bcar_calibration_m.avg,
         "val_dice": dice_m.avg,
         "val_iou": iou_m.avg,
     }
@@ -642,6 +720,8 @@ def main() -> None:
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
                     "train_boundary_dice_loss": float(loss_parts["boundary_dice_loss"].cpu()),
                     "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
+                    "train_bcar_rank_loss": float(loss_parts["bcar_rank_loss"].cpu()),
+                    "train_bcar_calibration_loss": float(loss_parts["bcar_calibration_loss"].cpu()),
                     "train_valid_fraction": float(loss_parts["valid_fraction"].cpu()),
                     "elapsed_sec": round(time.time() - t0, 2),
                 }
