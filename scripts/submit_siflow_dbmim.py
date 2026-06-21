@@ -344,6 +344,35 @@ ABLATION_RUNS = {
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_ignore_allpretrained_r9",
         "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
     },
+    "superhuman-shwmse-allpretrained-r10": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_allpretrained_r10.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_allpretrained_r10",
+        "eval": "eval_cremi_unetr_aniso_superhuman_shwmse_allpretrained_r10",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_shwmse_allpretrained_r10",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_shwmse_allpretrained_r10",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_shwmse_allpretrained_r10",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_allpretrained_r10",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "superhuman-shwmse-scratch-r10": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_scratch_r10.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_scratch_r10",
+        "eval": "eval_cremi_unetr_aniso_superhuman_shwmse_scratch_r10",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_shwmse_scratch_r10",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_shwmse_scratch_r10",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_shwmse_scratch_r10",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_scratch_r10",
+    },
+    "superhuman-shwmse-ignore-allpretrained-r10": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_ignore_allpretrained_r10.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_ignore_allpretrained_r10",
+        "eval": "eval_cremi_unetr_aniso_superhuman_shwmse_ignore_allpretrained_r10",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_shwmse_ignore_allpretrained_r10",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_shwmse_ignore_allpretrained_r10",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_shwmse_ignore_allpretrained_r10",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_ignore_allpretrained_r10",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}

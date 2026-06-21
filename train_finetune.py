@@ -103,9 +103,9 @@ def _superhuman_spatial_norm(logits: torch.Tensor, valid_mask: torch.Tensor | No
     """Normalization used by SuperHuman-style weighted affinity MSE."""
 
     if valid_mask is not None and mode in {"valid", "valid_spatial", "mask", "masked"}:
-        return valid_mask.sum().clamp_min(1.0)
+        return valid_mask.float().sum().clamp_min(1.0)
     bsz, _, depth, height, width = logits.shape
-    return logits.new_tensor(float(bsz * depth * height * width)).clamp_min(1.0)
+    return torch.tensor(float(bsz * depth * height * width), device=logits.device, dtype=torch.float32).clamp_min(1.0)
 
 
 def make_affinity_valid_mask(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor | None:

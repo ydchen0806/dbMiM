@@ -169,3 +169,29 @@ Implementation note: `train_finetune.py` now supports
 Expected duration: based on R5/R8 throughput, each 30k arm should need roughly
 1-1.5 hours for training plus 10-20 minutes for same-pod waterz evaluation.
 The eight tasks run concurrently if the pool keeps admitting 1-GPU jobs.
+
+### R9 weighted-MSE bug and R10 resubmission
+
+The three R9 `superhuman_weighted_mse` tasks exposed an AMP bug at step 20:
+`train_main_loss` was exactly `0.0`. The cause was dtype overflow in the
+SuperHuman normalization scalar: `B*D*H*W = 1,638,400` was constructed with
+`logits.new_tensor(...)` under fp16 autocast, becoming `inf` and zeroing the
+main weighted-MSE term. The BCE R9 jobs do not use this path and were kept.
+
+The buggy SH weighted-MSE R9 tasks were stopped:
+
+| arm | stopped UUID |
+|---|---|
+| SH weighted-MSE all-pretrained R9 | `e0a7b840-518e-4bca-8a75-37e33b8859b4` |
+| SH weighted-MSE scratch R9 | `6ebba848-1ca9-4454-9af6-559d24d8a5fc` |
+| SH weighted-MSE ignore-edge all-pretrained R9 | `7c7b6119-07e5-4fe3-98bd-bab8d1f728e9` |
+
+The fix is to construct the normalization scalar in fp32. CPU smoke now shows
+nonzero SH weighted-MSE main loss. The corrected 30k-step R10 jobs were
+submitted on 2026-06-21 04:33-04:34 UTC:
+
+| arm | UUID | config |
+|---|---|---|
+| SH weighted-MSE all-pretrained R10 | `6c7675a1-7661-4363-9c65-90e1f2e7129e` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_allpretrained_r10.yaml` |
+| SH weighted-MSE scratch R10 | `af35134e-a7ea-4f27-bfeb-4777dd48ae5b` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_scratch_r10.yaml` |
+| SH weighted-MSE ignore-edge all-pretrained R10 | `20239e88-03f5-4269-a348-da79dd2adbb4` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_ignore_allpretrained_r10.yaml` |
