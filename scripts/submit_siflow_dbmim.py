@@ -648,6 +648,17 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q",
         "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
     },
+    "arch-explore-maws-bcar-rank-publicem-r16q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q",
+        "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -797,7 +808,7 @@ def _entrypoint_lines(entrypoint: str, sync_output_dir: str | None) -> list[str]
         "    if [ -d \"$out_dir\" ]; then",
         "      for f in finetuned_latest.pt finetuned_best.pt pretrained_latest.pt finetune_log.jsonl train_log.jsonl pretrain_log.jsonl; do",
         "        if [ -f \"$out_dir/$f\" ]; then",
-        f"          bin/tosutil cp \"$out_dir/$f\" {remote_dir}/$f -conf=\"$TOS_CONF\" >/dev/null 2>&1 || true",
+        f"          timeout 180 bin/tosutil cp \"$out_dir/$f\" {remote_dir}/$f -conf=\"$TOS_CONF\" >/dev/null 2>&1 || true",
         "        fi",
         "      done",
         "    fi",
@@ -813,7 +824,7 @@ def _entrypoint_lines(entrypoint: str, sync_output_dir: str | None) -> list[str]
         "set -e",
         "kill \"$dbmim_sync_pid\" >/dev/null 2>&1 || true",
         "wait \"$dbmim_sync_pid\" >/dev/null 2>&1 || true",
-        f"bin/tosutil cp {sync_output_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\" || true",
+        f"timeout 900 bin/tosutil cp {sync_output_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\" || true",
         "if [ \"$dbmim_status\" -ne 0 ]; then",
         "  exit \"$dbmim_status\"",
         "fi",
@@ -1055,7 +1066,7 @@ def make_bundle(
         prelude.extend(
             [
                 "mkdir -p outputs/pretrain_cremi_real_dbmim",
-                "bin/tosutil cp "
+                "timeout 900 bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/pretrain_cremi_real_dbmim/pretrained_latest.pt "
                 "outputs/pretrain_cremi_real_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]
@@ -1064,7 +1075,7 @@ def make_bundle(
         prelude.extend(
             [
                 f"mkdir -p outputs/{ablation_train_pretrained_output}",
-                "bin/tosutil cp "
+                "timeout 900 bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/{ablation_train_pretrained_output}/pretrained_latest.pt "
                 f"outputs/{ablation_train_pretrained_output}/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]
@@ -1073,7 +1084,7 @@ def make_bundle(
         prelude.extend(
             [
                 "mkdir -p outputs/pretrain_cremi_real_long_dbmim",
-                "bin/tosutil cp "
+                "timeout 900 bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/pretrain_cremi_real_long_dbmim/pretrained_latest.pt "
                 "outputs/pretrain_cremi_real_long_dbmim/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]

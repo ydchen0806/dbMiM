@@ -97,6 +97,10 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_bcar2_mempretrained_r15q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_bcar2_mempretrained_r15q_arch_bench"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_allpretrained_r14q", "eval_cremi_arch_explore_postprocess_r15q"),
     ],
+    "r16q": [
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_publicem_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q_arch_bench"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q_arch_bench"),
+    ],
 }
 
 SIFLOW_UUIDS = {
