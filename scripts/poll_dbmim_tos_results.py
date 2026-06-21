@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ ROOT = Path("/volume/med-train/users/dchen02/code/dbMiM")
 TOS = Path("/volume/med-train/users/dchen02/bin/tosutil")
 CONF = Path("/volume/med-train/users/dchen02/secrets/tosutil_dchen02.conf")
 SIFLOW_PY = Path("/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python")
+SIFLOW_ENV = Path("/volume/med-train/users/dchen02/secrets/siflow_env_dchen02.sh")
 BASE = "tos://agi-data/users/dchen02/dbmim/outputs"
 GROUP_KEYS = [
     "affinity_variant",
@@ -170,6 +172,26 @@ def read_last_jsonl(path: Path) -> dict | None:
     return rows[-1] if rows else None
 
 
+def _load_env_exports(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.exists():
+        return env
+    for raw in path.read_text(errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key:
+            env[key] = value
+    return env
+
+
 def parse_metric_rows_from_siflow(uuid: str, region: str, cluster: str) -> list[dict]:
     code = r"""
 import json
@@ -184,12 +206,17 @@ except Exception:
     logs = client.tasks.query_logs(uuid, limit=2000, sort_order="desc")
 print(json.dumps([str(item.content) for item in logs.logs]))
 """
+    env = os.environ.copy()
+    env.update(_load_env_exports(SIFLOW_ENV))
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]:
+        env.pop(key, None)
     proc = subprocess.run(
         [str(SIFLOW_PY), "-c", code, uuid, region, cluster],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=60,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip()[-500:] or proc.stdout.strip()[-500:])
