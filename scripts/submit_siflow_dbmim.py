@@ -18,6 +18,7 @@ WHEELHOUSE = PROJECT / "outputs" / "wheelhouse_dbmim"
 TOSUTIL = Path("/volume/med-train/users/dchen02/bin/tosutil")
 TOS_OUTPUT_PREFIX = "tos://agi-data/users/dchen02/dbmim/outputs"
 CREMI_ASSET = "tos://agi-data/users/dchen02/dbmim/assets/cremi_abc_20160501.tar.gz"
+EM_PRETRAIN_TOS_PREFIX = "tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data"
 ABLATION_RUNS = {
     "pretrained-r2": {
         "config": "finetune_cremi_real_unetr_aniso_pretrained_r2.yaml",
@@ -373,6 +374,63 @@ ABLATION_RUNS = {
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_ignore_allpretrained_r10",
         "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
     },
+    "superhuman-shwmse-pure-allpretrained-r11": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_pure_allpretrained_r11.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_pure_allpretrained_r11",
+        "eval": "eval_cremi_unetr_aniso_superhuman_shwmse_pure_allpretrained_r11",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_shwmse_pure_allpretrained_r11",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_shwmse_pure_allpretrained_r11",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_shwmse_pure_allpretrained_r11",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_pure_allpretrained_r11",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "superhuman-shwmse-pure-scratch-r11": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_pure_scratch_r11.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_shwmse_pure_scratch_r11",
+        "eval": "eval_cremi_unetr_aniso_superhuman_shwmse_pure_scratch_r11",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_shwmse_pure_scratch_r11",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_shwmse_pure_scratch_r11",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_shwmse_pure_scratch_r11",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_pure_scratch_r11",
+    },
+    "superhuman-bce-shwmse-mix-allpretrained-r11": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_bce_shwmse_mix_allpretrained_r11.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_bce_shwmse_mix_allpretrained_r11",
+        "eval": "eval_cremi_unetr_aniso_superhuman_bce_shwmse_mix_allpretrained_r11",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_bce_shwmse_mix_allpretrained_r11",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_bce_shwmse_mix_allpretrained_r11",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_shwmse_mix_allpretrained_r11",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_shwmse_mix_allpretrained_r11",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "superhuman-bce-shwmse-mix-scratch-r11": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_bce_shwmse_mix_scratch_r11.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_bce_shwmse_mix_scratch_r11",
+        "eval": "eval_cremi_unetr_aniso_superhuman_bce_shwmse_mix_scratch_r11",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_bce_shwmse_mix_scratch_r11",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_bce_shwmse_mix_scratch_r11",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_shwmse_mix_scratch_r11",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_shwmse_mix_scratch_r11",
+    },
+    "superhuman-bce-aug-encoderlr-allpretrained-r11": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_bce_aug_encoderlr_allpretrained_r11.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_bce_aug_encoderlr_allpretrained_r11",
+        "eval": "eval_cremi_unetr_aniso_superhuman_bce_aug_encoderlr_allpretrained_r11",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_bce_aug_encoderlr_allpretrained_r11",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_bce_aug_encoderlr_allpretrained_r11",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_aug_encoderlr_allpretrained_r11",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_encoderlr_allpretrained_r11",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "superhuman-bce-aug-scratch-r11": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_bce_aug_scratch_r11.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_bce_aug_scratch_r11",
+        "eval": "eval_cremi_unetr_aniso_superhuman_bce_aug_scratch_r11",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_bce_aug_scratch_r11",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_bce_aug_scratch_r11",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_aug_scratch_r11",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_scratch_r11",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -408,6 +466,7 @@ CREMI_STAGES = {
     "pretrain-cremi",
     "pretrain-cremi-long",
     "pretrain-cremi-all-r6",
+    "pretrain-em-all-r11",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
     "finetune-cremi-unetr-scratch",
@@ -477,6 +536,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_cremi_real_long_dbmim"
     if stage == "pretrain-cremi-all-r6":
         return "outputs/pretrain_cremi_real_all_dbmim_r6"
+    if stage == "pretrain-em-all-r11":
+        return "outputs/pretrain_em_all_dbmim_r11"
     if stage == "finetune-cremi":
         return "outputs/finetune_cremi_real_dbmim"
     if stage == "finetune-cremi-unetr-pretrained":
@@ -568,6 +629,15 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_all_cfg["train"]["epochs"] = max(int(pre_all_cfg["train"].get("epochs", 1)), 100000)
         pre_all_cfg["train"]["save_every"] = max(int(pre_all_cfg["train"].get("save_every", 1)), 5)
         _write_yaml(pretrain_all_r6, pre_all_cfg)
+
+    pretrain_em_all_r11 = bundle / "configs" / "pretrain_em_all_r11.yaml"
+    if pretrain_em_all_r11.exists():
+        pre_em_cfg = yaml.safe_load(pretrain_em_all_r11.read_text(encoding="utf-8"))
+        pre_em_cfg["output_dir"] = "outputs/pretrain_em_all_dbmim_r11"
+        pre_em_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/all"]
+        pre_em_cfg["train"]["epochs"] = max(int(pre_em_cfg["train"].get("epochs", 1)), 100000)
+        pre_em_cfg["train"]["save_every"] = max(int(pre_em_cfg["train"].get("save_every", 1)), 5)
+        _write_yaml(pretrain_em_all_r11, pre_em_cfg)
 
     config_to_ablation = {spec["config"]: spec for spec in ABLATION_RUNS.values()}
     ablation_configs = set(config_to_ablation)
@@ -672,6 +742,20 @@ def make_bundle(entrypoint: str, stage: str, *, post_train_official_eval: bool =
                 f"bin/tosutil cp {CREMI_ASSET} /tmp/cremi_abc_20160501.tar.gz -conf=\"$TOS_CONF\"",
                 "tar -xzf /tmp/cremi_abc_20160501.tar.gz -C data",
                 "ls -lh data/CREMI",
+            ]
+        )
+    if stage == "pretrain-em-all-r11":
+        prelude.extend(
+            [
+                "mkdir -p data/EM_pretrain_data",
+                f"if bin/tosutil ls {EM_PRETRAIN_TOS_PREFIX}/all -conf=\"$TOS_CONF\" >/dev/null 2>&1; then",
+                f"  bin/tosutil cp {EM_PRETRAIN_TOS_PREFIX}/all data/EM_pretrain_data -r -conf=\"$TOS_CONF\"",
+                "else",
+                f"  echo 'missing offline EM pretrain data at {EM_PRETRAIN_TOS_PREFIX}/all; run scripts/prepare_em_pretrain_data.py with HF_TOKEN first' >&2",
+                "  exit 42",
+                "fi",
+                "find data/EM_pretrain_data/all -maxdepth 3 -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) | head -20",
+                "test -n \"$(find data/EM_pretrain_data/all -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) -print -quit)\"",
             ]
         )
     if stage in {
@@ -1128,6 +1212,7 @@ def main() -> None:
             "pretrain-cremi",
             "pretrain-cremi-long",
             "pretrain-cremi-all-r6",
+            "pretrain-em-all-r11",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
             "finetune-cremi-unetr-scratch",
@@ -1184,6 +1269,9 @@ def main() -> None:
     elif args.stage == "pretrain-cremi-all-r6":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_cremi_real_all_r6.yaml"
         prefix = "dbmim-pretrain-cremi-all-r6"
+    elif args.stage == "pretrain-em-all-r11":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_all_r11.yaml"
+        prefix = "dbmim-pretrain-em-all-r11"
     elif args.stage == "finetune-cremi":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"

@@ -183,7 +183,16 @@ def affinity_loss(
             neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
             bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
         bce_loss = _weighted_mean(bce, channel_weight, valid_mask)
-    elif loss_type in {"bce_mse", "mse_bce", "hybrid_bce_mse", "hybrid_mse_bce", "weighted_bce_mse"}:
+    elif loss_type in {
+        "bce_mse",
+        "mse_bce",
+        "hybrid_bce_mse",
+        "hybrid_mse_bce",
+        "weighted_bce_mse",
+        "bce_superhuman_mse",
+        "hybrid_bce_superhuman_mse",
+        "bce_shwmse",
+    }:
         bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
         bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
         prob_main = torch.sigmoid(logits)
@@ -191,7 +200,17 @@ def affinity_loss(
         if loss_type == "weighted_bce_mse":
             mse = mse * _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
         bce_main = _weighted_mean(bce, channel_weight, valid_mask)
-        mse_main = _weighted_mean(mse, channel_weight, valid_mask)
+        if loss_type in {"bce_superhuman_mse", "hybrid_bce_superhuman_mse", "bce_shwmse"}:
+            weight = _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
+            if valid_mask is not None:
+                weight = weight * valid_mask
+            mse_main = (mse * weight * channel_weight).sum() / _superhuman_spatial_norm(
+                logits,
+                valid_mask,
+                str(cfg.get("superhuman_norm", "spatial")).lower(),
+            )
+        else:
+            mse_main = _weighted_mean(mse, channel_weight, valid_mask)
         bce_loss = float(cfg.get("hybrid_bce_weight", 1.0)) * bce_main + float(
             cfg.get("hybrid_mse_weight", 1.0)
         ) * mse_main
@@ -322,6 +341,10 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
         label_keys=data_cfg.get("label_keys"),
         length_multiplier=int(data_cfg.get("length_multiplier", 1)),
         augment=bool(data_cfg.get("augment", True)),
+        augment_rotate_xy=bool(data_cfg.get("augment_rotate_xy", False)),
+        augment_gamma=bool(data_cfg.get("augment_gamma", False)),
+        augment_gamma_range=tuple(data_cfg.get("augment_gamma_range", [0.7, 1.5])),
+        augment_noise_std=float(data_cfg.get("augment_noise_std", 0.03)),
         widen_border=bool(data_cfg.get("widen_border", False)),
         widen_border_radius=int(data_cfg.get("widen_border_radius", 1)),
         seed=int(cfg.get("seed", 0)),

@@ -60,7 +60,18 @@ def random_crop_3d(
 def augment_image_and_label(
     volume: torch.Tensor,
     label: torch.Tensor | None = None,
+    *,
+    rotate_xy: bool = False,
+    gamma: bool = False,
+    gamma_range: tuple[float, float] = (0.7, 1.5),
+    noise_std: float = 0.03,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    if rotate_xy:
+        k = int(torch.randint(0, 4, ()).item())
+        if k:
+            volume = torch.rot90(volume, k, dims=(-2, -1))
+            if label is not None:
+                label = torch.rot90(label, k, dims=(-2, -1))
     if torch.rand(()) < 0.5:
         volume = volume.flip(-1)
         if label is not None:
@@ -77,13 +88,33 @@ def augment_image_and_label(
         gain = 0.85 + 0.30 * torch.rand((), device=volume.device)
         bias = 0.10 * (torch.rand((), device=volume.device) - 0.5)
         volume = (volume * gain + bias).clamp(0.0, 1.0)
+    if gamma and torch.rand(()) < 0.35:
+        lo, hi = float(gamma_range[0]), float(gamma_range[1])
+        if hi < lo:
+            lo, hi = hi, lo
+        exponent = lo + (hi - lo) * torch.rand((), device=volume.device)
+        volume = volume.clamp(1e-4, 1.0).pow(exponent).clamp(0.0, 1.0)
     if torch.rand(()) < 0.25:
-        volume = (volume + torch.randn_like(volume) * 0.03).clamp(0.0, 1.0)
+        volume = (volume + torch.randn_like(volume) * float(noise_std)).clamp(0.0, 1.0)
     return volume, label
 
 
-def augment_volume(volume: torch.Tensor) -> torch.Tensor:
-    volume, _ = augment_image_and_label(volume, None)
+def augment_volume(
+    volume: torch.Tensor,
+    *,
+    rotate_xy: bool = False,
+    gamma: bool = False,
+    gamma_range: tuple[float, float] = (0.7, 1.5),
+    noise_std: float = 0.03,
+) -> torch.Tensor:
+    volume, _ = augment_image_and_label(
+        volume,
+        None,
+        rotate_xy=rotate_xy,
+        gamma=gamma,
+        gamma_range=gamma_range,
+        noise_std=noise_std,
+    )
     return volume
 
 
@@ -166,6 +197,10 @@ class EMVolumeDataset(Dataset):
         label_keys: Iterable[str] | None = None,
         length_multiplier: int = 1,
         augment: bool = True,
+        augment_rotate_xy: bool = False,
+        augment_gamma: bool = False,
+        augment_gamma_range: tuple[float, float] = (0.7, 1.5),
+        augment_noise_std: float = 0.03,
         widen_border: bool = False,
         widen_border_radius: int = 1,
         seed: int = 0,
@@ -177,6 +212,10 @@ class EMVolumeDataset(Dataset):
         self.volume_size = volume_size
         self.length_multiplier = max(1, length_multiplier)
         self.augment = augment
+        self.augment_rotate_xy = bool(augment_rotate_xy)
+        self.augment_gamma = bool(augment_gamma)
+        self.augment_gamma_range = tuple(float(v) for v in augment_gamma_range)
+        self.augment_noise_std = float(augment_noise_std)
         self.widen_border = widen_border
         self.widen_border_radius = int(widen_border_radius)
         self.seed = seed
@@ -336,11 +375,24 @@ class EMVolumeDataset(Dataset):
             item["label"] = torch.from_numpy(label_np.astype(np.int64))
         if self.augment:
             if "label" in item:
-                image_aug, label_aug = augment_image_and_label(item["image"], item["label"])
+                image_aug, label_aug = augment_image_and_label(
+                    item["image"],
+                    item["label"],
+                    rotate_xy=self.augment_rotate_xy,
+                    gamma=self.augment_gamma,
+                    gamma_range=self.augment_gamma_range,
+                    noise_std=self.augment_noise_std,
+                )
                 item["image"] = image_aug
                 item["label"] = label_aug if label_aug is not None else item["label"]
             else:
-                item["image"] = augment_volume(item["image"])
+                item["image"] = augment_volume(
+                    item["image"],
+                    rotate_xy=self.augment_rotate_xy,
+                    gamma=self.augment_gamma,
+                    gamma_range=self.augment_gamma_range,
+                    noise_std=self.augment_noise_std,
+                )
         return item
 
 

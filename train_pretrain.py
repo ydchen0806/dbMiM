@@ -67,6 +67,10 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
         keys=data_cfg.get("image_keys") or data_cfg.get("keys"),
         length_multiplier=int(data_cfg.get("length_multiplier", 1)),
         augment=bool(data_cfg.get("augment", True)),
+        augment_rotate_xy=bool(data_cfg.get("augment_rotate_xy", False)),
+        augment_gamma=bool(data_cfg.get("augment_gamma", False)),
+        augment_gamma_range=tuple(data_cfg.get("augment_gamma_range", [0.7, 1.5])),
+        augment_noise_std=float(data_cfg.get("augment_noise_std", 0.03)),
         seed=int(cfg.get("seed", 0)),
     )
 

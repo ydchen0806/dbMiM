@@ -262,7 +262,13 @@ def main() -> None:
     write_manifest(target / f"{args.group}_manifest.json", manifest)
     if args.upload_tos:
         upload_to_tos(group_dir, args.tos_prefix, Path(args.tosutil), Path(args.tos_conf), args.group)
-        upload_to_tos(target / f"{args.group}_manifest.json", args.tos_prefix, Path(args.tosutil), Path(args.tos_conf), group)
+        upload_to_tos(
+            target / f"{args.group}_manifest.json",
+            args.tos_prefix,
+            Path(args.tosutil),
+            Path(args.tos_conf),
+            args.group,
+        )
 
 
 if __name__ == "__main__":
