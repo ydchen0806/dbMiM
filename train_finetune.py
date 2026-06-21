@@ -88,14 +88,52 @@ def _binary_ratio_weight(target: torch.Tensor, alpha: float = 1.0, eps: float = 
     )
 
 
-def _weighted_mean(loss: torch.Tensor, channel_weight: torch.Tensor) -> torch.Tensor:
-    return (loss * channel_weight).sum() / channel_weight.expand_as(loss).sum().clamp_min(1.0)
+def _weighted_mean(
+    loss: torch.Tensor,
+    channel_weight: torch.Tensor,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    weights = channel_weight.expand_as(loss)
+    if valid_mask is not None:
+        weights = weights * valid_mask
+    return (loss * weights).sum() / weights.sum().clamp_min(1.0)
+
+
+def _superhuman_spatial_norm(logits: torch.Tensor, valid_mask: torch.Tensor | None, mode: str) -> torch.Tensor:
+    """Normalization used by SuperHuman-style weighted affinity MSE."""
+
+    if valid_mask is not None and mode in {"valid", "valid_spatial", "mask", "masked"}:
+        return valid_mask.sum().clamp_min(1.0)
+    bsz, _, depth, height, width = logits.shape
+    return logits.new_tensor(float(bsz * depth * height * width)).clamp_min(1.0)
+
+
+def make_affinity_valid_mask(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor | None:
+    cfg = _loss_cfg(train_cfg)
+    if not bool(cfg.get("ignore_label_edges", train_cfg.get("ignore_label_edges", False))):
+        return None
+    ignore_label = int(cfg.get("ignore_label", train_cfg.get("ignore_label", 0)))
+    if labels.ndim == 3:
+        labels = labels.unsqueeze(0)
+    labels = labels.long()
+    valid_voxels = labels != ignore_label
+    bsz, depth, height, width = labels.shape
+    valid = labels.new_zeros((bsz, 3, depth, height, width), dtype=torch.float32)
+    valid[:, 0, 1:] = valid_voxels[:, 1:] & valid_voxels[:, :-1]
+    valid[:, 1, :, 1:] = valid_voxels[:, :, 1:] & valid_voxels[:, :, :-1]
+    valid[:, 2, :, :, 1:] = valid_voxels[:, :, :, 1:] & valid_voxels[:, :, :, :-1]
+    if bool(train_cfg.get("replicate_affinity_boundary", False)):
+        valid[:, 0, 0] = valid_voxels[:, 0]
+        valid[:, 1, :, 0] = valid_voxels[:, :, 0]
+        valid[:, 2, :, :, 0] = valid_voxels[:, :, :, 0]
+    return valid.float()
 
 
 def affinity_loss(
     logits: torch.Tensor,
     target: torch.Tensor,
     train_cfg: dict,
+    valid_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Configurable affinity objective.
 
@@ -114,12 +152,23 @@ def affinity_loss(
     channel_weight = _broadcast_loss_tensor(channel_weight_value, logits.device, channels=channels, name="channel_weights")
 
     loss_type = str(cfg.get("loss_type", train_cfg.get("loss_type", "bce"))).lower()
+    if valid_mask is not None:
+        valid_mask = valid_mask.to(device=logits.device, dtype=torch.float32)
+
     if loss_type in {"mse", "weighted_mse", "superhuman_mse"}:
         prob_main = torch.sigmoid(logits)
         main = (prob_main - target).pow(2)
         if loss_type in {"weighted_mse", "superhuman_mse"}:
             main = main * _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
-        bce_loss = (main * channel_weight).sum() / channel_weight.expand_as(main).sum().clamp_min(1.0)
+        bce_loss = _weighted_mean(main, channel_weight, valid_mask)
+    elif loss_type in {"superhuman_weighted_mse", "superhuman_weighted_mse_loss", "superhuman_wmse"}:
+        prob_main = torch.sigmoid(logits)
+        weight = _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
+        if valid_mask is not None:
+            weight = weight * valid_mask
+        main = (prob_main - target).pow(2) * weight * channel_weight
+        norm_mode = str(cfg.get("superhuman_norm", "spatial")).lower()
+        bce_loss = main.sum() / _superhuman_spatial_norm(logits, valid_mask, norm_mode)
     elif loss_type in {"bce", "weighted_bce"}:
         bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
         bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
@@ -133,7 +182,7 @@ def affinity_loss(
             pos_factor = (1.0 - pos_pt).pow(pos_focal_gamma)
             neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
             bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
-        bce_loss = _weighted_mean(bce, channel_weight)
+        bce_loss = _weighted_mean(bce, channel_weight, valid_mask)
     elif loss_type in {"bce_mse", "mse_bce", "hybrid_bce_mse", "hybrid_mse_bce", "weighted_bce_mse"}:
         bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
         bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
@@ -141,8 +190,8 @@ def affinity_loss(
         mse = (prob_main - target).pow(2)
         if loss_type == "weighted_bce_mse":
             mse = mse * _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
-        bce_main = _weighted_mean(bce, channel_weight)
-        mse_main = _weighted_mean(mse, channel_weight)
+        bce_main = _weighted_mean(bce, channel_weight, valid_mask)
+        mse_main = _weighted_mean(mse, channel_weight, valid_mask)
         bce_loss = float(cfg.get("hybrid_bce_weight", 1.0)) * bce_main + float(
             cfg.get("hybrid_mse_weight", 1.0)
         ) * mse_main
@@ -158,8 +207,9 @@ def affinity_loss(
     if dice_weight > 0.0:
         reduce_dims = (0, 2, 3, 4)
         smooth = float(cfg.get("dice_smooth", train_cfg.get("dice_smooth", 1.0)))
-        intersection = (prob * target).sum(dim=reduce_dims)
-        denominator = (prob + target).sum(dim=reduce_dims)
+        dice_mask = 1.0 if valid_mask is None else valid_mask
+        intersection = (prob * target * dice_mask).sum(dim=reduce_dims)
+        denominator = ((prob + target) * dice_mask).sum(dim=reduce_dims)
         per_channel = 1.0 - (2.0 * intersection + smooth) / (denominator + smooth)
         weights = channel_weight.view(channels)
         dice_loss = (per_channel * weights).sum() / weights.sum().clamp_min(1.0)
@@ -168,8 +218,9 @@ def affinity_loss(
         smooth = float(cfg.get("boundary_dice_smooth", train_cfg.get("boundary_dice_smooth", 1.0)))
         boundary_prob = 1.0 - prob
         boundary_target = 1.0 - target
-        intersection = (boundary_prob * boundary_target).sum(dim=reduce_dims)
-        denominator = (boundary_prob + boundary_target).sum(dim=reduce_dims)
+        dice_mask = 1.0 if valid_mask is None else valid_mask
+        intersection = (boundary_prob * boundary_target * dice_mask).sum(dim=reduce_dims)
+        denominator = ((boundary_prob + boundary_target) * dice_mask).sum(dim=reduce_dims)
         per_channel = 1.0 - (2.0 * intersection + smooth) / (denominator + smooth)
         weights = channel_weight.view(channels)
         boundary_dice_loss = (per_channel * weights).sum() / weights.sum().clamp_min(1.0)
@@ -181,6 +232,9 @@ def affinity_loss(
         "main_loss": bce_loss.detach(),
         "dice_loss": dice_loss.detach(),
         "boundary_dice_loss": boundary_dice_loss.detach(),
+        "valid_fraction": logits.new_tensor(1.0)
+        if valid_mask is None
+        else valid_mask.float().mean().detach(),
     }
 
 
@@ -202,7 +256,10 @@ def finetune_loss(
     cfg = _loss_cfg(train_cfg)
     affinity_channels = int(affinity_target.shape[1])
     affinity_logits = logits[:, :affinity_channels]
-    loss, parts = affinity_loss(affinity_logits, affinity_target, train_cfg)
+    valid_mask = make_affinity_valid_mask(labels, train_cfg)
+    if valid_mask is not None:
+        valid_mask = valid_mask[:, :affinity_channels].to(logits.device)
+    loss, parts = affinity_loss(affinity_logits, affinity_target, train_cfg, valid_mask=valid_mask)
     lsd_weight = float(cfg.get("lsd_weight", train_cfg.get("lsd_weight", 0.0)))
     lsd_loss = logits.new_tensor(0.0)
     lsd_fg_loss = logits.new_tensor(0.0)
@@ -339,7 +396,10 @@ def build_optimizer(model: torch.nn.Module, train_cfg: dict) -> torch.optim.Opti
     weight_decay = float(train_cfg.get("weight_decay", 0.01))
     encoder_lr_value = train_cfg.get("encoder_lr", None)
     if encoder_lr_value is None:
-        return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        params = [param for param in model.parameters() if param.requires_grad]
+        if not params:
+            raise ValueError("optimizer received no trainable parameters")
+        return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
 
     encoder_lr = float(encoder_lr_value)
     encoder_prefixes = tuple(
@@ -542,6 +602,7 @@ def main() -> None:
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
                     "train_boundary_dice_loss": float(loss_parts["boundary_dice_loss"].cpu()),
                     "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
+                    "train_valid_fraction": float(loss_parts["valid_fraction"].cpu()),
                     "elapsed_sec": round(time.time() - t0, 2),
                 }
                 print(payload, flush=True)

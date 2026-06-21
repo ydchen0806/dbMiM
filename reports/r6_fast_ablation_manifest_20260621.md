@@ -25,9 +25,10 @@ CREMI-style full-volume sample-A waterz evaluation in the same pod
 |---|---|---|---|
 | CREMI A/B/C all-volume dbMiM pretrain R6 | `dd6c06d0-f077-42ab-b26b-eedd51cfb4a5` | `configs/pretrain_cremi_real_all_r6.yaml` | `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_cremi_real_all_dbmim_r6/` |
 
-This job reached 90k+ steps by 2026-06-21 03:24 UTC and was still running
-toward 160k steps. It continuously syncs
-`tos://agi-data/users/dchen02/dbmim/outputs/pretrain_cremi_real_all_dbmim_r6/pretrained_latest.pt`.
+This job completed the planned 160k steps by 2026-06-21 03:44 UTC. The final
+pretrain checkpoint is:
+
+`tos://agi-data/users/dchen02/dbmim/outputs/pretrain_cremi_real_all_dbmim_r6/pretrained_latest.pt`
 
 ## R7 All-Pretrain Fast Jobs
 
@@ -104,3 +105,67 @@ supervised loss so far. The best R6 pretrained arm improves over the R6 scratch
 seed2 control but still does not beat the earlier R5 BCE scratch baseline
 (`VOI=0.169502`, `ARAND=0.024062`), so the next meaningful test is R7
 all-pretrain latest/final checkpoint plus BCE.
+
+## R7 Official Sample-A Results
+
+R7 used a live `pretrain_cremi_real_all_dbmim_r6/pretrained_latest.pt` during
+the long pretrain run. The checkpoint was not yet the final 160k-step weight
+for all R7 jobs, so these results are mainly a fast direction check.
+
+| arm | best VOI | best ARAND | note |
+|---|---:|---:|---|
+| BCE all-pretrained | 0.306617 | 0.074514 | unfreezing the live all-pretrain checkpoint was worse than R5/R6 |
+| MSE all-pretrained | 2.415206 | 0.909257 | pure MSE remains unusable |
+| weighted-MSE all-pretrained | 0.255522 | 0.051037 | better than pure MSE but below BCE baselines |
+| weighted-MSE scratch | 0.279585 | 0.045492 | scratch control also below BCE |
+
+Conclusion: direct all-pretrain + all-unfreeze was not enough. The useful R7
+signal was negative: pure MSE is not a viable supervised replacement, and
+weighted-MSE needs the exact SuperHuman normalization / weighting before being
+judged fairly.
+
+## R8 Final-All-Pretrain Transfer Results
+
+R8 used the final 160k-step all-CREMI dbMiM checkpoint and tested whether
+preserving the encoder helps. These were still 12k-step fast jobs with
+same-pod official sample-A waterz evaluation.
+
+| arm | UUID | best VOI | best ARAND | note |
+|---|---|---:|---:|---|
+| BCE freeze-encoder all-pretrained | `5a8c35ff-159a-4712-a4d1-03a551994d18` | 0.225764 | 0.032160 | better than R7, still below R5 BCE scratch |
+| BCE encoder-LR all-pretrained | `aec1cf0d-27aa-4428-8490-8deb8a96dad0` | 0.204602 | 0.024906 | ARAND is close to the R5 scratch baseline; VOI still worse |
+
+Conclusion: the final all-CREMI pretrain is much better than the live R7
+checkpoint when the encoder is preserved. The encoder-LR arm is the best
+pretrained-side signal so far, but it still does not beat the R5 BCE scratch
+sample-A baseline (`VOI=0.169502`, `ARAND=0.024062`). This motivates a fair
+30k-step R9 comparison rather than stopping at 12k.
+
+## R9 30k Fair Sweep
+
+R9 is a 30k-step one-GPU-per-arm sweep submitted on 2026-06-21 04:25-04:28 UTC
+to `cn-shanghai/changliu`, resource pool `med-model`, instance `sci.g21-3`.
+Every arm trains with the R5 synchronized augmentation / anisotropic UNETR
+recipe, then runs the same official sample-A waterz evaluation in the same pod.
+
+| arm | UUID | config | purpose |
+|---|---|---|---|
+| BCE all-pretrained | `99ab7d58-8886-430e-86fa-92c9d4a0fcae` | `configs/finetune_cremi_real_unetr_aniso_superhuman_bce_allpretrained_r9.yaml` | fair 30k final-pretrain vs R5 BCE scratch |
+| BCE encoder-LR all-pretrained | `33638465-d404-4229-b150-cdbf401e8159` | `configs/finetune_cremi_real_unetr_aniso_superhuman_bce_encoderlr_allpretrained_r9.yaml` | expand the best R8 transfer signal |
+| BCE freeze-encoder all-pretrained | `7ad21665-e4a3-4766-903e-d89088429919` | `configs/finetune_cremi_real_unetr_aniso_superhuman_bce_freezeenc_allpretrained_r9.yaml` | test stronger encoder preservation |
+| BCE ignore-edge all-pretrained | `37fe0514-76a0-4d74-adb5-c51e4b1d7dcc` | `configs/finetune_cremi_real_unetr_aniso_superhuman_bce_ignore_allpretrained_r9.yaml` | test whether widened-border label 0 should be ignored in loss |
+| BCE ignore-edge scratch | `885406a6-6572-46a0-8bbe-da607132b26a` | `configs/finetune_cremi_real_unetr_aniso_superhuman_bce_ignore_scratch_r9.yaml` | paired scratch control for ignore-edge loss |
+| SuperHuman weighted-MSE all-pretrained | `e0a7b840-518e-4bca-8a75-37e33b8859b4` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_allpretrained_r9.yaml` | exact SuperHuman weighted-MSE normalization |
+| SuperHuman weighted-MSE scratch | `6ebba848-1ca9-4454-9af6-559d24d8a5fc` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_scratch_r9.yaml` | paired scratch control for SH weighted-MSE |
+| SuperHuman weighted-MSE ignore-edge all-pretrained | `7c7b6119-07e5-4fe3-98bd-bab8d1f728e9` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_ignore_allpretrained_r9.yaml` | combine exact SH weighted-MSE with ignore-edge masking |
+
+Implementation note: `train_finetune.py` now supports
+`loss.loss_type: superhuman_weighted_mse` with SuperHuman-style
+`sum(weight * error) / (B * D * H * W)` normalization. It also supports
+`loss.ignore_label_edges: true`, which masks affinity edges touching
+`ignore_label` before BCE/MSE/Dice terms. This is separate from the older
+`weighted_mse` used in R5/R7, so old runs remain reproducible.
+
+Expected duration: based on R5/R8 throughput, each 30k arm should need roughly
+1-1.5 hours for training plus 10-20 minutes for same-pod waterz evaluation.
+The eight tasks run concurrently if the pool keeps admitting 1-GPU jobs.
