@@ -648,6 +648,16 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q",
         "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
     },
+    "arch-explore-longaff-scratch-r16q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_scratch_r16q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_scratch_r16q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_longaff_scratch_r16q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_longaff_scratch_r16q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_longaff_scratch_r16q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_longaff_scratch_r16q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_longaff_scratch_r16q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_scratch_r16q",
+    },
     "arch-explore-maws-bcar-rank-publicem-r16q": {
         "config": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q.yaml",
         "output": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q",
@@ -658,6 +668,16 @@ ABLATION_RUNS = {
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_maws_bcar_rank_publicem_r16q",
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q",
         "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
+    "arch-explore-maws-bcar-rank-scratch-r16q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_maws_bcar_rank_scratch_r16q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_maws_bcar_rank_scratch_r16q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_maws_bcar_rank_scratch_r16q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_maws_bcar_rank_scratch_r16q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q",
     },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -1059,10 +1079,14 @@ def make_bundle(
         "finetune-cremi",
         "finetune-cremi-unetr-pretrained",
         "finetune-cremi-unetr-aniso-pretrained",
-        *ABLATION_TRAIN_STAGES,
         "finetune-cremi-zdice",
         "finetune-cremi-zdice-focal",
-    }:
+    } or (
+        stage in ABLATION_TRAIN_STAGES
+        and ablation_train_name is not None
+        and "scratch" not in ablation_train_name
+        and not ablation_train_pretrained_output
+    ):
         prelude.extend(
             [
                 "mkdir -p outputs/pretrain_cremi_real_dbmim",
@@ -1688,9 +1712,11 @@ def main() -> None:
         spec = ABLATION_RUNS[ablation_name]
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/{spec['config']}"
         if ablation_name.startswith("arch-explore-"):
-            prefix = f"dbmim-{ablation_name}"
+            prefix = f"dbmim-{ablation_name}".rstrip("-")
+            if len(prefix) > 35 and prefix[:35].endswith("-"):
+                prefix = f"dbmim-{ablation_name.removeprefix('arch-explore-')}".rstrip("-")
         else:
-            prefix = f"dbmim-finetune-cremi-unetr-aniso-{ablation_name}"
+            prefix = f"dbmim-finetune-cremi-unetr-aniso-{ablation_name}".rstrip("-")
     elif args.stage == "finetune-cremi-zdice":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_zdice.yaml"
         prefix = "dbmim-finetune-cremi-zdice"
