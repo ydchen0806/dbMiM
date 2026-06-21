@@ -98,3 +98,42 @@ Scratch arm:
 
 - train output: `outputs/finetune_cremi_real_unetr_aniso_em_bce_encoderlr_scratch_r12/`
 - eval output: `outputs/eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_scratch_r12/`
+
+## Final R12 results
+
+Both SiFlow tasks finished successfully on `cn-shanghai/changliu`, pool
+`med-model`, with 8 x `sci.g21-3` GPUs per arm.
+
+| arm | SiFlow UUID | status | train step | train loss | main loss |
+|---|---|---|---:|---:|---:|
+| pretrained | `70c97464-7179-41b8-80f7-9ccf4f94ff25` | Succeeded | 40000 | 0.164918 | 0.098956 |
+| scratch | `bfc6ca92-13fa-4d1e-b234-fab4b8e3c14c` | Succeeded | 40000 | 0.113509 | 0.054045 |
+
+Official A/B/C full-volume waterz aggregate sweep:
+
+| arm | selector | VOI sum | ARAND | threshold | calibration bias z/y/x |
+|---|---|---:|---:|---:|---|
+| pretrained | best VOI | 0.830019 | 0.172866 | 0.10 | `-0.5/-1.0/-1.0` |
+| pretrained | best ARAND | 0.870898 | 0.172465 | 0.05 | `-0.5/-1.0/-1.0` |
+| scratch | best VOI | 0.806745 | 0.179934 | 0.30 | `-0.5/-1.0/-1.0` |
+| scratch | best ARAND | 0.812849 | 0.175631 | 0.10 | `-0.5/-1.0/-1.0` |
+
+Result interpretation:
+
+- The metric scale is now consistent with CREMI A/B/C full-volume evaluation:
+  VOI is around `0.8-0.9`, not the earlier sample-A-only `0.18-0.21`.
+- R12 does not show a clean stable pretraining gain. Scratch is better on the
+  best-VOI selector (`0.806745` vs `0.830019`), while pretrained is slightly
+  better on best ARAND (`0.172465` vs `0.175631`).
+- The EM head is runnable and gives stronger absolute A/B/C VOI than the old
+  R5 full A/B/C records in this repo, but the pretrained-vs-scratch comparison
+  is still mixed under BCE-style affinity supervision.
+
+Recommended next ablation:
+
+- Keep `unetr_aniso_em` and the A/B/C full-volume evaluation protocol fixed.
+- Run a matched pair with pure SuperHuman-style MSE / weighted MSE loss, because
+  earlier R10/R11 logs and the SuperHuman code path suggest MSE-style affinity
+  regression may align better with waterz agglomeration than BCE logits.
+- After the loss ablation, lock one common post-processing setting rather than
+  reporting a separate best sweep for each arm.
