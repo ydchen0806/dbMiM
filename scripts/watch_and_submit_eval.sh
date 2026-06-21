@@ -18,6 +18,10 @@ CHECKPOINT_FILES=${CHECKPOINT_FILES:-"finetuned_best.pt finetuned_latest.pt"}
 mkdir -p outputs/watchers
 echo "{\"event\":\"watch_start\",\"tos_prefix\":\"${TOS_PREFIX}\",\"checkpoint_files\":\"${CHECKPOINT_FILES}\",\"eval_stage\":\"${EVAL_STAGE}\",\"resource_pool\":\"${RESOURCE_POOL}\",\"gpus_per_pod\":${GPUS_PER_POD}}"
 
+emit_event() {
+  printf '%s\n' "$1"
+}
+
 probe_checkpoint() {
   local filename="$1"
   local target="${TOS_PREFIX}/${filename}"
@@ -43,24 +47,26 @@ for idx in $(seq 1 "${MAX_POLLS}"); do
     if probe_checkpoint "${filename}"; then
       ready=1
       ready_file="${filename}"
-      echo "{\"event\":\"checkpoint_ready\",\"file\":\"${filename}\",\"poll\":${idx}}"
+      emit_event "{\"event\":\"checkpoint_ready\",\"file\":\"${filename}\",\"poll\":${idx}}"
       break
     fi
   done
   if [ "${ready}" -eq 1 ]; then
     break
   fi
-  echo "{\"event\":\"checkpoint_wait\",\"poll\":${idx}}"
+  emit_event "{\"event\":\"checkpoint_wait\",\"poll\":${idx}}"
   sleep "${SLEEP_SEC}"
 done
 
 if [ "${ready}" -ne 1 ]; then
-  echo "{\"event\":\"checkpoint_timeout\",\"max_polls\":${MAX_POLLS}}" >&2
+  emit_event "{\"event\":\"checkpoint_timeout\",\"max_polls\":${MAX_POLLS}}"
   exit 2
 fi
 
+emit_event "{\"event\":\"submit_eval_start\",\"stage\":\"${EVAL_STAGE}\"}"
 "${SIFLOW_PY}" scripts/submit_siflow_dbmim.py \
   --stage "${EVAL_STAGE}" \
   --resource-pool "${RESOURCE_POOL}" \
   --gpus-per-pod "${GPUS_PER_POD}" \
   --submit
+emit_event "{\"event\":\"submit_eval_done\",\"stage\":\"${EVAL_STAGE}\"}"

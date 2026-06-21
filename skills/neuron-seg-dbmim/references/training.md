@@ -70,6 +70,7 @@ Typical current settings:
 | regular aniso finetune | 2 | 16 | `32x160x160` | `1e-4` |
 | fs64/context48 | 1 | 8 | `32x160x160` or `48x192x192` | `8e-5` |
 | long dbMiM pretrain | 2 | 16 | `32x160x160` | `1.5e-4` |
+| R5 SuperHuman finetune | 2 | 8 on 4 GPUs | `32x160x160` | `8e-5` |
 
 ## Epoch and Checkpoint Timing
 
@@ -145,6 +146,54 @@ train:
 edges per sample/channel by their binary ratio. The log field may still be
 named `train_bce_loss` in older running bundles, but for R5 it is the main
 weighted MSE term. Newer code also logs `train_main_loss`.
+
+Current R5 ablation configs:
+
+- `finetune_cremi_real_unetr_aniso_superhuman_nowiden_pretrained_r5.yaml`:
+  disables `data.widen_border` to test whether SuperHuman/Kisuk-style 2D
+  border invalidation is responsible for the gain.
+- `finetune_cremi_real_unetr_aniso_superhuman_bce_pretrained_r5.yaml`:
+  keeps synchronized augmentation and widened labels but replaces
+  `weighted_mse` with BCE.
+- `finetune_cremi_real_unetr_aniso_superhuman_boundaryhigh_pretrained_r5.yaml`:
+  keeps weighted MSE and widened labels but raises `boundary_dice_weight` from
+  `0.35` to `0.55`.
+- `finetune_cremi_real_unetr_aniso_superhuman_encoderlr_pretrained_r5.yaml`:
+  keeps the main R5 loss/data stack but trains the pretrained encoder with
+  `2e-5` and decoder/head with `8e-5`.
+
+When launching final eval watchers, wait for the explicit final step checkpoint
+such as `checkpoint_step_00030000.pt`. Do not include `finetuned_latest.pt` in
+`CHECKPOINT_FILES` for final comparisons because the bootstrap sync loop
+uploads it periodically during training.
+
+Current ablation lessons:
+
+- No-widen is a failed ablation (`VOI_sum > 4.5`, `ARAND ~0.96` on sample A).
+  Keep 2D border widening unless intentionally testing this failure mode.
+- BCE pretrained R5 produced the best current raw-label sample-A VOI
+  (`0.535448`), but not the best ARAND. It is a credible loss ablation to
+  expand only after A/B/C checks.
+- Because BCE pretrained can beat the main pretrained arm on raw-label and
+  official-style sample-A VOI, always run the paired
+  `superhuman-bce-scratch-r5` control before attributing the gain to
+  pretraining. That control completed as SiFlow UUID
+  `9f2bbe23-abfa-41c0-b00c-63f76fd76868`; final step 30000 logged
+  `train_loss=0.147030`, `train_main_loss=0.091217`,
+  `train_dice_loss=0.028496`, and `train_boundary_dice_loss=0.155396`.
+  Paired evals completed on 2026-06-21: official sample-A
+  `df6582ca-c87c-4843-a8ca-23e41030c3b5` reached best VOI `0.169502` and
+  best ARAND `0.024062`; raw-label sample-A
+  `4ce29ab6-4775-41f5-ac70-c2b62d94b9c4` reached best VOI `0.517256` and
+  best ARAND `0.058831`. These beat the BCE-pretrained rows, so current BCE
+  evidence supports the BCE loss choice rather than a pretraining gain.
+- Boundary-high did not improve over the main R5 stack.
+- The first `lowencoder` run was invalid because optimizer param grouping was
+  built after DDP wrapping and names were prefixed by `module.`, so only the
+  decoder group was matched. The corrected optimizer strips repeated
+  `module.` prefixes before prefix matching and logs both tensor count and
+  parameter count per group. Use the `encoderlr` config/output prefix, not the
+  invalid `lowencoder` prefix.
 
 ## LSD-style Auxiliary Head
 

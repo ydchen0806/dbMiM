@@ -291,6 +291,39 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
     raise ValueError(f"unknown model architecture: {architecture}")
 
 
+def build_optimizer(model: torch.nn.Module, train_cfg: dict) -> torch.optim.Optimizer:
+    lr = float(train_cfg.get("lr", 1e-4))
+    weight_decay = float(train_cfg.get("weight_decay", 0.01))
+    encoder_lr_value = train_cfg.get("encoder_lr", None)
+    if encoder_lr_value is None:
+        return torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    encoder_lr = float(encoder_lr_value)
+    encoder_prefixes = tuple(
+        str(name) for name in train_cfg.get("encoder_param_prefixes", ["patch_embed", "pos_embed", "encoder_blocks", "norm"])
+    )
+    encoder_params = []
+    decoder_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        match_name = name
+        while match_name.startswith("module."):
+            match_name = match_name[len("module.") :]
+        if match_name.startswith(encoder_prefixes):
+            encoder_params.append(param)
+        else:
+            decoder_params.append(param)
+    param_groups = []
+    if encoder_params:
+        param_groups.append({"params": encoder_params, "lr": encoder_lr, "weight_decay": weight_decay, "name": "encoder"})
+    if decoder_params:
+        param_groups.append({"params": decoder_params, "lr": lr, "weight_decay": weight_decay, "name": "decoder"})
+    if not param_groups:
+        raise ValueError("optimizer received no trainable parameters")
+    return torch.optim.AdamW(param_groups)
+
+
 @torch.no_grad()
 def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, train_cfg: dict) -> dict[str, float]:
     model.eval()
@@ -394,11 +427,7 @@ def main() -> None:
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=float(train_cfg.get("lr", 1e-4)),
-        weight_decay=float(train_cfg.get("weight_decay", 0.01)),
-    )
+    optimizer = build_optimizer(model, train_cfg)
     start_epoch = 0
     global_step = 0
     best_score = -1.0
@@ -425,6 +454,20 @@ def main() -> None:
         )
         print(f"model_trainable_params={count_parameters(unwrap(model))}")
         print(f"loss_config={_loss_cfg(train_cfg)}")
+        print(
+            {
+                "optimizer_param_groups": [
+                    {
+                        "name": group.get("name", f"group_{idx}"),
+                        "lr": float(group["lr"]),
+                        "weight_decay": float(group["weight_decay"]),
+                        "num_tensors": len(group["params"]),
+                        "num_parameters": int(sum(param.numel() for param in group["params"])),
+                    }
+                    for idx, group in enumerate(optimizer.param_groups)
+                ]
+            }
+        )
     t0 = time.time()
     for epoch in range(start_epoch, epochs):
         if sampler is not None:

@@ -95,6 +95,42 @@ def read_cremi_crop(
     return raw, label, crop
 
 
+def apply_cremi_boundary_ignore(
+    label: np.ndarray,
+    *,
+    ignore_label: int | None,
+    distance_xy: int,
+    distance_z: int = 0,
+) -> tuple[np.ndarray, float]:
+    """Mark GT object-boundary neighborhoods as ignore/background for CREMI-style metrics."""
+
+    if ignore_label is None or distance_xy <= 0 and distance_z <= 0:
+        return label, 0.0
+    boundary = np.zeros(label.shape, dtype=bool)
+    boundary[:, 1:, :] |= label[:, 1:, :] != label[:, :-1, :]
+    boundary[:, :-1, :] |= label[:, 1:, :] != label[:, :-1, :]
+    boundary[:, :, 1:] |= label[:, :, 1:] != label[:, :, :-1]
+    boundary[:, :, :-1] |= label[:, :, 1:] != label[:, :, :-1]
+    if distance_z > 0:
+        boundary[1:, :, :] |= label[1:, :, :] != label[:-1, :, :]
+        boundary[:-1, :, :] |= label[1:, :, :] != label[:-1, :, :]
+    if distance_xy > 0 or distance_z > 0:
+        from scipy import ndimage  # type: ignore
+
+        structure = np.ones(
+            (
+                2 * int(distance_z) + 1,
+                2 * int(distance_xy) + 1,
+                2 * int(distance_xy) + 1,
+            ),
+            dtype=bool,
+        )
+        boundary = ndimage.binary_dilation(boundary, structure=structure)
+    masked = np.asarray(label).copy()
+    masked[boundary] = int(ignore_label)
+    return masked, float(np.mean(boundary))
+
+
 def starts_for_dim(dim: int, window: int, stride: int) -> list[int]:
     if dim <= window:
         return [0]
@@ -397,6 +433,8 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--save-seg", action="store_true")
     parser.add_argument("--ignore-label", type=int, default=0)
+    parser.add_argument("--cremi-boundary-ignore-distance-xy", type=int, default=0)
+    parser.add_argument("--cremi-boundary-ignore-distance-z", type=int, default=0)
     parser.add_argument("--replicate-affinity-boundary", action="store_true")
     parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="internal")
     parser.add_argument(
@@ -440,6 +478,7 @@ def main() -> None:
 
     records: list[dict[str, float | int | str]] = []
     affinity_records: list[dict[str, float | int | str]] = []
+    sample_records: list[dict[str, float | int | str]] = []
     failures: list[dict[str, str | float]] = []
     probes = package_probe()
     print({"package_probe": probes}, flush=True)
@@ -452,12 +491,29 @@ def main() -> None:
     seed_backends = watershed_backends | agglomeration_backends
     for path in files:
         raw, label, crop = read_cremi_crop(path, crop_size, raw_keys, label_keys)
+        metric_label, boundary_ignore_fraction = apply_cremi_boundary_ignore(
+            label,
+            ignore_label=args.ignore_label,
+            distance_xy=int(args.cremi_boundary_ignore_distance_xy),
+            distance_z=int(args.cremi_boundary_ignore_distance_z),
+        )
+        sample_record: dict[str, float | int | str] = {
+            "sample": path.name,
+            "label_unique": int(np.unique(label).size),
+            "label_zero_fraction": float(np.mean(label == args.ignore_label)) if args.ignore_label is not None else 0.0,
+            "metric_label_unique": int(np.unique(metric_label[metric_label != args.ignore_label]).size)
+            if args.ignore_label is not None
+            else int(np.unique(metric_label).size),
+            "boundary_ignore_fraction": float(boundary_ignore_fraction),
+        }
+        sample_records.append(sample_record)
         print(
             {
                 "sample": path.name,
                 "raw_shape": list(raw.shape),
                 "crop": [[sl.start, sl.stop] for sl in crop],
                 "checkpoint": str(args.checkpoint),
+                **sample_record,
             },
             flush=True,
         )
@@ -543,7 +599,7 @@ def main() -> None:
                         t2 = time.perf_counter()
                         metrics = segmentation_metrics(
                             seg,
-                            label,
+                            metric_label,
                             ignore_label=args.ignore_label,
                             backend=args.metric_backend,
                         )
@@ -637,8 +693,12 @@ def main() -> None:
         "num_records": len(records),
         "num_affinity_records": len(affinity_records),
         "affinity_records": affinity_records,
+        "sample_records": sample_records,
         "package_probe": probes,
         "metric_backend": args.metric_backend,
+        "ignore_label": None if args.ignore_label is None else int(args.ignore_label),
+        "cremi_boundary_ignore_distance_xy": int(args.cremi_boundary_ignore_distance_xy),
+        "cremi_boundary_ignore_distance_z": int(args.cremi_boundary_ignore_distance_z),
         "replicate_affinity_boundary": bool(args.replicate_affinity_boundary),
         "calibration_biases": [list(bias) for bias in calibration_biases],
         "calibration_temperatures": calibration_temperatures,
