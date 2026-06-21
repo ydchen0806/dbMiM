@@ -103,6 +103,12 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q_arch_bench"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q_arch_bench"),
     ],
+    "r16q_waterz": [
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_publicem_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_scratch_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_scratch_r16q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q"),
+    ],
 }
 
 SIFLOW_UUIDS = {
@@ -142,6 +148,10 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_scratch_r16q_arch_bench": "198e39cc-c2aa-4ab1-82f3-edcc15e6917f",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q_arch_bench": "b8e5f3dc-9047-48a2-9b90-dd439f0265c7",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q_arch_bench": "997ba3ec-77f6-41f0-851b-83f770427cfd",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q": "d820080c-2c13-4278-980d-155add949017",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_scratch_r16q": "418b6d25-06df-4820-8594-53e7a55e9b9c",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q": "a9456991-13c5-41cc-af72-f3f4427b3f26",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q": "b51f6415-2bae-4e34-8b95-50994f092496",
 }
 
 
@@ -412,7 +422,11 @@ def main() -> None:
             if tos_exists(summary_uri, args.timeout):
                 tos_cp(summary_uri, root / eval_name / "cremi_segmentation_summary.json", args.timeout)
             summary_path = root / eval_name / "cremi_segmentation_summary.json"
-            if args.siflow_fallback and not summary_path.exists():
+            if args.siflow_fallback:
+                # SiFlow stdout fallback can be partial while post-processing is
+                # still running. Rebuild it every poll until the canonical TOS
+                # summary appears, so later waterz/RAG rows are not hidden by an
+                # early graph-CC-only snapshot.
                 write_siflow_fallback_summary(
                     eval_name,
                     summary_path,

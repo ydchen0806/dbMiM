@@ -695,6 +695,11 @@ ABLATION_SUPERHUMAN_OFFICIAL_CALIBRATION_STAGES = {
     for name, spec in ABLATION_RUNS.items()
     if "official_calibration_eval" in spec
 }
+ABLATION_SUPERHUMAN_OFFICIAL_ABC_CALIBRATION_STAGES = {
+    f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-{name}"
+    for name, spec in ABLATION_RUNS.items()
+    if "official_abc_eval" in spec
+}
 SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-pretrained-r3",
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-scratch-r3",
@@ -708,7 +713,7 @@ SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-bce-pretrained-r5",
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-bce-scratch-r5",
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-encoderlr-pretrained-r5",
-} | ABLATION_SUPERHUMAN_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_CALIBRATION_STAGES
+} | ABLATION_SUPERHUMAN_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_ABC_CALIBRATION_STAGES
 SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION_STAGES
 CREMI_STAGES = {
     "pretrain-cremi",
@@ -767,6 +772,7 @@ CREMI_EVAL_STAGES = {
 def _ablation_name_from_stage(stage: str) -> str | None:
     for prefix in [
         "finetune-cremi-unetr-aniso-",
+        "eval-cremi-unetr-aniso-superhuman-calibration-official-abc-",
         "eval-cremi-unetr-aniso-superhuman-calibration-official-",
         "eval-cremi-unetr-aniso-superhuman-calibration-",
         "eval-cremi-unetr-aniso-large-",
@@ -1259,6 +1265,11 @@ def make_bundle(
                 spec["output"],
                 "DBMIM_EVAL_CKPT",
             )
+        if "official_abc_eval" in spec:
+            eval_stage_map[f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-{name}"] = (
+                spec["output"],
+                "DBMIM_EVAL_CKPT",
+            )
     if stage in eval_stage_map:
         model_prefix, env_key = eval_stage_map[stage]
         prelude.extend(
@@ -1402,6 +1413,10 @@ def make_bundle(
         if "official_calibration_eval" in spec:
             eval_output_dirs[f"eval-cremi-unetr-aniso-superhuman-calibration-official-{name}"] = (
                 f"outputs/{spec['official_calibration_eval']}"
+            )
+        if "official_abc_eval" in spec:
+            eval_output_dirs[f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-{name}"] = (
+                f"outputs/{spec['official_abc_eval']}"
             )
     if stage in eval_output_dirs:
         postlude.extend(
@@ -1938,6 +1953,17 @@ def main() -> None:
         ablation_name = _ablation_name_from_stage(args.stage)
         cremi_boundary_ignore_args = ""
         if ablation_name is not None and args.stage.startswith(
+            "eval-cremi-unetr-aniso-superhuman-calibration-official-abc-"
+        ):
+            spec = ABLATION_RUNS[ablation_name]
+            config = spec["config"]
+            out_dir = spec.get("official_abc_eval", f"{spec['official_calibration_eval']}_abc")
+            suffix = f"official-abc-{ablation_name}"
+            thresholds = "0.05 0.10 0.20 0.30 0.50"
+            calibration_biases = "0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0"
+            max_samples = "0"
+            cremi_boundary_ignore_args = "--cremi-boundary-ignore-distance-xy 1 --cremi-boundary-ignore-distance-z 0 "
+        elif ablation_name is not None and args.stage.startswith(
             "eval-cremi-unetr-aniso-superhuman-calibration-official-"
         ):
             spec = ABLATION_RUNS[ablation_name]

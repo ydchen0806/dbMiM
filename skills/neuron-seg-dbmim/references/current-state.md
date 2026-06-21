@@ -63,6 +63,21 @@ Use `scripts/poll_dbmim_tos_results.py --group r16q --once --logs
 --siflow-fallback` after post-processing finishes to summarize VOI/ARAND even
 if TOS summary downloads are slow.
 
+Because the arch-bench evaluates slow/low-value graph/RAG paths before waterz,
+four standalone 1-GPU official A/B/C waterz-only evals were also launched on
+2026-06-22. They use `--backends waterz`, `--max-samples 0`, and CREMI
+boundary-ignore `xy=1,z=0`:
+
+| arm | UUID |
+|---|---|
+| long-affinity + publicEM waterz A/B/C | `d820080c-2c13-4278-980d-155add949017` |
+| long-affinity scratch waterz A/B/C | `418b6d25-06df-4820-8594-53e7a55e9b9c` |
+| MAWS+BCAR rank + publicEM waterz A/B/C | `a9456991-13c5-41cc-af72-f3f4427b3f26` |
+| MAWS+BCAR rank scratch waterz A/B/C | `b51f6415-2bae-4e34-8b95-50994f092496` |
+
+Use `scripts/poll_dbmim_tos_results.py --group r16q_waterz --once --logs
+--siflow-fallback` for these standalone waterz evals.
+
 As of 2026-06-20, the earlier R3/R4 supervised finetuning results are
 invalidated as scientific evidence because the dataset applied random geometric
 flips to the image but not to the instance label. This broke image/label

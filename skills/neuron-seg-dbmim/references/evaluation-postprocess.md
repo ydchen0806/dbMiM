@@ -152,6 +152,10 @@ Negative or fragile controls:
   graph-CC convention and metric path are not the main failure.
 - Graph CC is a strong simple baseline. Beat it before investing in complex
   watershed/agglomeration.
+- In the R15/R16 full-volume architecture benchmarks, simple graph-CC with the
+  early threshold grid again produced VOI around `7.9` on sample A. Do not use
+  those early rows as a method conclusion; wait for waterz or run a standalone
+  waterz-only official A/B/C eval.
 - CuPy sparse graph CC is not the same as a custom CUDA union-find; do not
   assume it eliminates the CPU bottleneck.
 - Full-volume post-processing can become a memory problem. Plan blockwise or
