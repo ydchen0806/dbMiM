@@ -478,8 +478,9 @@ class EMAffinityHead3D(nn.Module):
         channel_bias_init: Sequence[float] | None = None,
     ) -> None:
         super().__init__()
-        if out_channels != 3:
-            raise ValueError("EMAffinityHead3D currently expects z/y/x affinity output channels")
+        if out_channels < 3:
+            raise ValueError(f"EMAffinityHead3D expects at least z/y/x output channels, got {out_channels}")
+        self.out_channels = int(out_channels)
         self.shared = nn.Sequential(
             *[ResidualAnisotropicBlock3D(channels, dropout=dropout) for _ in range(max(1, int(refine_depth)))]
         )
@@ -495,18 +496,28 @@ class EMAffinityHead3D(nn.Module):
         )
         self.z_head = nn.Conv3d(channels, 1, kernel_size=1)
         self.xy_head = nn.Conv3d(channels, 2, kernel_size=1)
-        bias = torch.zeros(3, dtype=torch.float32)
+        self.extra_head = (
+            nn.Conv3d(channels, self.out_channels - 3, kernel_size=1)
+            if self.out_channels > 3
+            else nn.Identity()
+        )
+        bias = torch.zeros(self.out_channels, dtype=torch.float32)
         if channel_bias_init is not None:
             values = [float(v) for v in channel_bias_init]
-            if len(values) != 3:
-                raise ValueError(f"channel_bias_init must have 3 values, got {values}")
-            bias = torch.tensor(values, dtype=torch.float32)
-        self.channel_bias = nn.Parameter(bias.view(1, 3, 1, 1, 1))
-        self.channel_scale = nn.Parameter(torch.ones(1, 3, 1, 1, 1))
+            if len(values) > self.out_channels:
+                raise ValueError(
+                    f"channel_bias_init has {len(values)} values for {self.out_channels} output channels"
+                )
+            bias[: len(values)] = torch.tensor(values, dtype=torch.float32)
+        self.channel_bias = nn.Parameter(bias.view(1, self.out_channels, 1, 1, 1))
+        self.channel_scale = nn.Parameter(torch.ones(1, self.out_channels, 1, 1, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feat = self.shared(x)
-        logits = torch.cat([self.z_head(self.z_refine(feat)), self.xy_head(self.xy_refine(feat))], dim=1)
+        parts = [self.z_head(self.z_refine(feat)), self.xy_head(self.xy_refine(feat))]
+        if self.out_channels > 3:
+            parts.append(self.extra_head(feat))
+        logits = torch.cat(parts, dim=1)
         return logits * self.channel_scale + self.channel_bias
 
 

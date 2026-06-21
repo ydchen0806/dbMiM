@@ -91,6 +91,12 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_mempretrained_r14"),
     ],
+    "r15q": [
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_mempretrained_r15q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_mempretrained_r15q_arch_bench"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_lsd_mempretrained_r15q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_lsd_mempretrained_r15q_arch_bench"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_longaff_bcar2_mempretrained_r15q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_bcar2_mempretrained_r15q_arch_bench"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_allpretrained_r14q", "eval_cremi_arch_explore_postprocess_r15q"),
+    ],
 }
 
 SIFLOW_UUIDS = {
@@ -122,6 +128,10 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_mempretrained_r14": "f4c00499-19a5-4fb2-99a8-99adf54bad4d",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14": "d23472e9-567f-4bd3-9e04-24f450dbab85",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_mempretrained_r14": "9494b4fa-f6e6-410c-90ba-052bb8e70d01",
+    "eval_cremi_arch_explore_postprocess_r15q": "bcac3b16-9896-4114-84bd-a70f854e2a8e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_mempretrained_r15q_arch_bench": "73a40fd4-287b-4bfc-98b6-c57aa6a38c1a",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_lsd_mempretrained_r15q_arch_bench": "08fad37f-4257-4f4f-9e9b-ad86c4b7f93f",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_bcar2_mempretrained_r15q_arch_bench": "cb58f241-4fac-490f-b958-1ca6376bfb14",
 }
 
 

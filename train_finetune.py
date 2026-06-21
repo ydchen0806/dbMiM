@@ -14,6 +14,7 @@ from dbmim.datasets import (
     EMVolumeDataset,
     SyntheticEMDataset,
     labels_to_affinities,
+    labels_to_offset_affinities,
     labels_to_local_shape_descriptors,
 )
 from dbmim.metrics import AverageMeter, binary_iou_from_logits, dice_from_logits
@@ -184,6 +185,60 @@ def make_affinity_valid_mask(labels: torch.Tensor, train_cfg: dict) -> torch.Ten
         valid[:, 0, 0] = valid_voxels[:, 0]
         valid[:, 1, :, 0] = valid_voxels[:, :, 0]
         valid[:, 2, :, :, 0] = valid_voxels[:, :, :, 0]
+    return valid.float()
+
+
+def _affinity_offsets(train_cfg: dict) -> list[list[int]] | None:
+    cfg = _loss_cfg(train_cfg)
+    offsets = cfg.get("affinity_offsets", train_cfg.get("affinity_offsets", None))
+    if offsets is None:
+        return None
+    return [[int(v) for v in offset] for offset in offsets]
+
+
+def make_offset_affinity_valid_mask(
+    labels: torch.Tensor,
+    train_cfg: dict,
+    channels: int,
+) -> torch.Tensor | None:
+    cfg = _loss_cfg(train_cfg)
+    offsets = _affinity_offsets(train_cfg)
+    if offsets is None:
+        return make_affinity_valid_mask(labels, train_cfg)
+    if not bool(cfg.get("ignore_label_edges", train_cfg.get("ignore_label_edges", False))):
+        return None
+    ignore_label = int(cfg.get("ignore_label", train_cfg.get("ignore_label", 0)))
+    if labels.ndim == 3:
+        labels = labels.unsqueeze(0)
+    labels = labels.long()
+    valid_voxels = labels != ignore_label
+    bsz, depth, height, width = labels.shape
+    valid = labels.new_zeros((bsz, channels, depth, height, width), dtype=torch.float32)
+    for channel, (dz, dy, dx) in enumerate(offsets):
+        if channel >= channels:
+            break
+        src_z0 = max(0, -int(dz))
+        src_z1 = depth - max(0, int(dz))
+        src_y0 = max(0, -int(dy))
+        src_y1 = height - max(0, int(dy))
+        src_x0 = max(0, -int(dx))
+        src_x1 = width - max(0, int(dx))
+        dst_z0 = src_z0 + int(dz)
+        dst_z1 = src_z1 + int(dz)
+        dst_y0 = src_y0 + int(dy)
+        dst_y1 = src_y1 + int(dy)
+        dst_x0 = src_x0 + int(dx)
+        dst_x1 = src_x1 + int(dx)
+        src_valid = valid_voxels[:, src_z0:src_z1, src_y0:src_y1, src_x0:src_x1]
+        dst_valid = valid_voxels[:, dst_z0:dst_z1, dst_y0:dst_y1, dst_x0:dst_x1]
+        valid[:, channel, src_z0:src_z1, src_y0:src_y1, src_x0:src_x1] = (src_valid & dst_valid).float()
+        if bool(train_cfg.get("replicate_affinity_boundary", False)):
+            if (int(dz), int(dy), int(dx)) == (-1, 0, 0):
+                valid[:, channel, 0] = valid_voxels[:, 0]
+            elif (int(dz), int(dy), int(dx)) == (0, -1, 0):
+                valid[:, channel, :, 0] = valid_voxels[:, :, 0]
+            elif (int(dz), int(dy), int(dx)) == (0, 0, -1):
+                valid[:, channel, :, :, 0] = valid_voxels[:, :, :, 0]
     return valid.float()
 
 
@@ -368,8 +423,15 @@ def membrane_spatial_weight(
 
 
 def make_affinity_target(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor:
-    return labels_to_affinities(
+    offsets = _affinity_offsets(train_cfg)
+    if offsets is None:
+        return labels_to_affinities(
+            labels,
+            replicate_boundary=bool(train_cfg.get("replicate_affinity_boundary", False)),
+        )
+    return labels_to_offset_affinities(
         labels,
+        offsets=offsets,
         replicate_boundary=bool(train_cfg.get("replicate_affinity_boundary", False)),
     )
 
@@ -386,7 +448,7 @@ def finetune_loss(
     cfg = _loss_cfg(train_cfg)
     affinity_channels = int(affinity_target.shape[1])
     affinity_logits = logits[:, :affinity_channels]
-    valid_mask = make_affinity_valid_mask(labels, train_cfg)
+    valid_mask = make_offset_affinity_valid_mask(labels, train_cfg, affinity_channels)
     if valid_mask is not None:
         valid_mask = valid_mask[:, :affinity_channels].to(logits.device)
     spatial_weight = membrane_spatial_weight(image, affinity_target, train_cfg, valid_mask=valid_mask)

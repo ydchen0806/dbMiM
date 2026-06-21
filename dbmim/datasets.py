@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import torch
@@ -396,26 +396,83 @@ class EMVolumeDataset(Dataset):
         return item
 
 
-def labels_to_affinities(labels: torch.Tensor, replicate_boundary: bool = False) -> torch.Tensor:
-    """Convert instance labels [B,D,H,W] to nearest-neighbor z/y/x affinities.
+DEFAULT_AFFINITY_OFFSETS: tuple[tuple[int, int, int], ...] = (
+    (-1, 0, 0),
+    (0, -1, 0),
+    (0, 0, -1),
+)
+
+
+def _normalize_affinity_offsets(
+    offsets: Sequence[Sequence[int]] | None,
+) -> tuple[tuple[int, int, int], ...]:
+    if offsets is None:
+        return DEFAULT_AFFINITY_OFFSETS
+    normalized = []
+    for offset in offsets:
+        values = tuple(int(v) for v in offset)
+        if len(values) != 3:
+            raise ValueError(f"affinity offset must be z/y/x triplet, got {offset}")
+        if values == (0, 0, 0):
+            raise ValueError("affinity offset cannot be (0, 0, 0)")
+        normalized.append(values)
+    if not normalized:
+        raise ValueError("at least one affinity offset is required")
+    return tuple(normalized)
+
+
+def labels_to_offset_affinities(
+    labels: torch.Tensor,
+    offsets: Sequence[Sequence[int]] | None = None,
+    replicate_boundary: bool = False,
+) -> torch.Tensor:
+    """Convert instance labels [B,D,H,W] to affinities for arbitrary offsets.
 
     SuperHuman's ``seg_to_aff(..., pad="replicate")`` treats the first
-    z/y/x boundary plane as a valid foreground self-edge. The default keeps the
-    previous dbMiM behavior for backward-compatible experiments.
+    nearest-neighbor boundary plane as a valid foreground self-edge. For
+    long-range offsets we conservatively leave invalid boundary voxels at zero.
     """
     if labels.ndim == 3:
         labels = labels.unsqueeze(0)
     labels = labels.long()
     bsz, depth, height, width = labels.shape
-    aff = labels.new_zeros((bsz, 3, depth, height, width), dtype=torch.float32)
-    aff[:, 0, 1:] = (labels[:, 1:] == labels[:, :-1]) & (labels[:, 1:] > 0)
-    aff[:, 1, :, 1:] = (labels[:, :, 1:] == labels[:, :, :-1]) & (labels[:, :, 1:] > 0)
-    aff[:, 2, :, :, 1:] = (labels[:, :, :, 1:] == labels[:, :, :, :-1]) & (labels[:, :, :, 1:] > 0)
-    if replicate_boundary:
-        aff[:, 0, 0] = labels[:, 0] > 0
-        aff[:, 1, :, 0] = labels[:, :, 0] > 0
-        aff[:, 2, :, :, 0] = labels[:, :, :, 0] > 0
+    norm_offsets = _normalize_affinity_offsets(offsets)
+    aff = labels.new_zeros((bsz, len(norm_offsets), depth, height, width), dtype=torch.float32)
+    for channel, (dz, dy, dx) in enumerate(norm_offsets):
+        src_z0 = max(0, -dz)
+        src_z1 = depth - max(0, dz)
+        src_y0 = max(0, -dy)
+        src_y1 = height - max(0, dy)
+        src_x0 = max(0, -dx)
+        src_x1 = width - max(0, dx)
+        dst_z0 = src_z0 + dz
+        dst_z1 = src_z1 + dz
+        dst_y0 = src_y0 + dy
+        dst_y1 = src_y1 + dy
+        dst_x0 = src_x0 + dx
+        dst_x1 = src_x1 + dx
+        src = labels[:, src_z0:src_z1, src_y0:src_y1, src_x0:src_x1]
+        dst = labels[:, dst_z0:dst_z1, dst_y0:dst_y1, dst_x0:dst_x1]
+        valid = (src == dst) & (src > 0)
+        aff[:, channel, src_z0:src_z1, src_y0:src_y1, src_x0:src_x1] = valid.float()
+        if replicate_boundary and (dz, dy, dx) in DEFAULT_AFFINITY_OFFSETS:
+            if (dz, dy, dx) == (-1, 0, 0):
+                aff[:, channel, 0] = labels[:, 0] > 0
+            elif (dz, dy, dx) == (0, -1, 0):
+                aff[:, channel, :, 0] = labels[:, :, 0] > 0
+            elif (dz, dy, dx) == (0, 0, -1):
+                aff[:, channel, :, :, 0] = labels[:, :, :, 0] > 0
     return aff.float()
+
+
+def labels_to_affinities(labels: torch.Tensor, replicate_boundary: bool = False) -> torch.Tensor:
+    """Convert instance labels [B,D,H,W] to nearest-neighbor z/y/x affinities."""
+
+    return labels_to_offset_affinities(
+        labels,
+        DEFAULT_AFFINITY_OFFSETS,
+        replicate_boundary=replicate_boundary,
+    )
 
 
 def labels_to_local_shape_descriptors(labels: torch.Tensor) -> torch.Tensor:

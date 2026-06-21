@@ -147,6 +147,7 @@ def predict_affinities(
     window_size: tuple[int, int, int],
     stride: tuple[int, int, int],
     device: torch.device,
+    channels: int = 3,
     return_logits: bool = False,
 ) -> np.ndarray:
     model.eval()
@@ -161,7 +162,8 @@ def predict_affinities(
     if any(v for pair in pad for v in pair):
         volume = np.pad(volume, pad, mode="reflect" if min(volume.shape) > 1 else "edge")
     pd, ph, pw = volume.shape
-    logits_sum = np.zeros((3, pd, ph, pw), dtype=np.float32)
+    out_channels = int(channels)
+    logits_sum = np.zeros((out_channels, pd, ph, pw), dtype=np.float32)
     counts = np.zeros((1, pd, ph, pw), dtype=np.float32)
     z_starts = starts_for_dim(pd, wd, stride[0])
     y_starts = starts_for_dim(ph, wh, stride[1])
@@ -174,7 +176,7 @@ def predict_affinities(
                 tensor = torch.from_numpy(patch[None, None]).float().to(device)
                 with torch.amp.autocast("cuda", enabled=amp_enabled):
                     logits = model(tensor)
-                logits_np = logits[:, :3].float().cpu().numpy()[0]
+                logits_np = logits[:, :out_channels].float().cpu().numpy()[0]
                 logits_sum[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += logits_np
                 counts[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += 1.0
     logits_avg = logits_sum / np.maximum(counts, 1.0)
@@ -431,6 +433,13 @@ def main() -> None:
     parser.add_argument("--xy-thresholds", nargs="+", type=float, default=None)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--affinity-channels",
+        nargs="+",
+        type=int,
+        default=[0, 1, 2],
+        help="Model output channels to use as z/y/x affinities for post-processing.",
+    )
     parser.add_argument("--save-seg", action="store_true")
     parser.add_argument("--ignore-label", type=int, default=0)
     parser.add_argument("--cremi-boundary-ignore-distance-xy", type=int, default=0)
@@ -489,6 +498,10 @@ def main() -> None:
     anisotropic_graph_backends = {"graph_cc", "cupy_graph_cc"}
     agglomeration_backends = {"seeded_rag", "mahotas_agglomeration", "scipy_agglomeration"}
     seed_backends = watershed_backends | agglomeration_backends
+    affinity_channel_indices = [int(v) for v in args.affinity_channels]
+    if len(affinity_channel_indices) != 3:
+        raise ValueError(f"--affinity-channels must contain exactly 3 indices, got {affinity_channel_indices}")
+    required_channels = max(affinity_channel_indices) + 1
     for path in files:
         raw, label, crop = read_cremi_crop(path, crop_size, raw_keys, label_keys)
         metric_label, boundary_ignore_fraction = apply_cremi_boundary_ignore(
@@ -518,7 +531,8 @@ def main() -> None:
             flush=True,
         )
         t0 = time.perf_counter()
-        logits_np = predict_affinities(model, raw, model_window, stride, device, return_logits=True)
+        logits_all = predict_affinities(model, raw, model_window, stride, device, channels=required_channels, return_logits=True)
+        logits_np = logits_all[np.asarray(affinity_channel_indices, dtype=np.int64)]
         aff = sigmoid_np(logits_np).astype(np.float32, copy=False)
         infer_sec = time.perf_counter() - t0
         target_aff = labels_to_affinities(
@@ -556,6 +570,10 @@ def main() -> None:
             backend_cache: dict[str, tuple[np.ndarray, float]] = {}
             for backend in args.backends:
                 threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
+                if backend in anisotropic_graph_backends and args.z_thresholds and args.xy_thresholds:
+                    threshold_values = [args.thresholds[0]]
+                if backend in agglomeration_backends and args.z_thresholds and args.xy_thresholds:
+                    threshold_values = [args.thresholds[0]]
                 seed_distances = args.seed_distance if backend in seed_backends else [args.seed_distance[0]]
                 boundary_thresholds = args.boundary_threshold if backend in seed_backends else [args.boundary_threshold[0]]
                 min_boundaries = args.min_boundary if backend in agglomeration_backends else [args.min_boundary[0]]
@@ -703,6 +721,7 @@ def main() -> None:
         "calibration_biases": [list(bias) for bias in calibration_biases],
         "calibration_temperatures": calibration_temperatures,
         "waterz_scoring": list(waterz_scorings),
+        "affinity_channels": affinity_channel_indices,
         "failures": failures,
         "per_threshold": [],
         "per_backend_threshold": [],

@@ -604,6 +604,39 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_mempretrained_r14",
         "pretrained_output": "pretrain_em_membrane_dbmim_r14",
     },
+    "arch-explore-longaff-mempretrained-r15q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_mempretrained_r15q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_mempretrained_r15q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_longaff_mempretrained_r15q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_longaff_mempretrained_r15q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_longaff_mempretrained_r15q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_longaff_mempretrained_r15q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_longaff_mempretrained_r15q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_mempretrained_r15q",
+        "pretrained_output": "pretrain_em_membrane_dbmim_r14",
+    },
+    "arch-explore-longaff-lsd-mempretrained-r15q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_lsd_mempretrained_r15q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_lsd_mempretrained_r15q",
+        "pretrained_output": "pretrain_em_membrane_dbmim_r14",
+    },
+    "arch-explore-longaff-bcar2-mempretrained-r15q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_bcar2_mempretrained_r15q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_bcar2_mempretrained_r15q",
+        "pretrained_output": "pretrain_em_membrane_dbmim_r14",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -663,6 +696,7 @@ CREMI_STAGES = {
     "eval-cremi-rag-ablation",
     "eval-cremi-aniso-graph",
     "eval-cremi-scale64",
+    "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -681,6 +715,7 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-rag-ablation",
     "eval-cremi-aniso-graph",
     "eval-cremi-scale64",
+    "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -870,6 +905,7 @@ def make_bundle(
     *,
     post_train_official_eval: bool = False,
     post_train_official_abc_eval: bool = False,
+    post_train_arch_bench: bool = False,
 ) -> Path:
     out = PROJECT / "outputs" / "siflow_bundles" / f"dbmim_bundle_{stamp()}"
     out.mkdir(parents=True, exist_ok=True)
@@ -901,7 +937,12 @@ def make_bundle(
     waterz_source = PROJECT.parent / "_refs" / "waterz_v08"
     if not waterz_source.exists():
         waterz_source = PROJECT.parent / "_refs" / "waterz"
-    needs_superhuman_eval = stage in SUPERHUMAN_DEP_STAGES or post_train_official_eval or post_train_official_abc_eval
+    needs_superhuman_eval = (
+        stage in SUPERHUMAN_DEP_STAGES
+        or post_train_official_eval
+        or post_train_official_abc_eval
+        or post_train_arch_bench
+    )
     if needs_superhuman_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
     boost_headers = PROJECT / "third_party" / "boost_1_84_0" / "boost"
@@ -1054,6 +1095,23 @@ def make_bundle(
                 f"{TOS_OUTPUT_PREFIX}/finetune_cremi_real_dbmim/finetuned_latest.pt "
                 "outputs/finetune_cremi_real_dbmim/finetuned_latest.pt -conf=\"$TOS_CONF\"",
                 "  export DBMIM_EVAL_CKPT=outputs/finetune_cremi_real_dbmim/finetuned_latest.pt",
+                "fi",
+            ]
+        )
+    if stage == "eval-cremi-arch-explore-postprocess-r15q":
+        model_prefix = "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_allpretrained_r14q"
+        prelude.extend(
+            [
+                f"mkdir -p outputs/{model_prefix}",
+                "if bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_latest.pt",
+                "else",
+                "  bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_best.pt",
                 "fi",
             ]
         )
@@ -1323,6 +1381,13 @@ def make_bundle(
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi-arch-explore-postprocess-r15q":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_arch_explore_postprocess_r15q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "eval-cremi-zdice":
         postlude.extend(
             [
@@ -1384,6 +1449,51 @@ def make_bundle(
                 f"--max-samples {max_samples} "
                 "--device cuda "
                 "--fail-on-backend-error",
+                f"bin/tosutil cp outputs/{out_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if post_train_arch_bench:
+        ablation_name = _ablation_name_from_stage(stage)
+        if stage not in ABLATION_TRAIN_STAGES or ablation_name is None:
+            raise ValueError("--post-train-arch-bench is only supported for ablation finetune stages")
+        spec = ABLATION_RUNS[ablation_name]
+        out_dir = f"{spec['official_abc_eval']}_arch_bench"
+        model_dir = f"outputs/{spec['output']}"
+        postlude.extend(
+            [
+                "python - <<'PY'",
+                "import importlib.util",
+                "missing=[m for m in ['skimage','mahotas'] if importlib.util.find_spec(m) is None]",
+                "print({'post_train_arch_bench_missing_modules': missing})",
+                "if missing:",
+                "    raise SystemExit('missing post-train architecture benchmark modules: '+','.join(missing))",
+                "PY",
+                "python scripts/evaluate_cremi_segmentation.py "
+                f"--config configs/{spec['config']} "
+                f"--checkpoint {model_dir}/finetuned_latest.pt "
+                "--data-dir data/CREMI "
+                f"--output-dir outputs/{out_dir} "
+                "--crop-size 0 0 0 "
+                "--stride 16 80 80 "
+                "--thresholds 0.10 0.20 0.30 0.50 "
+                "--backends graph_cc cupy_graph_cc seeded_rag waterz "
+                "--min-size 0 "
+                "--seed-method maxima_distance "
+                "--seed-distance 10 "
+                "--boundary-threshold 0.5 "
+                "--min-boundary 4 "
+                "--score-mode mean q25 "
+                "--z-thresholds 0.05 0.10 0.20 0.30 0.50 "
+                "--xy-thresholds 0.05 0.10 0.20 0.30 0.50 "
+                "--waterz-scoring hist_quantile "
+                "--metric-backend skimage "
+                "--replicate-affinity-boundary "
+                "--cremi-boundary-ignore-distance-xy 1 "
+                "--cremi-boundary-ignore-distance-z 0 "
+                "--calibration-biases 0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0 "
+                "--calibration-temperatures 1.0 "
+                "--max-samples 0 "
+                "--device cuda",
                 f"bin/tosutil cp outputs/{out_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
@@ -1462,6 +1572,7 @@ def main() -> None:
             "eval-cremi-rag-ablation",
             "eval-cremi-aniso-graph",
             "eval-cremi-scale64",
+            "eval-cremi-arch-explore-postprocess-r15q",
             "eval-cremi-zdice",
             "eval-cremi-zdice-focal",
             "smoke",
@@ -1480,6 +1591,11 @@ def main() -> None:
         "--post-train-official-abc-eval",
         action="store_true",
         help="For ablation finetune stages, run official A/B/C full-volume waterz eval in the same pod after training.",
+    )
+    parser.add_argument(
+        "--post-train-arch-bench",
+        action="store_true",
+        help="For ablation finetune stages, run a quick A/B/C post-processing architecture benchmark after training.",
     )
     args = parser.parse_args()
 
@@ -1526,7 +1642,10 @@ def main() -> None:
             raise ValueError(f"unknown ablation stage: {args.stage}")
         spec = ABLATION_RUNS[ablation_name]
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/{spec['config']}"
-        prefix = f"dbmim-finetune-cremi-unetr-aniso-{ablation_name}"
+        if ablation_name.startswith("arch-explore-"):
+            prefix = f"dbmim-{ablation_name}"
+        else:
+            prefix = f"dbmim-finetune-cremi-unetr-aniso-{ablation_name}"
     elif args.stage == "finetune-cremi-zdice":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real_zdice.yaml"
         prefix = "dbmim-finetune-cremi-zdice"
@@ -2018,6 +2137,36 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-eval-cremi-scale64"
+    elif args.stage == "eval-cremi-arch-explore-postprocess-r15q":
+        entrypoint = (
+            "python scripts/evaluate_cremi_segmentation.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_allpretrained_r14q.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_arch_explore_postprocess_r15q "
+            "--crop-size 0 0 0 "
+            "--stride 16 80 80 "
+            "--thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--backends graph_cc cupy_graph_cc seeded_rag waterz "
+            "--min-size 0 "
+            "--seed-method maxima_distance "
+            "--seed-distance 10 "
+            "--boundary-threshold 0.5 "
+            "--min-boundary 4 "
+            "--score-mode mean q25 "
+            "--z-thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--xy-thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--waterz-scoring hist_quantile "
+            "--metric-backend skimage "
+            "--replicate-affinity-boundary "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--calibration-biases 0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0 "
+            "--calibration-temperatures 1.0 "
+            "--max-samples 0 "
+            "--device cuda"
+        )
+        prefix = "dbmim-arch-explore-postprocess-r15q"
     elif args.stage == "eval-cremi-zdice":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "
@@ -2066,6 +2215,7 @@ def main() -> None:
         args.stage,
         post_train_official_eval=bool(args.post_train_official_eval),
         post_train_official_abc_eval=bool(args.post_train_official_abc_eval),
+        post_train_arch_bench=bool(args.post_train_arch_bench),
     )
     cmd = [
         str(PY),
