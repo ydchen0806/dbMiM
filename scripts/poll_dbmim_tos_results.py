@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 import time
@@ -11,6 +12,7 @@ from pathlib import Path
 ROOT = Path("/volume/med-train/users/dchen02/code/dbMiM")
 TOS = Path("/volume/med-train/users/dchen02/bin/tosutil")
 CONF = Path("/volume/med-train/users/dchen02/secrets/tosutil_dchen02.conf")
+SIFLOW_PY = Path("/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python")
 BASE = "tos://agi-data/users/dchen02/dbmim/outputs"
 
 RUNS = {
@@ -34,6 +36,23 @@ RUNS = {
     ],
 }
 
+SIFLOW_UUIDS = {
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_allpretrained_r9": "99ab7d58-8886-430e-86fa-92c9d4a0fcae",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_encoderlr_allpretrained_r9": "33638465-d404-4229-b150-cdbf401e8159",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_freezeenc_allpretrained_r9": "7ad21665-e4a3-4766-903e-d89088429919",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_ignore_allpretrained_r9": "37fe0514-76a0-4d74-adb5-c51e4b1d7dcc",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_ignore_scratch_r9": "885406a6-6572-46a0-8bbe-da607132b26a",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_allpretrained_r10": "6c7675a1-7661-4363-9c65-90e1f2e7129e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_scratch_r10": "af35134e-a7ea-4f27-bfeb-4777dd48ae5b",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_ignore_allpretrained_r10": "20239e88-03f5-4269-a348-da79dd2adbb4",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_pure_allpretrained_r11": "f09b5b01-ef57-4490-8c5b-4184757cbd01",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_shwmse_pure_scratch_r11": "a3eedbdf-70d0-496f-9148-1bc6f082a53d",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_shwmse_mix_allpretrained_r11": "71106220-8efa-48af-b512-c3141e76831d",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_shwmse_mix_scratch_r11": "bc6d23ed-c43d-4d9b-a61b-8ce955a1e64e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_encoderlr_allpretrained_r11": "f2e6d5da-66c6-4ae2-a66f-23cb139f3d0b",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_scratch_r11": "bd71349d-b066-4cd2-90c9-5e3145ebdb1f",
+}
+
 
 def tos_cp(src: str, dst: Path, timeout: int) -> bool:
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +60,7 @@ def tos_cp(src: str, dst: Path, timeout: int) -> bool:
     tmp.unlink(missing_ok=True)
     try:
         proc = subprocess.run(
-            [str(TOS), "cp", src, str(tmp), f"-conf={CONF}"],
+            [str(TOS), "cp", src, str(tmp), "-f", "-bt=fns", f"-conf={CONF}"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
@@ -59,7 +78,7 @@ def tos_cp(src: str, dst: Path, timeout: int) -> bool:
 def tos_exists(uri: str, timeout: int) -> bool:
     try:
         proc = subprocess.run(
-            [str(TOS), "ls", uri, f"-conf={CONF}"],
+            [str(TOS), "ls", uri, "-bt=fns", f"-conf={CONF}"],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -84,6 +103,87 @@ def read_last_jsonl(path: Path) -> dict | None:
         except json.JSONDecodeError:
             pass
     return rows[-1] if rows else None
+
+
+def parse_metric_rows_from_siflow(uuid: str, region: str, cluster: str) -> list[dict]:
+    code = r"""
+import json
+import sys
+from siflow import SiFlow
+
+uuid, region, cluster = sys.argv[1:4]
+client = SiFlow(region=region, cluster=cluster)
+try:
+    logs = client.tasks.query_logs(uuid, limit=2000, sort_order="asc")
+except Exception:
+    logs = client.tasks.query_logs(uuid, limit=2000, sort_order="desc")
+print(json.dumps([str(item.content) for item in logs.logs]))
+"""
+    proc = subprocess.run(
+        [str(SIFLOW_PY), "-c", code, uuid, region, cluster],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip()[-500:] or proc.stdout.strip()[-500:])
+    rows = []
+    for content in json.loads(proc.stdout):
+        for line in str(content).splitlines():
+            start = line.find("{'sample'")
+            if start < 0 or "voi_sum" not in line or "adapted_rand_error" not in line:
+                continue
+            try:
+                row = ast.literal_eval(line[start:].strip())
+            except Exception:
+                continue
+            if isinstance(row, dict) and "voi_sum" in row:
+                rows.append(row)
+    dedup = []
+    seen = set()
+    for row in rows:
+        key = (
+            row.get("sample"),
+            row.get("affinity_variant"),
+            row.get("threshold"),
+            row.get("seed_distance"),
+            row.get("boundary_threshold"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(row)
+    return dedup
+
+
+def write_siflow_fallback_summary(
+    eval_name: str,
+    path: Path,
+    *,
+    region: str,
+    cluster: str,
+) -> bool:
+    uuid = SIFLOW_UUIDS.get(eval_name)
+    if not uuid:
+        return False
+    try:
+        rows = parse_metric_rows_from_siflow(uuid, region, cluster)
+    except Exception as exc:
+        print("SIFLOW_FALLBACK_ERROR", eval_name, type(exc).__name__, str(exc)[:160])
+        return False
+    if not rows:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "source": "siflow_stdout_fallback",
+        "uuid": uuid,
+        "records": rows,
+        "best_by_voi_sum": min(rows, key=lambda row: row.get("voi_sum", float("inf"))),
+        "best_by_adapted_rand": min(rows, key=lambda row: row.get("adapted_rand_error", float("inf"))),
+    }
+    path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return True
 
 
 def summarize(group: str) -> int:
@@ -138,6 +238,13 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=20)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--logs", action="store_true", help="Also download finetune logs; summaries are always checked.")
+    parser.add_argument(
+        "--siflow-fallback",
+        action="store_true",
+        help="If TOS summary download is missing or slow, rebuild summaries from SiFlow stdout logs.",
+    )
+    parser.add_argument("--siflow-region", default="cn-shanghai")
+    parser.add_argument("--siflow-cluster", default="changliu")
     args = parser.parse_args()
 
     while True:
@@ -150,6 +257,14 @@ def main() -> None:
             summary_uri = f"{BASE}/{eval_name}/cremi_segmentation_summary.json"
             if tos_exists(summary_uri, args.timeout):
                 tos_cp(summary_uri, root / eval_name / "cremi_segmentation_summary.json", args.timeout)
+            summary_path = root / eval_name / "cremi_segmentation_summary.json"
+            if args.siflow_fallback and not summary_path.exists():
+                write_siflow_fallback_summary(
+                    eval_name,
+                    summary_path,
+                    region=args.siflow_region,
+                    cluster=args.siflow_cluster,
+                )
         done = summarize(args.group)
         if args.once or done >= len(RUNS[args.group]):
             return

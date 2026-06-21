@@ -195,3 +195,55 @@ submitted on 2026-06-21 04:33-04:34 UTC:
 | SH weighted-MSE all-pretrained R10 | `6c7675a1-7661-4363-9c65-90e1f2e7129e` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_allpretrained_r10.yaml` |
 | SH weighted-MSE scratch R10 | `af35134e-a7ea-4f27-bfeb-4777dd48ae5b` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_scratch_r10.yaml` |
 | SH weighted-MSE ignore-edge all-pretrained R10 | `20239e88-03f5-4269-a348-da79dd2adbb4` | `configs/finetune_cremi_real_unetr_aniso_superhuman_shwmse_ignore_allpretrained_r10.yaml` |
+
+## R9/R10/R11 Official Sample-A Results
+
+All R9/R10/R11 tasks reached `Succeeded` on 2026-06-21. The TOS evaluation
+prefixes contain `cremi_segmentation_summary.json`; local `tosutil cp` was
+intermittently slow on small summary files, so the current local summaries were
+rebuilt from SiFlow stdout using
+`scripts/poll_dbmim_tos_results.py --siflow-fallback`. Each row below is the
+same official sample-A full-volume waterz sweep with CREMI-style boundary
+ignore (`xy=1,z=0`), 20 threshold/calibration records per arm.
+
+| arm | best VOI | ARAND at best VOI | best ARAND | VOI at best ARAND | best-VOI threshold | best-VOI affinity |
+|---|---:|---:|---:|---:|---:|---|
+| BCE encoder-LR all-pretrained R9 | 0.193983 | 0.028613 | 0.025574 | 0.197127 | 0.30 | pred |
+| BCE freeze-encoder all-pretrained R9 | 0.195522 | 0.027490 | 0.027490 | 0.195522 | 0.30 | bias_z-0.50_y-1.00_x-1.00_t1.00 |
+| SH weighted-MSE all-pretrained R10 | 0.195541 | 0.023944 | 0.023613 | 0.200957 | 0.50 | pred |
+| BCE all-pretrained R9 | 0.202007 | 0.029502 | 0.029502 | 0.202007 | 0.30 | bias_z-0.25_y-0.50_x-0.50_t1.00 |
+| SH weighted-MSE scratch R10 | 0.207905 | 0.022431 | 0.022431 | 0.207905 | 0.50 | bias_z-0.50_y-1.00_x-1.00_t1.00 |
+| BCE+SH weighted-MSE mix all-pretrained R11 | 0.209290 | 0.023296 | 0.023296 | 0.209290 | 0.50 | pred |
+| BCE aug encoder-LR all-pretrained R11 | 0.228117 | 0.033665 | 0.033665 | 0.228117 | 0.30 | bias_z-0.50_y-1.00_x-1.00_t1.00 |
+| BCE+SH weighted-MSE mix scratch R11 | 0.244612 | 0.030794 | 0.030794 | 0.244612 | 0.50 | pred |
+| SH weighted-MSE pure all-pretrained R11 | 0.270146 | 0.038524 | 0.038524 | 0.270146 | 0.50 | pred |
+| BCE aug scratch R11 | 0.272625 | 0.044153 | 0.038506 | 0.291743 | 0.30 | bias_z-0.50_y-1.00_x-1.00_t1.00 |
+| SH weighted-MSE pure scratch R11 | 0.283014 | 0.051687 | 0.041546 | 0.291368 | 0.50 | pred |
+| BCE ignore-edge all-pretrained R9 | 7.904776 | 0.989658 | 0.989658 | 7.904776 | 0.05 | pred |
+| BCE ignore-edge scratch R9 | 7.904776 | 0.989658 | 0.989658 | 7.904776 | 0.05 | pred |
+| SH weighted-MSE ignore-edge all-pretrained R10 | 7.904776 | 0.989658 | 0.989658 | 7.904776 | 0.05 | pred |
+
+Interpretation:
+
+- By VOI, the best new arm is BCE encoder-LR all-pretrained R9
+  (`VOI=0.193983`). It improves over the earlier R8 encoder-LR all-pretrain
+  fast run (`VOI=0.204602`) but still does not beat the R5 BCE scratch
+  official sample-A baseline (`VOI=0.169502`).
+- By ARAND, SuperHuman weighted-MSE is useful: SH weighted-MSE scratch R10
+  reaches `ARAND=0.022431`, and SH weighted-MSE all-pretrained R10 reaches
+  `ARAND=0.023613`, both better than the R5 BCE scratch ARAND baseline
+  (`0.024062`). The tradeoff is a worse VOI (`0.207905` / `0.200957`).
+- The BCE+SH weighted-MSE mixed objective is the best all-pretrained ARAND arm
+  after pure SH weighted-MSE (`ARAND=0.023296`) but its VOI is worse
+  (`0.209290`).
+- The `ignore_label_edges` variants are invalid for this recipe: all three
+  collapsed to one predicted segment (`n_pred=1`, `VOI=7.904776`). Do not
+  expand this setting without changing target construction/calibration.
+
+Current practical recommendation: keep BCE as the main VOI-optimized
+finetuning loss, use encoder-LR/freeze transfer for pretrained comparisons, and
+only use SH weighted-MSE as an ARAND-oriented auxiliary or late-stage
+fine-tuning objective. The next high-value experiment is a longer BCE
+encoder-LR all-pretrained run plus a checkpoint sweep, paired with a short
+SH weighted-MSE late-finetune branch from the same BCE checkpoint to see
+whether ARAND can improve without giving up the VOI advantage.
