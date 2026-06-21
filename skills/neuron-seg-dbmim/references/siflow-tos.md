@@ -143,6 +143,28 @@ submission commands, use the project submitter or `submit_tos_bootstrap_job.py`
 with `--direct-network`; for ad hoc SDK scripts, unset proxy variables before
 creating the client.
 
+The same proxy issue affects `tosutil`. If TOS `cp/ls/stat` hangs for an object
+that should exist, retry with all proxy variables removed:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy \
+  timeout 120 /volume/med-train/users/dchen02/bin/tosutil cp \
+  tos://agi-data/users/dchen02/dbmim/outputs/<prefix>/<file> \
+  /tmp/<file> -f -bt=fns \
+  -conf=/volume/med-train/users/dchen02/secrets/tosutil_dchen02.conf
+```
+
+On 2026-06-22 this was required to verify
+`pretrain_public_em_membrane_dbmim_r16/pretrained_latest.pt`; with proxies set,
+both watcher and manual `cp` timed out, while no-proxy `cp` downloaded the
+40.20 MB checkpoint successfully.
+
+The yinda public submit helper truncates `name_prefix` to 35 characters before
+calling SiFlow. If the first 35 characters end with `-`, SiFlow rejects the
+task. `scripts/submit_siflow_dbmim.py` now shortens such arch-explore prefixes
+locally; keep this behavior when adding long stage names.
+
 ## GPU Accounting
 
 When asked how many GPUs are occupied, deduplicate by SiFlow UUID. Querying

@@ -36,6 +36,8 @@ pretraining-effect comparison meaningless.
 ## Current Key Configs
 
 - Long pretrain: `configs/pretrain_cremi_real_long.yaml`
+- Public EM membrane pretrain:
+  `configs/pretrain_public_em_membrane_r16.yaml`
 - Aniso pretrained finetune:
   `configs/finetune_cremi_real_unetr_aniso_pretrained.yaml`
 - Aniso scratch finetune:
@@ -48,6 +50,16 @@ pretraining-effect comparison meaningless.
   - `finetune_cremi_real_unetr_aniso_fs64.yaml`
   - `finetune_cremi_real_unetr_aniso_boundary_loss.yaml`
   - `finetune_cremi_real_unetr_aniso_context48.yaml`
+- R16 public-EM matched controls:
+  - `finetune_cremi_real_unetr_aniso_em_shwmse_longaff_publicem_r16q.yaml`
+  - `finetune_cremi_real_unetr_aniso_em_shwmse_longaff_scratch_r16q.yaml`
+  - `finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q.yaml`
+  - `finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q.yaml`
+
+For R16 evidence, compare matched publicEM-pretrained and scratch arms before
+claiming a pretraining gain. The old all-CREMI or membrane-R14 pretrained arms
+are useful baselines, but they do not isolate the new public-EM pretraining
+effect.
 
 ## Batch Size Semantics
 

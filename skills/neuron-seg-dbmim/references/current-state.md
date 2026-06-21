@@ -21,6 +21,48 @@ The active scientific question is whether dbMiM pretraining improves CREMI
 neuron segmentation with a paper-aligned anisotropic UNETR backbone and
 VOI/ARAND evaluation.
 
+## 2026-06-22 R16 Public-EM Pretraining Wave
+
+The public-EM pretraining path is now reproducible and TOS-backed:
+
+- Pretraining config: `configs/pretrain_public_em_membrane_r16.yaml`
+- Data prep: `scripts/prepare_public_em_pretrain_data.py`
+- Data prefix:
+  `tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/public_em/`
+- Output prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_membrane_dbmim_r16/`
+- Pretrain UUID:
+  `5a10fe9e-2d34-4568-8009-5902c73cc592`
+- Status: succeeded on 2026-06-21/22, `med-model`, 8 GPUs.
+- Dataset seen in pod: public ISBI2012 + SNEMI3D HDF5 volumes, plus CREMI.
+- Final available checkpoint:
+  `pretrain_public_em_membrane_dbmim_r16/pretrained_latest.pt`, 40.20 MB.
+- Final observed pretrain loss near the end was about `0.0486`; the exact
+  rank-0 logs are in SiFlow stdout and `pretrain_log.jsonl` on TOS.
+
+Important operational pitfall: local `tosutil cp` and watcher probes can hang
+when proxy variables point at `192.168.32.28:18000`. Always unset
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and lowercase variants before TOS or
+SiFlow SDK probes. After unsetting proxies, `pretrained_latest.pt` downloaded
+successfully in under a second.
+
+Matched R16 downstream controls are running on `med-model`, 2 GPUs each, all
+with post-train A/B/C architecture benchmark (`graph_cc`, `cupy_graph_cc`,
+`seeded_rag`, `waterz`):
+
+| arm | UUID | expected load |
+|---|---|---|
+| long-affinity + publicEM dbMiM | `11df9593-273a-4456-8da4-6f844b1d8292` | loaded 77 pretrained keys |
+| long-affinity scratch | `198e39cc-c2aa-4ab1-82f3-edcc15e6917f` | no pretrained keys |
+| MAWS+BCAR rank + publicEM dbMiM | `b8e5f3dc-9047-48a2-9b90-dd439f0265c7` | loaded 77 pretrained keys |
+| MAWS+BCAR rank scratch | `997ba3ec-77f6-41f0-851b-83f770427cfd` | no pretrained keys |
+
+The submitter records live under
+`/volume/med-train/users/dchen02/siflow_submissions/yinda_public_skill/`.
+Use `scripts/poll_dbmim_tos_results.py --group r16q --once --logs
+--siflow-fallback` after post-processing finishes to summarize VOI/ARAND even
+if TOS summary downloads are slow.
+
 As of 2026-06-20, the earlier R3/R4 supervised finetuning results are
 invalidated as scientific evidence because the dataset applied random geometric
 flips to the image but not to the instance label. This broke image/label

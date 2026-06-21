@@ -138,6 +138,10 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_mempretrained_r15q_arch_bench": "73a40fd4-287b-4bfc-98b6-c57aa6a38c1a",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_lsd_mempretrained_r15q_arch_bench": "08fad37f-4257-4f4f-9e9b-ad86c4b7f93f",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_bcar2_mempretrained_r15q_arch_bench": "cb58f241-4fac-490f-b958-1ca6376bfb14",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q_arch_bench": "11df9593-273a-4456-8da4-6f844b1d8292",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_scratch_r16q_arch_bench": "198e39cc-c2aa-4ab1-82f3-edcc15e6917f",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q_arch_bench": "b8e5f3dc-9047-48a2-9b90-dd439f0265c7",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q_arch_bench": "997ba3ec-77f6-41f0-851b-83f770427cfd",
 }
 
 
