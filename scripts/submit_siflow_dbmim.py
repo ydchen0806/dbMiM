@@ -942,6 +942,7 @@ def make_bundle(
         or post_train_official_eval
         or post_train_official_abc_eval
         or post_train_arch_bench
+        or stage == "eval-cremi-arch-explore-postprocess-r15q"
     )
     if needs_superhuman_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
@@ -1463,7 +1464,7 @@ def make_bundle(
             [
                 "python - <<'PY'",
                 "import importlib.util",
-                "missing=[m for m in ['skimage','mahotas'] if importlib.util.find_spec(m) is None]",
+                "missing=[m for m in ['skimage','waterz','mahotas'] if importlib.util.find_spec(m) is None]",
                 "print({'post_train_arch_bench_missing_modules': missing})",
                 "if missing:",
                 "    raise SystemExit('missing post-train architecture benchmark modules: '+','.join(missing))",
@@ -1493,7 +1494,8 @@ def make_bundle(
                 "--calibration-biases 0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0 "
                 "--calibration-temperatures 1.0 "
                 "--max-samples 0 "
-                "--device cuda",
+                "--device cuda "
+                "--fail-on-backend-error",
                 f"bin/tosutil cp outputs/{out_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
@@ -2164,7 +2166,8 @@ def main() -> None:
             "--calibration-biases 0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0 "
             "--calibration-temperatures 1.0 "
             "--max-samples 0 "
-            "--device cuda"
+            "--device cuda "
+            "--fail-on-backend-error"
         )
         prefix = "dbmim-arch-explore-postprocess-r15q"
     elif args.stage == "eval-cremi-zdice":

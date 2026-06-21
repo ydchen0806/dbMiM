@@ -270,3 +270,47 @@ Current quick-screen conclusion:
   blindly raise membrane weighting.
 - `MAWS-only` improves VOI slightly but worsens ARAND; keep the paired BCAR
   comparison.
+
+## R15 Post-processing Benchmark Lessons
+
+The architecture-exploration post-processing benchmark intentionally measures
+both quality and runtime. Preserve these columns whenever summarizing:
+
+- `inference_sec`
+- `postprocess_sec`
+- `metrics_sec`
+- backend/error status
+- threshold, z/xy threshold, calibration bias, and scoring mode
+
+Standalone stage `eval-cremi-arch-explore-postprocess-r15q` and post-train
+`--post-train-arch-bench` runs use full CREMI volumes with:
+
+```text
+crop-size 0 0 0
+stride 16 80 80
+backends graph_cc cupy_graph_cc seeded_rag waterz
+thresholds 0.10 0.20 0.30 0.50
+z/xy thresholds 0.05 0.10 0.20 0.30 0.50
+metric-backend skimage
+CREMI boundary ignore xy=1,z=0
+calibration biases: 0/0/0, -0.25/-0.5/-0.5, -0.5/-1.0/-1.0
+```
+
+Operational rules:
+
+- If logs contain `ModuleNotFoundError("No module named 'skimage'")`, the
+  benchmark is invalid, not a method failure. The submitter must package
+  `wheelhouse_superhuman_eval` and verify `skimage`, `waterz`, and `mahotas`
+  before evaluation.
+- Use `--fail-on-backend-error` for architecture/post-process sweeps. Silent
+  backend failure rows are useful for debugging but should not become a result
+  table.
+- `graph_cc` is the stable quality baseline. `cupy_graph_cc` can still be
+  slower if graph construction and host/device transfer dominate. Treat GPU
+  post-processing as a measured runtime hypothesis, not an assumption.
+- `seeded_rag` and `waterz` are CPU-heavy controls. They are scientifically
+  useful because they match common neuron-segmentation pipelines, but they are
+  the current wall-time bottleneck on full volumes.
+- Sample-A rows with VOI around `0.2-0.4` under boundary-ignore are plausible;
+  A/B/C aggregate rows should normally be around `1.x`. Always state `n=1` or
+  `n=3` before comparing to prior CREMI-scale numbers.

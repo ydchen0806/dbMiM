@@ -394,3 +394,46 @@ Active full R14 jobs submitted on 2026-06-21:
 Current dbMiM GPU occupancy is 12 H200/GPU slots for these three full R14
 finetune jobs. Account-wide occupancy may be higher because unrelated STEM
 packs can run under the same owner.
+
+## 2026-06-22 R15 Active State
+
+Latest pushed repo commit before the R15 skill update:
+`1450886 Add postprocess architecture exploration experiments`.
+
+The active R15 wave is testing whether EM-specific UNETR structure and
+post-processing changes can improve the R14/R14q MA-dbMiM result while staying
+inside the dbMiM pretraining framework.
+
+Active 2-GPU `med-model` architecture jobs:
+
+| run | UUID | setting | last observed note |
+|---|---|---|---|
+| `longaff-mempretrained-r15q` | `73a40fd4-287b-4bfc-98b6-c57aa6a38c1a` | 6-channel nearest+long-range affinity | training around step 5640/12000 on 2026-06-22 |
+| `longaff-lsd-mempretrained-r15q` | `08fad37f-4257-4f4f-9e9b-ad86c4b7f93f` | 6 affinity + 4 LSD descriptor channels | training around step 5120/12000 on 2026-06-22 |
+| `longaff-bcar2-mempretrained-r15q` | `cb58f241-4fac-490f-b958-1ca6376bfb14` | stronger BCAR rank term | training around step 5160/12000 on 2026-06-22 |
+
+Common setting:
+
+- data: CREMI A/B/C, crop `32x160x160`, synchronized augmentation, widened
+  labels;
+- model: `unetr_aniso_em`, patch `[4,16,16]`, embed dim `192`, depth `6`,
+  heads `6`, feature size `32`, EM refinement depth `2`;
+- pretrained: R14 MA-dbMiM membrane-pretrained checkpoint from
+  `pretrain_em_membrane_dbmim_r14`;
+- optimization: per-GPU batch `2`, 2 GPUs, `max_steps: 12000`, AMP,
+  `lr: 8e-5`, `encoder_lr: 1e-5`;
+- evaluation: post-train full-volume A/B/C architecture benchmark with CREMI
+  boundary-ignore `xy=1,z=0`, `graph_cc`, `cupy_graph_cc`, `seeded_rag`, and
+  `waterz`.
+
+Standalone post-processing benchmark:
+
+| run | UUID | status note |
+|---|---|---|
+| `eval-cremi-arch-explore-postprocess-r15q` first attempt | `bcac3b16-9896-4114-84bd-a70f854e2a8e` | stopped after missing `skimage` invalidated graph/RAG rows |
+| `eval-cremi-arch-explore-postprocess-r15q` fixed rerun | `8ffeb749-2da8-4236-a46d-b60e9443598e` | running on 2 GPUs; startup probe showed `waterz=True`, `cupy=True` |
+
+R15 reporting rule: separate training convergence from post-processing runtime.
+The 12k-step training jobs can finish quickly on H200s, but full-volume
+A/B/C architecture sweeps are dominated by CPU-heavy watershed/RAG/waterz and
+can continue for hours after training reaches the final step.

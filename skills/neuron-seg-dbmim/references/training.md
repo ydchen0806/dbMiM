@@ -259,6 +259,53 @@ Quick R14q A/B/C lessons from 2026-06-21:
 | `maws-bcar-rank-allpretrained-r14q` | 1.0407 | 0.1929 | best quick A/B/C result |
 | `maws15-bcar-rank-allpretrained-r14q` | 1.0441 | 0.1973 | stronger MAWS was not better |
 
+## R15 Architecture Exploration Lessons
+
+R15 is the current fast architecture/method wave for EM-specific UNETR changes.
+It keeps the R14 MA-dbMiM membrane-pretrained encoder and tests whether the
+segmentation head/loss can better match anisotropic neuron boundaries.
+
+Common R15 finetune settings:
+
+- data: CREMI A/B/C HDF5, image keys `volumes/raw`, `raw`, `main`, labels
+  `volumes/labels/neuron_ids`, `labels`, `label`, `gt`;
+- crop: `32x160x160`, `length_multiplier: 2048`, synchronized image/label
+  geometric augmentation, 2D border widening radius `1`;
+- model: `architecture: unetr_aniso_em`, patch `[4,16,16]`, embed dim `192`,
+  depth `6`, heads `6`, feature size `32`, dropout `0.05`,
+  `em_refine_depth: 2`;
+- optimization: per-GPU batch `2`, 2-GPU jobs use global batch `4`,
+  `max_steps: 12000`, AMP on, `lr: 8e-5`, `encoder_lr: 1e-5`,
+  `weight_decay: 0.01`;
+- pretrained checkpoint:
+  `outputs/pretrain_em_membrane_dbmim_r14/pretrained_latest.pt`, pulled from
+  TOS inside SiFlow pods;
+- main loss: `superhuman_weighted_mse`, `replicate_affinity_boundary: true`,
+  membrane-weighted loss with normalized membrane proxy around mean `1.0`;
+- affinity offsets: nearest z/y/x plus long-range channels `[-2,0,0]`,
+  `[0,-4,0]`, `[0,0,-4]`. The first three channels must remain nearest
+  z/y/x because the post-processing code decodes those as the main affinity
+  graph.
+
+Active R15 configs:
+
+| config | channels | method delta |
+|---|---:|---|
+| `finetune_cremi_real_unetr_aniso_em_shwmse_longaff_mempretrained_r15q.yaml` | 6 | nearest + long-range affinity supervision |
+| `finetune_cremi_real_unetr_aniso_em_shwmse_longaff_lsd_mempretrained_r15q.yaml` | 10 | six affinity channels plus four LSD-style foreground/offset channels, `lsd_weight: 0.15` |
+| `finetune_cremi_real_unetr_aniso_em_shwmse_longaff_bcar2_mempretrained_r15q.yaml` | 6 | stronger BCAR rank term, `bcar_weight: 0.1`, margin `1.2`, `max_pairs: 8192` |
+
+For LSD-style R15 heads, slice only the first six channels for affinity loss
+and only the first three nearest-neighbor channels for standard graph/waterz
+post-processing unless deliberately evaluating a long-range graph decoder. Do
+not compare a 10-channel LSD checkpoint with a 3-channel eval path unless this
+channel contract is verified in logs.
+
+R15 should be judged by the post-train A/B/C architecture benchmark, not by the
+12k-step training loss alone. The short jobs are for fast signal; promising
+arms need a longer matched scratch/pretrained pair before becoming paper
+evidence for dbMiM pretraining.
+
 Do not use `bcar-calib-allpretrained-r14q` as an A/B/C conclusion unless its
 summary has samples A/B/C and `n=3`; the first fallback parse only captured
 sample A and gave an unrealistically low `VOI=0.3376`.

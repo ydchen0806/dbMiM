@@ -86,6 +86,9 @@ whether `pos_embed` interpolation was used.
   post-processing before drawing conclusions.
 - `waterz`/`elf`/`mahotas` are fragile in offline pods and usually CPU-bound.
   Keep them as negative controls unless the dependency and runtime are proven.
+- Any eval command using `--metric-backend skimage` must install/verify
+  `scikit-image` before the sweep. Without it, graph/RAG/waterz rows can be
+  emitted only as caught backend failures and are not usable evidence.
 - Current production-style waterz evaluation is CPU-bound even when inference
   runs on GPU. Full-volume A/B/C jobs can spend most wall time in watershed/RAG
   construction and agglomeration; do not judge experiment speed from training

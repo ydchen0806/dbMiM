@@ -182,6 +182,49 @@ PY
 As of 2026-06-21 15:20 UTC, dchen02 had 36 unique running GPUs: 12 for dbMiM
 full R14 finetuning and 24 for unrelated STEM data-transfer packs.
 
+## R15 Architecture-Explore Operations
+
+The R15 architecture-explore wave uses 2-GPU `med-model` jobs so several
+method variants can run concurrently on H200s without waiting for a full
+8-GPU slot.
+
+Active/important 2026-06-22 UUIDs:
+
+| purpose | UUID | GPUs | pool |
+|---|---|---:|---|
+| long-range affinity + MA-dbMiM | `73a40fd4-287b-4bfc-98b6-c57aa6a38c1a` | 2 | med-model |
+| long-range affinity + LSD auxiliary | `08fad37f-4257-4f4f-9e9b-ad86c4b7f93f` | 2 | med-model |
+| long-range affinity + stronger BCAR | `cb58f241-4fac-490f-b958-1ca6376bfb14` | 2 | med-model |
+| standalone postprocess sweep, first invalid attempt | `bcac3b16-9896-4114-84bd-a70f854e2a8e` | 2 | med-model |
+| standalone postprocess sweep, dependency-fixed rerun | `8ffeb749-2da8-4236-a46d-b60e9443598e` | 2 | med-model |
+
+Submit command pattern:
+
+```bash
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+source /volume/med-train/users/dchen02/secrets/siflow_env_dchen02.sh
+/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python \
+  scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-aniso-arch-explore-longaff-mempretrained-r15q \
+  --resource-pool med-model \
+  --gpus-per-pod 2 \
+  --post-train-arch-bench \
+  --submit
+```
+
+Change only the stage name for the LSD and BCAR2 variants.
+
+The first standalone postprocess sweep exposed an important packaging pitfall:
+`eval-cremi-arch-explore-postprocess-r15q` used `--metric-backend skimage` but
+was not included in the SuperHuman dependency-install path, so graph/RAG metric
+rows failed with missing `skimage`. The submitter now treats that stage as a
+SuperHuman-style eval dependency user and runs architecture sweeps with
+`--fail-on-backend-error`. The invalid first attempt was stopped and the fixed
+rerun is `8ffeb749-2da8-4236-a46d-b60e9443598e`; its startup logs showed
+`waterz=True` and `cupy=True` in the package probe. If a future log reports
+missing `skimage`, `waterz`, or `mahotas`, fix the bundle/install path and
+resubmit; do not summarize the failed rows as performance.
+
 ## EM Pretraining Data Pitfall
 
 `data/EM_pretrain_data/*_manifest.json` and
