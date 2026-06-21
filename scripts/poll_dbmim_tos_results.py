@@ -106,10 +106,10 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_scratch_r12": "bfc6ca92-13fa-4d1e-b234-fab4b8e3c14c",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_allpretrained_r13": "4be6ecf8-5053-4693-bac8-7b5f15aa2df9",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_scratch_r13": "e0a7eb92-bb68-49e6-bcc3-5e992347b98f",
-    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_allpretrained_r13": "2e2b2f5c-8e2a-4e28-96dc-bdaadc3299a9",
-    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_scratch_r13": "a37299aa-cf9f-42fb-ad9d-8a1f97609445",
-    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14q": "4f89243d-efa3-4b17-a912-badfe471d7e7",
-    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14q": "f4cdc941-e9f0-48b5-ad4b-5755c9f1a2f2",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_allpretrained_r13": "64c9f7f4-5f0f-4658-b4a6-73acb32e4e5e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_scratch_r13": "28c140b6-589d-4a62-9ffb-ddea4b0eb2c7",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14q": "fa076c76-f3bf-4eac-91ac-c8f4a1677062",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14q": "cb95420a-2482-48a6-a3bc-9cb86c51c8d3",
 }
 
 
