@@ -437,3 +437,55 @@ R15 reporting rule: separate training convergence from post-processing runtime.
 The 12k-step training jobs can finish quickly on H200s, but full-volume
 A/B/C architecture sweeps are dominated by CPU-heavy watershed/RAG/waterz and
 can continue for hours after training reaches the final step.
+
+## 2026-06-22 Public-EM R16 Pretraining
+
+The gated HF dataset `cyd0806/EM_pretrain_data` still requires an authorized
+HF token; without it only manifests are available. To avoid another
+CREMI-only pretraining fallback, a public-EM bridge dataset was prepared and
+uploaded to TOS:
+
+```text
+tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/public_em/
+```
+
+Prepared HDF5 raw volumes:
+
+| dataset | local/TOS file | shape |
+|---|---|---|
+| ISBI 2012 train ssTEM | `isbi2012_train_raw.h5` | `30x512x512` |
+| ISBI 2012 test ssTEM | `isbi2012_test_raw.h5` | `30x512x512` |
+| SNEMI3D train-input | `snemi3d_train_raw.h5` | `100x1024x1024` |
+| SNEMI3D test-input | `snemi3d_test_raw.h5` | `100x1024x1024` |
+
+Preparation script:
+
+```bash
+python scripts/prepare_public_em_pretrain_data.py --group public_em --upload-tos
+```
+
+Active R16 public-EM pretraining:
+
+| run | UUID | GPUs | note |
+|---|---:|---:|---|
+| `pretrain-public-em-membrane-r16` | `5a10fe9e-2d34-4568-8009-5902c73cc592` | 8 | Running on `med-model`, output `pretrain_public_em_membrane_dbmim_r16` |
+
+Startup logs confirmed:
+
+- `em_pretrain_data_status='available_offline_tos'`;
+- four public-EM HDF5 files were present inside the pod;
+- `dataset_size=57344`, `world_size=8`;
+- training reached at least step `7760` with loss around `0.083`.
+
+Downstream config prepared but should be submitted only after
+`pretrained_latest.pt` is confirmed readable from TOS:
+
+```text
+configs/finetune_cremi_real_unetr_aniso_em_shwmse_longaff_publicem_r16q.yaml
+```
+
+Submit stage:
+
+```text
+finetune-cremi-unetr-aniso-arch-explore-longaff-publicem-r16q
+```

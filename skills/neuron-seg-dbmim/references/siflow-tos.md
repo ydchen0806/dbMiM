@@ -247,6 +247,22 @@ to CREMI-only and prints
 checkpoint from that fallback must be described as CREMI-only MA-dbMiM, not
 all-EM pretraining.
 
+As of 2026-06-22, the public non-gated bridge dataset is available at:
+
+```text
+tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/public_em/
+```
+
+It contains converted HDF5 raw volumes from ISBI 2012 ssTEM and SNEMI3D. The
+stage `pretrain-public-em-membrane-r16` copies only this `public_em` group and
+must print `em_pretrain_data_status='available_offline_tos'` before training.
+The active 8-GPU run is UUID `5a10fe9e-2d34-4568-8009-5902c73cc592`; output
+prefix is:
+
+```text
+tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_membrane_dbmim_r16/
+```
+
 ## Polling Results
 
 `scripts/poll_dbmim_tos_results.py` has SiFlow stdout fallback support. It must

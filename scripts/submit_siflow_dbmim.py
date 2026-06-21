@@ -637,6 +637,17 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_bcar2_mempretrained_r15q",
         "pretrained_output": "pretrain_em_membrane_dbmim_r14",
     },
+    "arch-explore-longaff-publicem-r16q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_publicem_r16q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_longaff_publicem_r16q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_longaff_publicem_r16q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_longaff_publicem_r16q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_longaff_publicem_r16q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_longaff_publicem_r16q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_longaff_publicem_r16q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_publicem_r16q",
+        "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -674,6 +685,7 @@ CREMI_STAGES = {
     "pretrain-cremi-all-r6",
     "pretrain-em-all-r11",
     "pretrain-em-membrane-r14",
+    "pretrain-public-em-membrane-r16",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
     "finetune-cremi-unetr-scratch",
@@ -749,6 +761,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_em_all_dbmim_r11"
     if stage == "pretrain-em-membrane-r14":
         return "outputs/pretrain_em_membrane_dbmim_r14"
+    if stage == "pretrain-public-em-membrane-r16":
+        return "outputs/pretrain_public_em_membrane_dbmim_r16"
     if stage == "finetune-cremi":
         return "outputs/finetune_cremi_real_dbmim"
     if stage == "finetune-cremi-unetr-pretrained":
@@ -859,6 +873,16 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_mem_cfg["train"]["save_every"] = max(int(pre_mem_cfg["train"].get("save_every", 1)), 5)
         pre_mem_cfg["train"]["save_steps"] = max(int(pre_mem_cfg["train"].get("save_steps", 0)), 2000)
         _write_yaml(pretrain_em_membrane_r14, pre_mem_cfg)
+
+    pretrain_public_em_r16 = bundle / "configs" / "pretrain_public_em_membrane_r16.yaml"
+    if pretrain_public_em_r16.exists():
+        pre_public_cfg = yaml.safe_load(pretrain_public_em_r16.read_text(encoding="utf-8"))
+        pre_public_cfg["output_dir"] = "outputs/pretrain_public_em_membrane_dbmim_r16"
+        pre_public_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/public_em"]
+        pre_public_cfg["train"]["epochs"] = max(int(pre_public_cfg["train"].get("epochs", 1)), 100000)
+        pre_public_cfg["train"]["save_every"] = max(int(pre_public_cfg["train"].get("save_every", 1)), 5)
+        pre_public_cfg["train"]["save_steps"] = max(int(pre_public_cfg["train"].get("save_steps", 0)), 2000)
+        _write_yaml(pretrain_public_em_r16, pre_public_cfg)
 
     config_to_ablation = {spec["config"]: spec for spec in ABLATION_RUNS.values()}
     ablation_configs = set(config_to_ablation)
@@ -979,20 +1003,24 @@ def make_bundle(
                 "ls -lh data/CREMI",
             ]
         )
-    if stage in {"pretrain-em-all-r11", "pretrain-em-membrane-r14"}:
+    if stage in {"pretrain-em-all-r11", "pretrain-em-membrane-r14", "pretrain-public-em-membrane-r16"}:
+        em_data_dir = "data/EM_pretrain_data/public_em" if stage == "pretrain-public-em-membrane-r16" else "data/EM_pretrain_data/all"
+        em_tos_groups = ["public_em"] if stage == "pretrain-public-em-membrane-r16" else ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
+        em_stage_cfgs = (
+            ["pretrain_public_em_membrane_r16.yaml"]
+            if stage == "pretrain-public-em-membrane-r16"
+            else ["pretrain_em_all_r11.yaml", "pretrain_em_membrane_r14.yaml"]
+        )
         prelude.extend(
             [
-                "mkdir -p data/EM_pretrain_data/all",
+                f"mkdir -p {em_data_dir}",
                 "em_data_found=0",
-                f"if bin/tosutil ls {EM_PRETRAIN_TOS_PREFIX}/all -conf=\"$TOS_CONF\" >/dev/null 2>&1; then",
-                f"  bin/tosutil cp {EM_PRETRAIN_TOS_PREFIX}/all data/EM_pretrain_data -r -conf=\"$TOS_CONF\" || true",
-                "fi",
-                "for em_group in fafb fib25 kasthuri mitoem mb_moc; do",
+                f"for em_group in {' '.join(em_tos_groups)}; do",
                 f"  if bin/tosutil ls {EM_PRETRAIN_TOS_PREFIX}/$em_group -conf=\"$TOS_CONF\" >/dev/null 2>&1; then",
-                f"    bin/tosutil cp {EM_PRETRAIN_TOS_PREFIX}/$em_group data/EM_pretrain_data/all -r -conf=\"$TOS_CONF\" || true",
+                f"    bin/tosutil cp {EM_PRETRAIN_TOS_PREFIX}/$em_group {em_data_dir} -r -conf=\"$TOS_CONF\" || true",
                 "  fi",
                 "done",
-                "if find data/EM_pretrain_data/all -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) -print -quit | grep -q .; then",
+                f"if find {em_data_dir} -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) -print -quit | grep -q .; then",
                 "  em_data_found=1",
                 "fi",
                 "if [ \"$em_data_found\" -eq 0 ]; then",
@@ -1000,7 +1028,7 @@ def make_bundle(
                 "  python - <<'PY'",
                 "from pathlib import Path",
                 "import yaml",
-                "for name in ['pretrain_em_all_r11.yaml', 'pretrain_em_membrane_r14.yaml']:",
+                f"for name in {em_stage_cfgs!r}:",
                 "    path = Path('configs') / name",
                 "    if not path.exists():",
                 "        continue",
@@ -1012,7 +1040,7 @@ def make_bundle(
                 "PY",
                 "else",
                 "  echo \"{'em_pretrain_data_status':'available_offline_tos'}\"",
-                "  find data/EM_pretrain_data/all -maxdepth 4 -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) | head -20",
+                f"  find {em_data_dir} -maxdepth 6 -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) | head -20",
                 "fi",
             ]
         )
@@ -1547,6 +1575,7 @@ def main() -> None:
             "pretrain-cremi-all-r6",
             "pretrain-em-all-r11",
             "pretrain-em-membrane-r14",
+            "pretrain-public-em-membrane-r16",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
             "finetune-cremi-unetr-scratch",
@@ -1620,6 +1649,9 @@ def main() -> None:
     elif args.stage == "pretrain-em-membrane-r14":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_membrane_r14.yaml"
         prefix = "dbmim-pretrain-em-membrane-r14"
+    elif args.stage == "pretrain-public-em-membrane-r16":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_membrane_r16.yaml"
+        prefix = "dbmim-pretrain-public-em-membrane-r16"
     elif args.stage == "finetune-cremi":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"
