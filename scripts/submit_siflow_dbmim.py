@@ -431,6 +431,27 @@ ABLATION_RUNS = {
         "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_aug_scratch_r11",
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_scratch_r11",
     },
+    "em-bce-encoderlr-allpretrained-r12": {
+        "config": "finetune_cremi_real_unetr_aniso_em_bce_encoderlr_allpretrained_r12.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_bce_encoderlr_allpretrained_r12",
+        "eval": "eval_cremi_unetr_aniso_em_bce_encoderlr_allpretrained_r12",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_bce_encoderlr_allpretrained_r12",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_bce_encoderlr_allpretrained_r12",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_bce_encoderlr_allpretrained_r12",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_bce_encoderlr_allpretrained_r12",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_allpretrained_r12",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "em-bce-encoderlr-scratch-r12": {
+        "config": "finetune_cremi_real_unetr_aniso_em_bce_encoderlr_scratch_r12.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_bce_encoderlr_scratch_r12",
+        "eval": "eval_cremi_unetr_aniso_em_bce_encoderlr_scratch_r12",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_bce_encoderlr_scratch_r12",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_bce_encoderlr_scratch_r12",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_bce_encoderlr_scratch_r12",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_bce_encoderlr_scratch_r12",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_scratch_r12",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -678,7 +699,13 @@ def _patch_cremi_configs(bundle: Path) -> None:
         _write_yaml(finetune, ft_cfg)
 
 
-def make_bundle(entrypoint: str, stage: str, *, post_train_official_eval: bool = False) -> Path:
+def make_bundle(
+    entrypoint: str,
+    stage: str,
+    *,
+    post_train_official_eval: bool = False,
+    post_train_official_abc_eval: bool = False,
+) -> Path:
     out = PROJECT / "outputs" / "siflow_bundles" / f"dbmim_bundle_{stamp()}"
     out.mkdir(parents=True, exist_ok=True)
     for name in [
@@ -709,10 +736,11 @@ def make_bundle(entrypoint: str, stage: str, *, post_train_official_eval: bool =
     waterz_source = PROJECT.parent / "_refs" / "waterz_v08"
     if not waterz_source.exists():
         waterz_source = PROJECT.parent / "_refs" / "waterz"
-    if (stage in SUPERHUMAN_DEP_STAGES or post_train_official_eval) and waterz_source.exists():
+    needs_superhuman_eval = stage in SUPERHUMAN_DEP_STAGES or post_train_official_eval or post_train_official_abc_eval
+    if needs_superhuman_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
     boost_headers = PROJECT / "third_party" / "boost_1_84_0" / "boost"
-    if (stage in SUPERHUMAN_DEP_STAGES or post_train_official_eval) and boost_headers.exists():
+    if needs_superhuman_eval and boost_headers.exists():
         boost_dst = out / "third_party" / "boost" / "include" / "boost"
         boost_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(boost_headers, boost_dst)
@@ -798,7 +826,7 @@ def make_bundle(entrypoint: str, stage: str, *, post_train_official_eval: bool =
                 "mkdir -p outputs/finetune_cremi_real_dbmim outputs/finetune_cremi_real_unetr_pretrained outputs/finetune_cremi_real_unetr_scratch outputs/finetune_cremi_real_unetr_aniso_pretrained outputs/finetune_cremi_real_unetr_aniso_scratch outputs/finetune_cremi_real_unetr_aniso_longpretrained outputs/finetune_cremi_real_zdice outputs/finetune_cremi_real_zdice_focal outputs/eval_cremi_real_dbmim outputs/eval_cremi_unetr_pretrained outputs/eval_cremi_unetr_scratch outputs/eval_cremi_unetr_aniso_pretrained outputs/eval_cremi_unetr_aniso_scratch outputs/eval_cremi_unetr_aniso_longpretrained outputs/eval_cremi_unetr_aniso_large_pretrained outputs/eval_cremi_unetr_aniso_large_scratch outputs/eval_cremi_unetr_aniso_large_longpretrained outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe outputs/eval_cremi_rag_ablation outputs/eval_cremi_aniso_graph outputs/eval_cremi_scale64 outputs/eval_cremi_zdice outputs/eval_cremi_zdice_focal",
             ]
         )
-    if stage in SUPERHUMAN_DEP_STAGES or post_train_official_eval:
+    if needs_superhuman_eval:
         prelude.extend(
             [
                 "if [ -d wheelhouse_superhuman_eval ]; then",
@@ -1122,14 +1150,19 @@ def make_bundle(entrypoint: str, stage: str, *, post_train_official_eval: bool =
             ]
         )
 
-    if post_train_official_eval:
+    if post_train_official_eval or post_train_official_abc_eval:
         ablation_name = _ablation_name_from_stage(stage)
         if stage not in ABLATION_TRAIN_STAGES or ablation_name is None:
             raise ValueError("--post-train-official-eval is only supported for ablation finetune stages")
         spec = ABLATION_RUNS[ablation_name]
-        if "official_calibration_eval" not in spec:
-            raise ValueError(f"ablation {ablation_name} has no official_calibration_eval")
-        out_dir = str(spec["official_calibration_eval"])
+        if post_train_official_abc_eval:
+            out_dir = str(spec.get("official_abc_eval", f"{spec['official_calibration_eval']}_abc"))
+            max_samples = "0"
+        else:
+            if "official_calibration_eval" not in spec:
+                raise ValueError(f"ablation {ablation_name} has no official_calibration_eval")
+            out_dir = str(spec["official_calibration_eval"])
+            max_samples = "1"
         model_dir = f"outputs/{spec['output']}"
         postlude.extend(
             [
@@ -1160,7 +1193,7 @@ def make_bundle(entrypoint: str, stage: str, *, post_train_official_eval: bool =
                 "--cremi-boundary-ignore-distance-z 0 "
                 "--calibration-biases 0 0 0 -0.25 -0.5 -0.5 -0.5 -1.0 -1.0 "
                 "--calibration-temperatures 1.0 "
-                "--max-samples 1 "
+                f"--max-samples {max_samples} "
                 "--device cuda "
                 "--fail-on-backend-error",
                 f"bin/tosutil cp outputs/{out_dir} {TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
@@ -1253,6 +1286,11 @@ def main() -> None:
         "--post-train-official-eval",
         action="store_true",
         help="For ablation finetune stages, run official sample-A waterz eval in the same pod after training.",
+    )
+    parser.add_argument(
+        "--post-train-official-abc-eval",
+        action="store_true",
+        help="For ablation finetune stages, run official A/B/C full-volume waterz eval in the same pod after training.",
     )
     args = parser.parse_args()
 
@@ -1831,7 +1869,12 @@ def main() -> None:
         entrypoint = "python train_pretrain.py --config configs/pretrain_smoke.yaml && python train_finetune.py --config configs/finetune_smoke.yaml"
         prefix = "dbmim-smoke"
 
-    bundle = make_bundle(entrypoint, args.stage, post_train_official_eval=bool(args.post_train_official_eval))
+    bundle = make_bundle(
+        entrypoint,
+        args.stage,
+        post_train_official_eval=bool(args.post_train_official_eval),
+        post_train_official_abc_eval=bool(args.post_train_official_abc_eval),
+    )
     cmd = [
         str(PY),
         str(HELPER),

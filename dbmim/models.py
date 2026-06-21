@@ -393,6 +393,69 @@ class ResidualConvBlock3D(nn.Module):
         return self.act(self.conv(x) + self.residual(x))
 
 
+class ResidualAnisotropicBlock3D(nn.Module):
+    """EM-friendly residual block that emphasizes XY membranes before Z context."""
+
+    def __init__(self, channels: int, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv3d(channels, channels, kernel_size=(1, 3, 3), padding=(0, 1, 1), bias=False),
+            nn.InstanceNorm3d(channels, affine=True),
+            nn.GELU(),
+            nn.Dropout3d(dropout) if dropout > 0 else nn.Identity(),
+            nn.Conv3d(channels, channels, kernel_size=(3, 1, 1), padding=(1, 0, 0), bias=False),
+            nn.InstanceNorm3d(channels, affine=True),
+        )
+        self.act = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.act(x + self.conv(x))
+
+
+class EMAffinityHead3D(nn.Module):
+    """Separate z and xy affinity heads with learnable channel calibration."""
+
+    def __init__(
+        self,
+        channels: int,
+        out_channels: int = 3,
+        dropout: float = 0.0,
+        refine_depth: int = 2,
+        channel_bias_init: Sequence[float] | None = None,
+    ) -> None:
+        super().__init__()
+        if out_channels != 3:
+            raise ValueError("EMAffinityHead3D currently expects z/y/x affinity output channels")
+        self.shared = nn.Sequential(
+            *[ResidualAnisotropicBlock3D(channels, dropout=dropout) for _ in range(max(1, int(refine_depth)))]
+        )
+        self.z_refine = nn.Sequential(
+            nn.Conv3d(channels, channels, kernel_size=(3, 1, 1), padding=(1, 0, 0), bias=False),
+            nn.InstanceNorm3d(channels, affine=True),
+            nn.GELU(),
+        )
+        self.xy_refine = nn.Sequential(
+            nn.Conv3d(channels, channels, kernel_size=(1, 3, 3), padding=(0, 1, 1), bias=False),
+            nn.InstanceNorm3d(channels, affine=True),
+            nn.GELU(),
+        )
+        self.z_head = nn.Conv3d(channels, 1, kernel_size=1)
+        self.xy_head = nn.Conv3d(channels, 2, kernel_size=1)
+        bias = torch.zeros(3, dtype=torch.float32)
+        if channel_bias_init is not None:
+            values = [float(v) for v in channel_bias_init]
+            if len(values) != 3:
+                raise ValueError(f"channel_bias_init must have 3 values, got {values}")
+            bias = torch.tensor(values, dtype=torch.float32)
+        self.channel_bias = nn.Parameter(bias.view(1, 3, 1, 1, 1))
+        self.channel_scale = nn.Parameter(torch.ones(1, 3, 1, 1, 1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.shared(x)
+        logits = torch.cat([self.z_head(self.z_refine(feat)), self.xy_head(self.xy_refine(feat))], dim=1)
+        return logits * self.channel_scale + self.channel_bias
+
+
 class TokenProjectUpBlock3D(nn.Module):
     """Project ViT tokens to a 3D feature map and upsample like MONAI UnetrPrUpBlock."""
 
@@ -679,7 +742,7 @@ class UNETRAnisotropicAffinityNet(nn.Module):
         gd, gh, gw = self.grid_size
         return tokens.transpose(1, 2).reshape(bsz, channels, gd, gh, gw)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def decode_features(self, x: torch.Tensor) -> torch.Tensor:
         tokens, grid = self.patch_embed(x)
         if grid != self.grid_size:
             raise ValueError(f"input grid {grid} does not match configured grid {self.grid_size}")
@@ -704,7 +767,42 @@ class UNETRAnisotropicAffinityNet(nn.Module):
         if self.use_dtrans:
             dec1 = self.dtrans(dec1)
         out = self.decoder2(dec1, enc1)
+        return out
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.decode_features(x)
         return self.head(out)
+
+
+class UNETREMAffinityNet(UNETRAnisotropicAffinityNet):
+    """Anisotropic UNETR variant for EM affinity prediction.
+
+    The transformer encoder and positional embedding names are inherited from
+    ``UNETRAnisotropicAffinityNet``/``DBMIM3DMAE`` so dbMiM pretraining loads
+    unchanged. The segmentation-specific change is confined to the decoder
+    output head: extra XY-heavy residual refinement models membrane continuity,
+    while a separate z-affinity path lets the network learn more conservative
+    cross-section linking for anisotropic EM stacks.
+    """
+
+    def __init__(
+        self,
+        *args,
+        em_refine_depth: int = 2,
+        channel_bias_init: Sequence[float] | None = None,
+        **kwargs,
+    ) -> None:
+        out_channels = int(kwargs.get("out_channels", 3))
+        feature_size = int(kwargs.get("feature_size", 32))
+        dropout = float(kwargs.get("dropout", 0.0))
+        super().__init__(*args, **kwargs)
+        self.head = EMAffinityHead3D(
+            feature_size,
+            out_channels=out_channels,
+            dropout=dropout,
+            refine_depth=em_refine_depth,
+            channel_bias_init=channel_bias_init,
+        )
 
 
 def gradient_loss_3d(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

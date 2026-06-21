@@ -14,6 +14,37 @@ TOS = Path("/volume/med-train/users/dchen02/bin/tosutil")
 CONF = Path("/volume/med-train/users/dchen02/secrets/tosutil_dchen02.conf")
 SIFLOW_PY = Path("/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python")
 BASE = "tos://agi-data/users/dchen02/dbmim/outputs"
+GROUP_KEYS = [
+    "affinity_variant",
+    "calibration_bias_z",
+    "calibration_bias_y",
+    "calibration_bias_x",
+    "calibration_temperature",
+    "backend",
+    "threshold",
+    "seed_distance",
+    "boundary_threshold",
+    "min_boundary",
+    "score_mode",
+    "rag_quantile",
+    "waterz_scoring",
+    "z_threshold",
+    "xy_threshold",
+]
+METRIC_KEYS = [
+    "adapted_rand_error",
+    "rand_fscore",
+    "rand_precision",
+    "rand_recall",
+    "voi_split",
+    "voi_merge",
+    "voi_sum",
+    "affinity_dice",
+    "affinity_iou",
+    "inference_sec",
+    "postprocess_sec",
+    "metrics_sec",
+]
 
 RUNS = {
     "r9": [
@@ -33,6 +64,10 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_superhuman_bce_shwmse_mix_scratch_r11", "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_shwmse_mix_scratch_r11"),
         ("finetune_cremi_real_unetr_aniso_superhuman_bce_aug_encoderlr_allpretrained_r11", "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_encoderlr_allpretrained_r11"),
         ("finetune_cremi_real_unetr_aniso_superhuman_bce_aug_scratch_r11", "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_scratch_r11"),
+    ],
+    "r12": [
+        ("finetune_cremi_real_unetr_aniso_em_bce_encoderlr_allpretrained_r12", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_allpretrained_r12"),
+        ("finetune_cremi_real_unetr_aniso_em_bce_encoderlr_scratch_r12", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_scratch_r12"),
     ],
 }
 
@@ -143,18 +178,46 @@ print(json.dumps([str(item.content) for item in logs.logs]))
     dedup = []
     seen = set()
     for row in rows:
-        key = (
-            row.get("sample"),
-            row.get("affinity_variant"),
-            row.get("threshold"),
-            row.get("seed_distance"),
-            row.get("boundary_threshold"),
-        )
+        key = (row.get("sample"), *(row.get(name) for name in GROUP_KEYS))
         if key in seen:
             continue
         seen.add(key)
         dedup.append(row)
     return dedup
+
+
+def _mean_metric(rows: list[dict], key: str) -> float:
+    values = []
+    for row in rows:
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        values.append(float(value))
+    return sum(values) / len(values) if values else float("nan")
+
+
+def aggregate_metric_rows(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    grouped: dict[tuple[object, ...], list[dict]] = {}
+    for row in rows:
+        grouped.setdefault(tuple(row.get(name, "") for name in GROUP_KEYS), []).append(row)
+    per_backend_threshold = []
+    for key_tuple, group_rows in sorted(grouped.items(), key=lambda item: tuple(str(v) for v in item[0])):
+        mean_row = dict(zip(GROUP_KEYS, key_tuple))
+        mean_row["n"] = len(group_rows)
+        for metric in METRIC_KEYS:
+            mean_row[metric] = _mean_metric(group_rows, metric)
+        per_backend_threshold.append(mean_row)
+
+    threshold_grouped: dict[float, list[dict]] = {}
+    for row in rows:
+        threshold_grouped.setdefault(float(row.get("threshold", 0.0)), []).append(row)
+    per_threshold = []
+    for threshold, group_rows in sorted(threshold_grouped.items()):
+        mean_row = {"threshold": threshold, "n": len(group_rows)}
+        for metric in METRIC_KEYS:
+            mean_row[metric] = _mean_metric(group_rows, metric)
+        per_threshold.append(mean_row)
+    return per_backend_threshold, per_threshold
 
 
 def write_siflow_fallback_summary(
@@ -174,13 +237,23 @@ def write_siflow_fallback_summary(
         return False
     if not rows:
         return False
+    per_backend_threshold, per_threshold = aggregate_metric_rows(rows)
+    if not per_backend_threshold:
+        return False
     path.parent.mkdir(parents=True, exist_ok=True)
     summary = {
         "source": "siflow_stdout_fallback",
         "uuid": uuid,
+        "num_records": len(rows),
+        "sample_names": sorted({str(row.get("sample")) for row in rows}),
         "records": rows,
-        "best_by_voi_sum": min(rows, key=lambda row: row.get("voi_sum", float("inf"))),
-        "best_by_adapted_rand": min(rows, key=lambda row: row.get("adapted_rand_error", float("inf"))),
+        "per_backend_threshold": per_backend_threshold,
+        "per_threshold": per_threshold,
+        "best_by_voi_sum": min(per_backend_threshold, key=lambda row: row.get("voi_sum", float("inf"))),
+        "best_by_adapted_rand": min(
+            per_backend_threshold,
+            key=lambda row: row.get("adapted_rand_error", float("inf")),
+        ),
     }
     path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return True

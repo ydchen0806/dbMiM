@@ -21,6 +21,7 @@ from dbmim.models import (
     MAEBackboneAffinityNet,
     UNETRAffinityNet,
     UNETRAnisotropicAffinityNet,
+    UNETREMAffinityNet,
     load_pretrained_backbone,
 )
 from dbmim.utils import (
@@ -377,6 +378,22 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
         if "dtrans_stride_z" in model_cfg:
             aniso_kwargs["dtrans_stride_z"] = int(model_cfg["dtrans_stride_z"])
         return UNETRAnisotropicAffinityNet(
+            **common,
+            feature_size=int(model_cfg.get("feature_size", 32)),
+            skip_indices=model_cfg.get("skip_indices"),
+            **aniso_kwargs,
+        )
+    if architecture in {"unetr_aniso_em", "unetr_em", "em_unetr", "unetr_dtrans_em"}:
+        aniso_kwargs = {}
+        if "use_dtrans" in model_cfg:
+            aniso_kwargs["use_dtrans"] = bool(model_cfg["use_dtrans"])
+        if "dtrans_stride_z" in model_cfg:
+            aniso_kwargs["dtrans_stride_z"] = int(model_cfg["dtrans_stride_z"])
+        if "em_refine_depth" in model_cfg:
+            aniso_kwargs["em_refine_depth"] = int(model_cfg["em_refine_depth"])
+        if "channel_bias_init" in model_cfg:
+            aniso_kwargs["channel_bias_init"] = model_cfg["channel_bias_init"]
+        return UNETREMAffinityNet(
             **common,
             feature_size=int(model_cfg.get("feature_size", 32)),
             skip_indices=model_cfg.get("skip_indices"),
