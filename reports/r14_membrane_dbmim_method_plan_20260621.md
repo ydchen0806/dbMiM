@@ -99,3 +99,56 @@ trade away ARAND relative to the scratch and CREMI-only pretrained baselines.
 If MA-dbMiM improves only ARAND, it is still useful but should be framed as
 merge stability rather than universal segmentation quality.
 
+## 2026-06-21 Run Update
+
+The first `pretrain-em-membrane-r14` SiFlow attempt failed before training
+because `tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/all` listed
+successfully but contained no HDF5 files. Local `data/EM_pretrain_data` also
+contains only Hugging Face API manifests, not downloaded EM volumes.
+
+The submitter now tries three levels in order:
+
+1. `em_pretrain_data/all`
+2. group prefixes: `fafb`, `fib25`, `kasthuri`, `mitoem`, `mb_moc`
+3. CREMI-only fallback with an explicit stdout marker:
+   `em_pretrain_data_status=missing_offline_tos_fallback_to_cremi_only`
+
+The rerun UUID is `76cc096f-95db-4d44-afb8-b6c69c4eebb2`. If the fallback
+marker appears, the checkpoint is still a valid MA-dbMiM membrane-objective
+pretrain, but it must be described as CREMI-only until the gated/all-EM HDF5
+assets are prepared and uploaded.
+
+An additional paper-oriented fine-tuning ablation was added:
+
+**Membrane-Aware Weighted Supervision (MAWS)**. During supervised affinity
+fine-tuning, the main pointwise affinity loss is spatially reweighted by a
+normalized anisotropic raw-EM membrane proxy:
+
+```text
+w = normalize(1 + lambda_maws * edge(raw))
+L_aff = mean(w * L_affinity)
+```
+
+The quick screen stage is
+`finetune-cremi-unetr-aniso-em-shwmse-maws-bcar-rank-allpretrained-r14q`,
+UUID `38b18ca3-d4c8-4fd2-94d9-632f590d92ce`. It uses the same 12k-step setup as
+R14q rank-only and only adds MAWS, so the comparison isolates whether membrane
+supervision improves waterz VOI/ARAND beyond BCAR ranking.
+
+Two additional 12k-step MAWS controls were submitted:
+
+| run | UUID | purpose |
+|---|---|---|
+| `em-shwmse-maws-allpretrained-r14q` | `2f63a6dc-c7a6-4e8b-97de-34ab80985b40` | MAWS-only, isolates membrane-weighted supervision without BCAR. |
+| `em-shwmse-maws15-bcar-rank-allpretrained-r14q` | `30cb7b4a-ac52-402a-9085-c97749ab5f2b` | Stronger membrane weight (`lambda_maws=1.5`) plus BCAR rank, tests over-focus on membranes. |
+
+Together with existing R14q rank and calibration runs, this gives the quick
+ablation grid:
+
+| run | MAWS | BCAR rank | BCAR calib |
+|---|---:|---:|---:|
+| `em-shwmse-bcar-rank-allpretrained-r14q` | no | yes | no |
+| `em-shwmse-bcar-calib-allpretrained-r14q` | no | no | yes |
+| `em-shwmse-maws-allpretrained-r14q` | yes, 0.75 | no | no |
+| `em-shwmse-maws-bcar-rank-allpretrained-r14q` | yes, 0.75 | yes | no |
+| `em-shwmse-maws15-bcar-rank-allpretrained-r14q` | yes, 1.5 | yes | no |

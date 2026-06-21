@@ -78,6 +78,9 @@ RUNS = {
     "r14q": [
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14q"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_allpretrained_r14q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_allpretrained_r14q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_maws15_bcar_rank_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws15_bcar_rank_allpretrained_r14q"),
     ],
     "r14": [
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14"),
@@ -110,6 +113,9 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_scratch_r13": "28c140b6-589d-4a62-9ffb-ddea4b0eb2c7",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14q": "fa076c76-f3bf-4eac-91ac-c8f4a1677062",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14q": "cb95420a-2482-48a6-a3bc-9cb86c51c8d3",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_allpretrained_r14q": "38b18ca3-d4c8-4fd2-94d9-632f590d92ce",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_allpretrained_r14q": "2f63a6dc-c7a6-4e8b-97de-34ab80985b40",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws15_bcar_rank_allpretrained_r14q": "30cb7b4a-ac52-402a-9085-c97749ab5f2b",
 }
 
 

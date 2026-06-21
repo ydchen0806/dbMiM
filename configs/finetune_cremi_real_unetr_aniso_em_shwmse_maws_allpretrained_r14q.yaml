@@ -1,0 +1,102 @@
+data:
+  augment: true
+  augment_gamma: true
+  augment_gamma_range:
+  - 0.7
+  - 1.5
+  augment_noise_std: 0.035
+  augment_rotate_xy: true
+  image_keys:
+  - volumes/raw
+  - raw
+  - main
+  image_paths:
+  - /volume/med-train/users/dchen02/code/dbMiM/data/CREMI
+  label_keys:
+  - volumes/labels/neuron_ids
+  - labels
+  - label
+  - gt
+  label_paths:
+  - /volume/med-train/users/dchen02/code/dbMiM/data/CREMI
+  length_multiplier: 2048
+  synthetic: false
+  volume_size:
+  - 32
+  - 160
+  - 160
+  widen_border: true
+  widen_border_radius: 1
+device: cuda
+model:
+  architecture: unetr_aniso_em
+  channel_bias_init:
+  - -0.2
+  - 0.0
+  - 0.0
+  depth: 6
+  dropout: 0.05
+  em_refine_depth: 2
+  embed_dim: 192
+  feature_size: 32
+  in_channels: 1
+  num_heads: 6
+  out_channels: 3
+  patch_size:
+  - 4
+  - 16
+  - 16
+  volume_size:
+  - 32
+  - 160
+  - 160
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/finetune_cremi_real_unetr_aniso_em_shwmse_maws_allpretrained_r14q
+pretrained: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_cremi_real_all_dbmim_r6/pretrained_latest.pt
+seed: 152
+train:
+  amp: true
+  batch_size: 2
+  clip_grad: 1.0
+  encoder_lr: 1.0e-05
+  encoder_param_prefixes:
+  - pos_embed
+  - patch_embed
+  - encoder_blocks
+  - norm
+  epochs: 200
+  eval_every: 0
+  eval_max_batches: 0
+  log_every: 20
+  loss:
+    bcar_calibration_weight: 0.0
+    bcar_margin: 1.0
+    bcar_max_pairs: 4096
+    bcar_neg_threshold: 0.25
+    bcar_pos_threshold: 0.75
+    bcar_weight: 0.0
+    bcar_z_xy_gap: -0.2
+    bce_weight: 1.0
+    boundary_dice_weight: 0.0
+    channel_weights:
+    - 1.35
+    - 1.0
+    - 1.0
+    dice_weight: 0.0
+    loss_type: superhuman_weighted_mse
+    membrane_axis_weights:
+    - 0.25
+    - 1.0
+    - 1.0
+    membrane_clip: 4.0
+    membrane_normalize: true
+    membrane_weight: 0.75
+    superhuman_norm: spatial
+    weight_alpha: 1.0
+  lr: 8.0e-05
+  max_steps: 12000
+  num_workers: 8
+  replicate_affinity_boundary: true
+  save_every: 0
+  save_steps: 1000
+  val_fraction: 0.0
+  weight_decay: 0.01

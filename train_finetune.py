@@ -23,6 +23,7 @@ from dbmim.models import (
     UNETRAnisotropicAffinityNet,
     UNETREMAffinityNet,
     load_pretrained_backbone,
+    membrane_edge_map_3d,
 )
 from dbmim.utils import (
     atomic_jsonl_append,
@@ -93,8 +94,11 @@ def _weighted_mean(
     loss: torch.Tensor,
     channel_weight: torch.Tensor,
     valid_mask: torch.Tensor | None = None,
+    spatial_weight: torch.Tensor | None = None,
 ) -> torch.Tensor:
     weights = channel_weight.expand_as(loss)
+    if spatial_weight is not None:
+        weights = weights * spatial_weight.expand_as(loss)
     if valid_mask is not None:
         weights = weights * valid_mask
     return (loss * weights).sum() / weights.sum().clamp_min(1.0)
@@ -188,6 +192,7 @@ def affinity_loss(
     target: torch.Tensor,
     train_cfg: dict,
     valid_mask: torch.Tensor | None = None,
+    spatial_weight: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Configurable affinity objective.
 
@@ -208,16 +213,20 @@ def affinity_loss(
     loss_type = str(cfg.get("loss_type", train_cfg.get("loss_type", "bce"))).lower()
     if valid_mask is not None:
         valid_mask = valid_mask.to(device=logits.device, dtype=torch.float32)
+    if spatial_weight is not None:
+        spatial_weight = spatial_weight.to(device=logits.device, dtype=torch.float32)
 
     if loss_type in {"mse", "weighted_mse", "superhuman_mse"}:
         prob_main = torch.sigmoid(logits)
         main = (prob_main - target).pow(2)
         if loss_type in {"weighted_mse", "superhuman_mse"}:
             main = main * _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
-        bce_loss = _weighted_mean(main, channel_weight, valid_mask)
+        bce_loss = _weighted_mean(main, channel_weight, valid_mask, spatial_weight)
     elif loss_type in {"superhuman_weighted_mse", "superhuman_weighted_mse_loss", "superhuman_wmse"}:
         prob_main = torch.sigmoid(logits)
         weight = _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
+        if spatial_weight is not None:
+            weight = weight * spatial_weight
         if valid_mask is not None:
             weight = weight * valid_mask
         main = (prob_main - target).pow(2) * weight * channel_weight
@@ -236,7 +245,7 @@ def affinity_loss(
             pos_factor = (1.0 - pos_pt).pow(pos_focal_gamma)
             neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
             bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
-        bce_loss = _weighted_mean(bce, channel_weight, valid_mask)
+        bce_loss = _weighted_mean(bce, channel_weight, valid_mask, spatial_weight)
     elif loss_type in {
         "bce_mse",
         "mse_bce",
@@ -256,6 +265,8 @@ def affinity_loss(
         bce_main = _weighted_mean(bce, channel_weight, valid_mask)
         if loss_type in {"bce_superhuman_mse", "hybrid_bce_superhuman_mse", "bce_shwmse"}:
             weight = _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
+            if spatial_weight is not None:
+                weight = weight * spatial_weight
             if valid_mask is not None:
                 weight = weight * valid_mask
             mse_main = (mse * weight * channel_weight).sum() / _superhuman_spatial_norm(
@@ -264,7 +275,7 @@ def affinity_loss(
                 str(cfg.get("superhuman_norm", "spatial")).lower(),
             )
         else:
-            mse_main = _weighted_mean(mse, channel_weight, valid_mask)
+            mse_main = _weighted_mean(mse, channel_weight, valid_mask, spatial_weight)
         bce_loss = float(cfg.get("hybrid_bce_weight", 1.0)) * bce_main + float(
             cfg.get("hybrid_mse_weight", 1.0)
         ) * mse_main
@@ -330,6 +341,32 @@ def affinity_loss(
     }
 
 
+def membrane_spatial_weight(
+    image: torch.Tensor | None,
+    target: torch.Tensor,
+    train_cfg: dict,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    cfg = _loss_cfg(train_cfg)
+    membrane_weight = float(cfg.get("membrane_weight", train_cfg.get("membrane_weight", 0.0)))
+    if image is None or membrane_weight <= 0.0:
+        return None
+    edge = membrane_edge_map_3d(
+        image.detach().float(),
+        axis_weights=cfg.get("membrane_axis_weights", train_cfg.get("membrane_axis_weights", None)),
+        clip=float(cfg.get("membrane_clip", train_cfg.get("membrane_clip", 5.0))),
+    )
+    if edge.shape[1] != 1:
+        edge = edge.mean(dim=1, keepdim=True)
+    weight = 1.0 + membrane_weight * edge
+    weight = weight.expand(-1, int(target.shape[1]), -1, -1, -1).to(device=target.device, dtype=torch.float32)
+    if bool(cfg.get("membrane_normalize", train_cfg.get("membrane_normalize", True))):
+        norm_mask = torch.ones_like(weight) if valid_mask is None else valid_mask.to(device=target.device, dtype=torch.float32)
+        norm = (weight * norm_mask).sum() / norm_mask.sum().clamp_min(1.0)
+        weight = weight / norm.clamp_min(1e-6)
+    return weight
+
+
 def make_affinity_target(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor:
     return labels_to_affinities(
         labels,
@@ -342,6 +379,7 @@ def finetune_loss(
     affinity_target: torch.Tensor,
     labels: torch.Tensor,
     train_cfg: dict,
+    image: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Affinity loss plus optional LSD-style auxiliary supervision."""
 
@@ -351,7 +389,14 @@ def finetune_loss(
     valid_mask = make_affinity_valid_mask(labels, train_cfg)
     if valid_mask is not None:
         valid_mask = valid_mask[:, :affinity_channels].to(logits.device)
-    loss, parts = affinity_loss(affinity_logits, affinity_target, train_cfg, valid_mask=valid_mask)
+    spatial_weight = membrane_spatial_weight(image, affinity_target, train_cfg, valid_mask=valid_mask)
+    loss, parts = affinity_loss(
+        affinity_logits,
+        affinity_target,
+        train_cfg,
+        valid_mask=valid_mask,
+        spatial_weight=spatial_weight,
+    )
     lsd_weight = float(cfg.get("lsd_weight", train_cfg.get("lsd_weight", 0.0)))
     lsd_loss = logits.new_tensor(0.0)
     lsd_fg_loss = logits.new_tensor(0.0)
@@ -387,6 +432,9 @@ def finetune_loss(
             "lsd_loss": lsd_loss.detach(),
             "lsd_fg_loss": lsd_fg_loss.detach(),
             "lsd_offset_loss": lsd_offset_loss.detach(),
+            "membrane_weight_mean": logits.new_tensor(1.0)
+            if spatial_weight is None
+            else spatial_weight.detach().mean(),
         }
     )
     return loss, parts
@@ -546,6 +594,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
     dice_loss_m = AverageMeter()
     boundary_dice_loss_m = AverageMeter()
     lsd_loss_m = AverageMeter()
+    membrane_weight_m = AverageMeter()
     bcar_rank_m = AverageMeter()
     bcar_calibration_m = AverageMeter()
     dice_m = AverageMeter()
@@ -557,7 +606,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         labels = batch["label"].to(device, non_blocking=True)
         target = make_affinity_target(labels, train_cfg).to(device)
         logits = model(image)
-        loss, loss_parts = finetune_loss(logits, target, labels, train_cfg)
+        loss, loss_parts = finetune_loss(logits, target, labels, train_cfg, image=image)
         affinity_logits = logits[:, : target.shape[1]]
         bsz = image.shape[0]
         loss_m.update(float(loss.detach().cpu()), bsz)
@@ -565,6 +614,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         dice_loss_m.update(float(loss_parts["dice_loss"].cpu()), bsz)
         boundary_dice_loss_m.update(float(loss_parts["boundary_dice_loss"].cpu()), bsz)
         lsd_loss_m.update(float(loss_parts["lsd_loss"].cpu()), bsz)
+        membrane_weight_m.update(float(loss_parts["membrane_weight_mean"].cpu()), bsz)
         bcar_rank_m.update(float(loss_parts["bcar_rank_loss"].cpu()), bsz)
         bcar_calibration_m.update(float(loss_parts["bcar_calibration_loss"].cpu()), bsz)
         dice_m.update(dice_from_logits(affinity_logits.detach().cpu(), target.detach().cpu()), bsz)
@@ -575,6 +625,7 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         "val_dice_loss": dice_loss_m.avg,
         "val_boundary_dice_loss": boundary_dice_loss_m.avg,
         "val_lsd_loss": lsd_loss_m.avg,
+        "val_membrane_weight_mean": membrane_weight_m.avg,
         "val_bcar_rank_loss": bcar_rank_m.avg,
         "val_bcar_calibration_loss": bcar_calibration_m.avg,
         "val_dice": dice_m.avg,
@@ -702,7 +753,7 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 logits = model(image)
-                loss, loss_parts = finetune_loss(logits, target, labels, train_cfg)
+                loss, loss_parts = finetune_loss(logits, target, labels, train_cfg, image=image)
             scaler.scale(loss).backward()
             if float(train_cfg.get("clip_grad", 0.0)) > 0:
                 scaler.unscale_(optimizer)
@@ -720,6 +771,7 @@ def main() -> None:
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
                     "train_boundary_dice_loss": float(loss_parts["boundary_dice_loss"].cpu()),
                     "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
+                    "train_membrane_weight_mean": float(loss_parts["membrane_weight_mean"].cpu()),
                     "train_bcar_rank_loss": float(loss_parts["bcar_rank_loss"].cpu()),
                     "train_bcar_calibration_loss": float(loss_parts["bcar_calibration_loss"].cpu()),
                     "train_valid_fraction": float(loss_parts["valid_fraction"].cpu()),
