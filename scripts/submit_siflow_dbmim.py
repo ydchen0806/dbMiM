@@ -246,6 +246,26 @@ ABLATION_RUNS = {
         "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_weightedmse_scratch_r7",
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_weightedmse_scratch_r7",
     },
+    "superhuman-bce-freezeenc-allpretrained-r8": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_bce_freezeenc_allpretrained_r8.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_bce_freezeenc_allpretrained_r8",
+        "eval": "eval_cremi_unetr_aniso_superhuman_bce_freezeenc_allpretrained_r8",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_bce_freezeenc_allpretrained_r8",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_bce_freezeenc_allpretrained_r8",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_freezeenc_allpretrained_r8",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_freezeenc_allpretrained_r8",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "superhuman-bce-encoderlr-allpretrained-r8": {
+        "config": "finetune_cremi_real_unetr_aniso_superhuman_bce_encoderlr_allpretrained_r8.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_superhuman_bce_encoderlr_allpretrained_r8",
+        "eval": "eval_cremi_unetr_aniso_superhuman_bce_encoderlr_allpretrained_r8",
+        "large_eval": "eval_cremi_unetr_aniso_large_superhuman_bce_encoderlr_allpretrained_r8",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_bce_encoderlr_allpretrained_r8",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_bce_encoderlr_allpretrained_r8",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_encoderlr_allpretrained_r8",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
