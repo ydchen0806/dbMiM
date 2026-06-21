@@ -86,6 +86,8 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_shwmse_mix_scratch_r11": "bc6d23ed-c43d-4d9b-a61b-8ce955a1e64e",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_encoderlr_allpretrained_r11": "f2e6d5da-66c6-4ae2-a66f-23cb139f3d0b",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_bce_aug_scratch_r11": "bd71349d-b066-4cd2-90c9-5e3145ebdb1f",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_allpretrained_r12": "70c97464-7179-41b8-80f7-9ccf4f94ff25",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_bce_encoderlr_scratch_r12": "bfc6ca92-13fa-4d1e-b234-fab4b8e3c14c",
 }
 
 
