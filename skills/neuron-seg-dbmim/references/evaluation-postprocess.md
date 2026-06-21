@@ -239,3 +239,34 @@ For every result table include:
 - `min_size`;
 - ARAND, Rand F, VOI split, VOI merge, VOI sum;
 - whether the row is selected by ARAND or VOI.
+
+## R13/R14 Evaluation Lessons
+
+Use `scripts/poll_dbmim_tos_results.py --group r13|r14q|r14 --once --logs
+--siflow-fallback` to pull TOS summaries and, if needed, reconstruct summaries
+from SiFlow stdout. Check the summary `source`, `sample_names`, and the `n`
+field before calling a result A/B/C.
+
+Rules learned from R14q:
+
+- A fallback summary with `sample_names=['sample_A_20160501.hdf']` and `n=1`
+  is sample-A-only even if the eval stage name contains `abc`.
+- A credible A/B/C fallback summary should have sample A/B/C and aggregate rows
+  with `n=3`.
+- Full-volume official waterz rows normally include `threshold`,
+  `waterz_scoring`, `rag_quantile`, `boundary_threshold`, calibration biases,
+  `voi_sum`, and `adapted_rand_error`. Keep these columns in reports.
+- Do not average a sample-A-only row with A/B/C rows. Re-run or wait for the
+  full summary.
+- The user's expected CREMI scale is roughly VOI around `1.x` for A/B/C
+  official-style aggregation. Values near `0.2-0.4` may be valid for sample A
+  under boundary-ignore masking, but are suspicious if presented as A/B/C.
+
+Current quick-screen conclusion:
+
+- `MAWS+BCAR-rank` is the best R14q complete A/B/C arm so far:
+  best VOI `1.0407487`, ARAND at best VOI `0.1928854`.
+- `MAWS15+BCAR-rank` is slightly worse than `MAWS0.75+BCAR-rank`, so do not
+  blindly raise membrane weighting.
+- `MAWS-only` improves VOI slightly but worsens ARAND; keep the paired BCAR
+  comparison.

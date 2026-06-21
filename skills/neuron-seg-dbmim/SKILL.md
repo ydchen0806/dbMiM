@@ -86,11 +86,18 @@ whether `pos_embed` interpolation was used.
   post-processing before drawing conclusions.
 - `waterz`/`elf`/`mahotas` are fragile in offline pods and usually CPU-bound.
   Keep them as negative controls unless the dependency and runtime are proven.
+- Current production-style waterz evaluation is CPU-bound even when inference
+  runs on GPU. Full-volume A/B/C jobs can spend most wall time in watershed/RAG
+  construction and agglomeration; do not judge experiment speed from training
+  steps alone.
 - CuPy sparse connected components may not speed up large crops because graph
   construction and host/device transfer dominate. Measure it; do not assume GPU
   means faster.
 - Auto resource selection may choose `skyinfer-reserved-shared` instead of
   `med-model`. Check the saved submission JSON before telling the user which
   pool is used.
+- SiFlow `tasks.list(..., resource_pools=[pool])` can return the same UUID when
+  queried across multiple pools. Deduplicate by UUID before reporting total GPU
+  usage.
 - Watcher logs that only show `checkpoint_wait` mean no checkpoint has been
   observed in TOS yet. Do not infer loss or convergence from that.

@@ -228,3 +228,49 @@ python -m py_compile dbmim/models.py train_finetune.py train_pretrain.py \
 For model changes, instantiate the exact crop and run a forward pass. Also test
 the small `16x64x64` path if editing shape logic, because it catches many
 anisotropic upsampling bugs cheaply.
+
+## R13/R14 Method Lessons
+
+The current paper-oriented branch is:
+
+- `UNETREMAffinityNet` / `architecture: unetr_aniso_em` with anisotropic
+  decoder and EM refinement depth.
+- SuperHuman-style main loss:
+  `loss_type: superhuman_weighted_mse`, `replicate_affinity_boundary: true`,
+  `widen_border: true`, and `channel_weights: [1.35, 1.0, 1.0]`.
+- `BCAR` for agglomeration-aligned supervision:
+  `bcar_weight` ranks positive affinities above boundary affinities; optional
+  calibration should be evaluated carefully because sample-A-only fallback can
+  look misleadingly good.
+- `MAWS` for membrane-aware weighted supervision:
+  spatially reweight the pointwise affinity loss with a normalized raw-EM
+  anisotropic membrane proxy. Keep `membrane_normalize: true`; logs should show
+  `train_membrane_weight_mean` around `1.0`.
+- `MA-dbMiM` for membrane-aware pretraining:
+  masked reconstruction is weighted by a membrane/edge proxy and uses
+  anisotropic structure gradients.
+
+Quick R14q A/B/C lessons from 2026-06-21:
+
+| run | best VOI | ARAND at best VOI | lesson |
+|---|---:|---:|---|
+| `bcar-rank-allpretrained-r14q` | 1.0818 | 0.1965 | BCAR rank-only baseline |
+| `maws-allpretrained-r14q` | 1.0745 | 0.2011 | MAWS-only slightly improves VOI |
+| `maws-bcar-rank-allpretrained-r14q` | 1.0407 | 0.1929 | best quick A/B/C result |
+| `maws15-bcar-rank-allpretrained-r14q` | 1.0441 | 0.1973 | stronger MAWS was not better |
+
+Do not use `bcar-calib-allpretrained-r14q` as an A/B/C conclusion unless its
+summary has samples A/B/C and `n=3`; the first fallback parse only captured
+sample A and gave an unrealistically low `VOI=0.3376`.
+
+Full R14 follow-up submitted after MA-dbMiM pretraining completed:
+
+| run | UUID | purpose |
+|---|---|---|
+| `em-shwmse-mempretrained-r14` | `f4c00499-19a5-4fb2-99a8-99adf54bad4d` | MA-dbMiM pretraining only |
+| `em-shwmse-bcar-mempretrained-r14` | `d23472e9-567f-4bd3-9e04-24f450dbab85` | MA-dbMiM + original BCAR |
+| `em-shwmse-maws-bcar-rank-mempretrained-r14` | `9494b4fa-f6e6-410c-90ba-052bb8e70d01` | current strongest combination |
+
+If full R14 does not improve over scratch/CREMI-only pretraining, frame MAWS
+and BCAR as supervised alignment gains and avoid claiming a dbMiM pretraining
+benefit until all-EM pretraining data is actually available.

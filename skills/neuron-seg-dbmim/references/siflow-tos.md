@@ -142,3 +142,81 @@ SiFlow SDK task stop/status calls can hang in network/proxy setup. For
 submission commands, use the project submitter or `submit_tos_bootstrap_job.py`
 with `--direct-network`; for ad hoc SDK scripts, unset proxy variables before
 creating the client.
+
+## GPU Accounting
+
+When asked how many GPUs are occupied, deduplicate by SiFlow UUID. Querying
+`tasks.list` separately for `med-model`, `cpt-train`, and shared pools can
+return the same running task multiple times.
+
+Use this pattern:
+
+```bash
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+source /volume/med-train/users/dchen02/secrets/siflow_env_dchen02.sh
+/volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python - <<'PY'
+from siflow import SiFlow
+client = SiFlow(region="cn-shanghai", cluster="changliu", timeout=120)
+seen = {}
+for status in ["Running", "Queueing", "Pending"]:
+    tasks = client.tasks.list(count=200, status=status, owners="dchen02", timeout=120)
+    for task in tasks:
+        d = task if isinstance(task, dict) else getattr(task, "__dict__", {})
+        uuid = str(d.get("uuid") or getattr(task, "uuid", ""))
+        if not uuid or uuid in seen:
+            continue
+        name = str(d.get("name") or getattr(task, "name", ""))
+        instances = d.get("instances") or getattr(task, "instances", []) or []
+        gpus = 0
+        if instances:
+            first = instances[0] if isinstance(instances[0], dict) else getattr(instances[0], "__dict__", {})
+            gpus = first.get("count_per_pod") or first.get("count") or 0
+        seen[uuid] = (status, name, int(gpus or 0))
+print("total_gpus", sum(row[2] for row in seen.values()))
+print("dbmim_gpus", sum(row[2] for row in seen.values() if "dbmim" in row[1].lower()))
+for uuid, row in seen.items():
+    print(uuid, row)
+PY
+```
+
+As of 2026-06-21 15:20 UTC, dchen02 had 36 unique running GPUs: 12 for dbMiM
+full R14 finetuning and 24 for unrelated STEM data-transfer packs.
+
+## EM Pretraining Data Pitfall
+
+`data/EM_pretrain_data/*_manifest.json` and
+`reports/em_pretrain_data_manifests/*.json` are manifests only. They do not
+prove that all-EM HDF5 volumes are present.
+
+Before claiming all-EM pretraining, verify the TOS prefix contains actual
+`.h5/.hdf/.hdf5` files:
+
+```bash
+/volume/med-train/users/dchen02/bin/tosutil ls \
+  tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/all \
+  -conf=/volume/med-train/users/dchen02/secrets/tosutil_dchen02.conf
+```
+
+The 2026-06-21 MA-dbMiM pretrain initially failed because the `all` prefix
+listed successfully but contained no HDF5 files. The submitter now falls back
+to CREMI-only and prints
+`em_pretrain_data_status=missing_offline_tos_fallback_to_cremi_only`. Any
+checkpoint from that fallback must be described as CREMI-only MA-dbMiM, not
+all-EM pretraining.
+
+## Polling Results
+
+`scripts/poll_dbmim_tos_results.py` has SiFlow stdout fallback support. It must
+load the SiFlow env in the subprocess and clear proxy variables; otherwise the
+fallback may fail even when direct interactive `query_logs` works.
+
+When a summary is reconstructed from stdout, inspect:
+
+- `source`
+- `num_records`
+- `sample_names`
+- `best_by_voi_sum.n`
+- `best_by_adapted_rand.n`
+
+Use TOS-native `cremi_segmentation_summary.json` when available, but stdout
+fallback is useful while a long waterz eval is still streaming rows.

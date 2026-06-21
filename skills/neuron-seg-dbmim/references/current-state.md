@@ -355,3 +355,42 @@ When asked for current status:
    submitted", and "metrics available".
 5. If SiFlow SDK log/status calls timeout, say so and fall back to watcher/TOS
    evidence. Do not invent loss values.
+
+## 2026-06-21 R14 Active State
+
+Latest pushed repo commit: `6c1bd4b Submit full membrane-pretrained R14
+experiments`.
+
+R14 MA-dbMiM pretraining completed to 120k steps. Checkpoint prefix:
+
+```text
+tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_membrane_dbmim_r14/
+```
+
+It includes `pretrained_latest.pt`, `checkpoint_step_00120000.pt`, and
+2k-step intermediate checkpoints. This run used CREMI-only fallback because the
+all-EM TOS data prefix had no HDF5 volumes.
+
+Quick R14q complete A/B/C results:
+
+| run | best VOI | ARAND at best VOI | UUID |
+|---|---:|---:|---|
+| `bcar-rank-allpretrained-r14q` | 1.0818 | 0.1965 | `fa076c76-f3bf-4eac-91ac-c8f4a1677062` |
+| `maws-allpretrained-r14q` | 1.0745 | 0.2011 | `2f63a6dc-c7a6-4e8b-97de-34ab80985b40` |
+| `maws-bcar-rank-allpretrained-r14q` | 1.0407 | 0.1929 | `38b18ca3-d4c8-4fd2-94d9-632f590d92ce` |
+| `maws15-bcar-rank-allpretrained-r14q` | 1.0441 | 0.1973 | `30cb7b4a-ac52-402a-9085-c97749ab5f2b` |
+
+Do not treat `bcar-calib-allpretrained-r14q` as an A/B/C conclusion unless a
+fresh summary has `n=3`; the first fallback row only had sample A.
+
+Active full R14 jobs submitted on 2026-06-21:
+
+| run | UUID | GPUs | note |
+|---|---|---:|---|
+| `em-shwmse-mempretrained-r14` | `f4c00499-19a5-4fb2-99a8-99adf54bad4d` | 4 | Running |
+| `em-shwmse-bcar-mempretrained-r14` | `d23472e9-567f-4bd3-9e04-24f450dbab85` | 4 | Running |
+| `em-shwmse-maws-bcar-rank-mempretrained-r14` | `9494b4fa-f6e6-410c-90ba-052bb8e70d01` | 4 | Running, strongest current method |
+
+Current dbMiM GPU occupancy is 12 H200/GPU slots for these three full R14
+finetune jobs. Account-wide occupancy may be higher because unrelated STEM
+packs can run under the same owner.
