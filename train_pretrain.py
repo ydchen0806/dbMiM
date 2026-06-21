@@ -111,6 +111,10 @@ def main() -> None:
         decoder_dim=int(model_cfg.get("decoder_dim", model_cfg.get("embed_dim", 192))),
         mask_ratio=float(model_cfg.get("mask_ratio", 0.75)),
         structure_weight=float(model_cfg.get("structure_weight", 0.1)),
+        structure_axis_weights=model_cfg.get("structure_axis_weights"),
+        membrane_weight=float(model_cfg.get("membrane_weight", 0.0)),
+        membrane_axis_weights=model_cfg.get("membrane_axis_weights"),
+        membrane_clip=float(model_cfg.get("membrane_clip", 5.0)),
     ).to(device)
     decision_cfg = cfg.get("decision", {})
     use_policy = bool(decision_cfg.get("enabled", True))
@@ -166,6 +170,7 @@ def main() -> None:
     max_steps = int(train_cfg.get("max_steps", 0))
     log_every = int(train_cfg.get("log_every", 20))
     save_every = int(train_cfg.get("save_every", 1))
+    save_steps = int(train_cfg.get("save_steps", 0))
     target_ratio = float(decision_cfg.get("target_mask_ratio", model_cfg.get("mask_ratio", 0.75)))
     freeze_policy_after = int(decision_cfg.get("freeze_after_steps", 0))
 
@@ -227,6 +232,7 @@ def main() -> None:
                     "loss": float(out.loss.detach().cpu()),
                     "pixel_loss": float(out.pixel_loss.detach().cpu()),
                     "structure_loss": float(out.structure_loss.detach().cpu()),
+                    "membrane_weight_mean": float(out.membrane_weight_mean.detach().cpu()),
                     "policy_loss": float(policy_loss.detach().cpu()),
                     "mask_ratio": float(out.mask.float().mean().detach().cpu()),
                     "lr": optimizer.param_groups[0]["lr"],
@@ -234,6 +240,23 @@ def main() -> None:
                 }
                 print(payload, flush=True)
                 atomic_jsonl_append(log_path, payload)
+            if save_steps and global_step % save_steps == 0:
+                if distributed:
+                    dist.barrier()
+                if is_main(rank):
+                    payload = {
+                        "model": unwrap(model).state_dict(),
+                        "decision_module": unwrap(decision_module).state_dict() if decision_module is not None else None,
+                        "optimizer": optimizer.state_dict(),
+                        "policy_optimizer": policy_optimizer.state_dict() if policy_optimizer is not None else None,
+                        "epoch": epoch,
+                        "global_step": global_step,
+                        "config": cfg,
+                    }
+                    save_checkpoint(output_dir / f"checkpoint_step_{global_step:08d}.pt", payload)
+                    save_checkpoint(output_dir / "pretrained_latest.pt", payload)
+                if distributed:
+                    dist.barrier()
             if max_steps and global_step >= max_steps:
                 break
 

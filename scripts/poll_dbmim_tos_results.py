@@ -75,6 +75,16 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_allpretrained_r13", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_allpretrained_r13"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_scratch_r13", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_scratch_r13"),
     ],
+    "r14q": [
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14q"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14q"),
+    ],
+    "r14": [
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_mempretrained_r14"),
+        ("finetune_cremi_real_unetr_aniso_em_shwmse_bcar_mempretrained_r14", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14"),
+    ],
 }
 
 SIFLOW_UUIDS = {

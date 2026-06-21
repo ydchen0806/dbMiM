@@ -179,10 +179,46 @@ class MAEOutput:
     loss: torch.Tensor
     pixel_loss: torch.Tensor
     structure_loss: torch.Tensor
+    membrane_weight_mean: torch.Tensor
     pred: torch.Tensor
     target: torch.Tensor
     mask: torch.Tensor
     decision: dict[str, torch.Tensor] | None
+
+
+def _normalize_axis_weights(axis_weights: Sequence[float] | None) -> tuple[float, float, float]:
+    if axis_weights is None:
+        return (1.0, 1.0, 1.0)
+    values = tuple(float(v) for v in axis_weights)
+    if len(values) != 3:
+        raise ValueError(f"axis weights must have 3 values, got {values}")
+    if sum(max(v, 0.0) for v in values) <= 0.0:
+        raise ValueError(f"at least one axis weight must be positive, got {values}")
+    return values  # type: ignore[return-value]
+
+
+def membrane_edge_map_3d(
+    x: torch.Tensor,
+    axis_weights: Sequence[float] | None = None,
+    clip: float = 5.0,
+) -> torch.Tensor:
+    """Unsupervised EM membrane proxy from local anisotropic intensity gradients."""
+
+    weights = _normalize_axis_weights(axis_weights)
+    edge = x.new_zeros(x.shape)
+    for dim, weight in zip((-3, -2, -1), weights):
+        if weight <= 0.0:
+            continue
+        grad = x.diff(dim=dim).abs()
+        pad_shape = list(grad.shape)
+        pad_shape[dim] = 1
+        grad = torch.cat([x.new_zeros(pad_shape), grad], dim=dim)
+        edge = edge + float(weight) * grad
+    reduce_dims = tuple(range(1, edge.ndim))
+    edge = edge / edge.mean(dim=reduce_dims, keepdim=True).clamp_min(1e-6)
+    if clip > 0:
+        edge = edge.clamp(max=float(clip))
+    return edge
 
 
 class DBMIM3DMAE(nn.Module):
@@ -197,6 +233,10 @@ class DBMIM3DMAE(nn.Module):
         decoder_dim: int = 192,
         mask_ratio: float = 0.75,
         structure_weight: float = 0.1,
+        structure_axis_weights: Sequence[float] | None = None,
+        membrane_weight: float = 0.0,
+        membrane_axis_weights: Sequence[float] | None = None,
+        membrane_clip: float = 5.0,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -204,6 +244,10 @@ class DBMIM3DMAE(nn.Module):
         self.patch_size = _triple(patch_size)
         self.mask_ratio = mask_ratio
         self.structure_weight = structure_weight
+        self.structure_axis_weights = _normalize_axis_weights(structure_axis_weights)
+        self.membrane_weight = float(membrane_weight)
+        self.membrane_axis_weights = _normalize_axis_weights(membrane_axis_weights)
+        self.membrane_clip = float(membrane_clip)
         self.patch_embed = PatchEmbed3D(in_channels, embed_dim, self.patch_size)
         grid = tuple(v // p for v, p in zip(self.volume_size, self.patch_size))
         self.grid_size = grid
@@ -289,15 +333,25 @@ class DBMIM3DMAE(nn.Module):
         encoded = self.norm(encoded)
         pred = self.decoder(encoded)
         per_patch = (pred - target).pow(2).mean(dim=-1)
-        pixel_loss_per_sample = (per_patch * mask.float()).sum(dim=1) / mask.float().sum(dim=1).clamp_min(1.0)
+        patch_weight = mask.new_ones(per_patch.shape, dtype=per_patch.dtype)
+        if self.membrane_weight > 0.0:
+            edge = membrane_edge_map_3d(
+                x,
+                axis_weights=self.membrane_axis_weights,
+                clip=self.membrane_clip,
+            )
+            patch_weight = 1.0 + self.membrane_weight * self.patchify(edge).mean(dim=-1)
+        weighted_mask = mask.float() * patch_weight
+        pixel_loss_per_sample = (per_patch * weighted_mask).sum(dim=1) / weighted_mask.sum(dim=1).clamp_min(1.0)
         pixel_loss = pixel_loss_per_sample.mean()
         pred_volume = self.unpatchify(pred)
-        structure_loss = gradient_loss_3d(pred_volume, x)
+        structure_loss = gradient_loss_3d(pred_volume, x, axis_weights=self.structure_axis_weights)
         loss = pixel_loss + self.structure_weight * structure_loss
         return MAEOutput(
             loss=loss,
             pixel_loss=pixel_loss,
             structure_loss=structure_loss,
+            membrane_weight_mean=patch_weight.detach().mean(),
             pred=pred_volume,
             target=x,
             mask=mask,
@@ -805,13 +859,21 @@ class UNETREMAffinityNet(UNETRAnisotropicAffinityNet):
         )
 
 
-def gradient_loss_3d(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+def gradient_loss_3d(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    axis_weights: Sequence[float] | None = None,
+) -> torch.Tensor:
     loss = pred.new_tensor(0.0)
-    for dim in (-3, -2, -1):
+    weights = _normalize_axis_weights(axis_weights)
+    weight_sum = sum(max(float(v), 0.0) for v in weights)
+    for dim, weight in zip((-3, -2, -1), weights):
+        if weight <= 0.0:
+            continue
         pred_grad = pred.diff(dim=dim)
         target_grad = target.diff(dim=dim)
-        loss = loss + F.l1_loss(pred_grad, target_grad)
-    return loss / 3.0
+        loss = loss + float(weight) * F.l1_loss(pred_grad, target_grad)
+    return loss / max(weight_sum, 1e-6)
 
 
 def load_pretrained_backbone(model: nn.Module, checkpoint: dict[str, Any]) -> list[str]:

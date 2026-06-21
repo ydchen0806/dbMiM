@@ -494,6 +494,72 @@ ABLATION_RUNS = {
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_bcar_scratch_r13",
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_scratch_r13",
     },
+    "em-shwmse-bcar-rank-allpretrained-r14": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_bcar_rank_allpretrained_r14",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_bcar_rank_allpretrained_r14",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_bcar_rank_allpretrained_r14",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_bcar_rank_allpretrained_r14",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "em-shwmse-bcar-calib-allpretrained-r14": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_bcar_calib_allpretrained_r14",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_bcar_calib_allpretrained_r14",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_bcar_calib_allpretrained_r14",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_bcar_calib_allpretrained_r14",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "em-shwmse-bcar-rank-allpretrained-r14q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_bcar_rank_allpretrained_r14q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_bcar_rank_allpretrained_r14q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_bcar_rank_allpretrained_r14q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_bcar_rank_allpretrained_r14q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_bcar_rank_allpretrained_r14q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_rank_allpretrained_r14q",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "em-shwmse-bcar-calib-allpretrained-r14q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14q",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_bcar_calib_allpretrained_r14q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_bcar_calib_allpretrained_r14q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_bcar_calib_allpretrained_r14q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_bcar_calib_allpretrained_r14q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_bcar_calib_allpretrained_r14q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_calib_allpretrained_r14q",
+        "pretrained_output": "pretrain_cremi_real_all_dbmim_r6",
+    },
+    "em-shwmse-mempretrained-r14": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_mempretrained_r14.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_mempretrained_r14",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_mempretrained_r14",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_mempretrained_r14",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_mempretrained_r14",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_mempretrained_r14",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_mempretrained_r14",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_mempretrained_r14",
+        "pretrained_output": "pretrain_em_membrane_dbmim_r14",
+    },
+    "em-shwmse-bcar-mempretrained-r14": {
+        "config": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_mempretrained_r14.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_shwmse_bcar_mempretrained_r14",
+        "eval": "eval_cremi_unetr_aniso_em_shwmse_bcar_mempretrained_r14",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_shwmse_bcar_mempretrained_r14",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_shwmse_bcar_mempretrained_r14",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_shwmse_bcar_mempretrained_r14",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_shwmse_bcar_mempretrained_r14",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_bcar_mempretrained_r14",
+        "pretrained_output": "pretrain_em_membrane_dbmim_r14",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -530,6 +596,7 @@ CREMI_STAGES = {
     "pretrain-cremi-long",
     "pretrain-cremi-all-r6",
     "pretrain-em-all-r11",
+    "pretrain-em-membrane-r14",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
     "finetune-cremi-unetr-scratch",
@@ -601,6 +668,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_cremi_real_all_dbmim_r6"
     if stage == "pretrain-em-all-r11":
         return "outputs/pretrain_em_all_dbmim_r11"
+    if stage == "pretrain-em-membrane-r14":
+        return "outputs/pretrain_em_membrane_dbmim_r14"
     if stage == "finetune-cremi":
         return "outputs/finetune_cremi_real_dbmim"
     if stage == "finetune-cremi-unetr-pretrained":
@@ -701,6 +770,16 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_em_cfg["train"]["epochs"] = max(int(pre_em_cfg["train"].get("epochs", 1)), 100000)
         pre_em_cfg["train"]["save_every"] = max(int(pre_em_cfg["train"].get("save_every", 1)), 5)
         _write_yaml(pretrain_em_all_r11, pre_em_cfg)
+
+    pretrain_em_membrane_r14 = bundle / "configs" / "pretrain_em_membrane_r14.yaml"
+    if pretrain_em_membrane_r14.exists():
+        pre_mem_cfg = yaml.safe_load(pretrain_em_membrane_r14.read_text(encoding="utf-8"))
+        pre_mem_cfg["output_dir"] = "outputs/pretrain_em_membrane_dbmim_r14"
+        pre_mem_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/all"]
+        pre_mem_cfg["train"]["epochs"] = max(int(pre_mem_cfg["train"].get("epochs", 1)), 100000)
+        pre_mem_cfg["train"]["save_every"] = max(int(pre_mem_cfg["train"].get("save_every", 1)), 5)
+        pre_mem_cfg["train"]["save_steps"] = max(int(pre_mem_cfg["train"].get("save_steps", 0)), 2000)
+        _write_yaml(pretrain_em_membrane_r14, pre_mem_cfg)
 
     config_to_ablation = {spec["config"]: spec for spec in ABLATION_RUNS.values()}
     ablation_configs = set(config_to_ablation)
@@ -814,7 +893,7 @@ def make_bundle(
                 "ls -lh data/CREMI",
             ]
         )
-    if stage == "pretrain-em-all-r11":
+    if stage in {"pretrain-em-all-r11", "pretrain-em-membrane-r14"}:
         prelude.extend(
             [
                 "mkdir -p data/EM_pretrain_data",
@@ -1288,6 +1367,7 @@ def main() -> None:
             "pretrain-cremi-long",
             "pretrain-cremi-all-r6",
             "pretrain-em-all-r11",
+            "pretrain-em-membrane-r14",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
             "finetune-cremi-unetr-scratch",
@@ -1352,6 +1432,9 @@ def main() -> None:
     elif args.stage == "pretrain-em-all-r11":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_all_r11.yaml"
         prefix = "dbmim-pretrain-em-all-r11"
+    elif args.stage == "pretrain-em-membrane-r14":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_membrane_r14.yaml"
+        prefix = "dbmim-pretrain-em-membrane-r14"
     elif args.stage == "finetune-cremi":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_finetune.py --config configs/finetune_cremi_real.yaml"
         prefix = "dbmim-finetune-cremi"
