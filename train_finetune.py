@@ -88,6 +88,10 @@ def _binary_ratio_weight(target: torch.Tensor, alpha: float = 1.0, eps: float = 
     )
 
 
+def _weighted_mean(loss: torch.Tensor, channel_weight: torch.Tensor) -> torch.Tensor:
+    return (loss * channel_weight).sum() / channel_weight.expand_as(loss).sum().clamp_min(1.0)
+
+
 def affinity_loss(
     logits: torch.Tensor,
     target: torch.Tensor,
@@ -129,7 +133,19 @@ def affinity_loss(
             pos_factor = (1.0 - pos_pt).pow(pos_focal_gamma)
             neg_factor = (1.0 - neg_pt).pow(neg_focal_gamma)
             bce = bce * torch.where(target > 0.5, pos_factor, neg_factor)
-        bce_loss = (bce * channel_weight).sum() / channel_weight.expand_as(bce).sum().clamp_min(1.0)
+        bce_loss = _weighted_mean(bce, channel_weight)
+    elif loss_type in {"bce_mse", "mse_bce", "hybrid_bce_mse", "hybrid_mse_bce", "weighted_bce_mse"}:
+        bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+        bce = torch.where(target > 0.5, bce * pos_weight, bce * neg_weight)
+        prob_main = torch.sigmoid(logits)
+        mse = (prob_main - target).pow(2)
+        if loss_type == "weighted_bce_mse":
+            mse = mse * _binary_ratio_weight(target, alpha=float(cfg.get("weight_alpha", 1.0)))
+        bce_main = _weighted_mean(bce, channel_weight)
+        mse_main = _weighted_mean(mse, channel_weight)
+        bce_loss = float(cfg.get("hybrid_bce_weight", 1.0)) * bce_main + float(
+            cfg.get("hybrid_mse_weight", 1.0)
+        ) * mse_main
     else:
         raise ValueError(f"unknown train.loss.loss_type: {loss_type}")
 
@@ -291,6 +307,33 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
     raise ValueError(f"unknown model architecture: {architecture}")
 
 
+def _strip_module_prefix(name: str) -> str:
+    while name.startswith("module."):
+        name = name[len("module.") :]
+    return name
+
+
+def apply_param_freeze(model: torch.nn.Module, train_cfg: dict) -> list[str]:
+    freeze_prefixes = [str(name) for name in train_cfg.get("freeze_param_prefixes", [])]
+    if bool(train_cfg.get("freeze_encoder", False)):
+        freeze_prefixes.extend(
+            str(name)
+            for name in train_cfg.get("encoder_param_prefixes", ["patch_embed", "pos_embed", "encoder_blocks", "norm"])
+        )
+    if not freeze_prefixes:
+        return []
+    prefixes = tuple(freeze_prefixes)
+    frozen = []
+    for name, param in model.named_parameters():
+        match_name = _strip_module_prefix(name)
+        if match_name.startswith(prefixes):
+            param.requires_grad_(False)
+            frozen.append(match_name)
+    if not frozen:
+        raise ValueError(f"freeze_param_prefixes matched no parameters: {freeze_prefixes}")
+    return frozen
+
+
 def build_optimizer(model: torch.nn.Module, train_cfg: dict) -> torch.optim.Optimizer:
     lr = float(train_cfg.get("lr", 1e-4))
     weight_decay = float(train_cfg.get("weight_decay", 0.01))
@@ -307,9 +350,7 @@ def build_optimizer(model: torch.nn.Module, train_cfg: dict) -> torch.optim.Opti
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        match_name = name
-        while match_name.startswith("module."):
-            match_name = match_name[len("module.") :]
+        match_name = _strip_module_prefix(name)
         if match_name.startswith(encoder_prefixes):
             encoder_params.append(param)
         else:
@@ -424,6 +465,7 @@ def main() -> None:
         if is_main(rank):
             print(f"loaded_pretrained_keys={len(loaded)} from {pretrained}")
 
+    frozen_params = apply_param_freeze(model, train_cfg)
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
@@ -454,6 +496,8 @@ def main() -> None:
         )
         print(f"model_trainable_params={count_parameters(unwrap(model))}")
         print(f"loss_config={_loss_cfg(train_cfg)}")
+        if frozen_params:
+            print({"frozen_param_count": len(frozen_params), "frozen_param_prefix_sample": frozen_params[:12]})
         print(
             {
                 "optimizer_param_groups": [

@@ -1,0 +1,331 @@
+{
+  "group": "kasthuri",
+  "has_hf_token": false,
+  "manifest_source": "hf_api",
+  "repo": "cyd0806/EM_pretrain_data",
+  "requires_hf_token": true,
+  "selected_files": [
+    {
+      "lastCommit": {
+        "date": "2024-06-07T03:27:42.000Z",
+        "id": "c323fe526a9a15b9d3e1cf3c0f48693f553a6acb",
+        "title": "Upload Kasthuri2015_hdf_1.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 14254692015
+      },
+      "oid": "d6ecfd526372598f20903ec5fb954b66492438f1",
+      "path": "Kasthuri2015_hdf_1.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/8f1a748c2201009d5b3548f1b152b6280960bad1eddfd247b2e80da33c5753f3?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 14254692015,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T07:05:06.000Z",
+        "id": "61fe39cb548fbf61f0ef20a879f7d28f7e18e3a8",
+        "title": "Upload Kasthuri2015_hdf_2.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 13267091354
+      },
+      "oid": "0c07fc57a63248458c3b663823ce644ae25f8f10",
+      "path": "Kasthuri2015_hdf_2.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/3ab7004ffbf1bb0af324cd7b19710128e9272ade258679eacec6f44b75b9f4c0?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 13267091354,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T06:10:49.000Z",
+        "id": "26c820f74addc0294b81d465abb968bd5529995f",
+        "title": "Upload Kasthuri2015_hdf_3.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 11967441398
+      },
+      "oid": "5088d42ac1aa1161564d6c344f9106e6e6ab288c",
+      "path": "Kasthuri2015_hdf_3.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/41fa06a5c1978e78730f3aa00dfe089df78981c6c5664231a6b9ffc8a0877266?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 11967441398,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-06T15:41:42.000Z",
+        "id": "eae352f773b4fd2908d17580fbac7186402c650e",
+        "title": "Upload Kasthuri2015_hdf_4.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 13048414846
+      },
+      "oid": "00cee2435660258477b30dfdd21c016a0c1336f0",
+      "path": "Kasthuri2015_hdf_4.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/37ce9ae539357469a9f4d2f5c1b830767eed512a715f1d1417633b6bb401035e?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 13048414846,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T22:24:29.000Z",
+        "id": "7c546f560fb24fe5823d85ba42dc3bb3abd93721",
+        "title": "Upload Kasthuri2015_hdf_5.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 12279518708
+      },
+      "oid": "151b807400503c28a5065f72bd6e942854a201fa",
+      "path": "Kasthuri2015_hdf_5.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/b85adf992fc8ed04a627fd9a6647dfb727971863e64da680607aa5ff5b6052af?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 12279518708,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-06T20:18:35.000Z",
+        "id": "0b4fa4dfad3efde893dd144773fbcc6d9b8e52c4",
+        "title": "Upload Kasthuri2015_hdf_6.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 12909935603
+      },
+      "oid": "c002e7c6f193d29c2aeb625817693e4e12ce30ed",
+      "path": "Kasthuri2015_hdf_6.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/6adb49be3ed2596c19a050ec9f2d99e965aef0ab5e8c937b38ee5b71d7034b9c?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 12909935603,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T21:06:15.000Z",
+        "id": "8c0c06b9a6600a51527584cfdfe5a3172e7cbe2d",
+        "title": "Upload Kasthuri2015_hdf_7.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 12559968953
+      },
+      "oid": "f82ba2f42a8670ad7e468990c7ca664a34f3e8c2",
+      "path": "Kasthuri2015_hdf_7.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/bf1c0154c9be8aa3cee1ce3db86df1aa3a1e35b2ad00859d871e0e03725774ed?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 12559968953,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T20:08:01.000Z",
+        "id": "ffb0850425c20bf56dedf6a5fdeefb92e44f52c1",
+        "title": "Upload Kasthuri2015_hdf_8.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 13263431964
+      },
+      "oid": "96cf5560e7308b6482d3964d712511e97820e270",
+      "path": "Kasthuri2015_hdf_8.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/0e02f61cdb3f21681949da73ad7f2c85869774615bf28a0116093f9d5ba62e74?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 13263431964,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T06:32:06.000Z",
+        "id": "249a6bc8f049e55ed3629b6cdfb511472910e2fd",
+        "title": "Upload Kasthuri2015_hdf_9.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 135,
+        "size": 5810708935
+      },
+      "oid": "c794852b6791832b1da58f22c30f92383d73f484",
+      "path": "Kasthuri2015_hdf_9.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/fae63a8b5ed6d01fa44e552a78c8dada9a2d2a988b8ab22ee006395f4401c9a8?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 5810708935,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    }
+  ],
+  "status": "manifest",
+  "target_dir": "/volume/med-train/users/dchen02/code/dbMiM/data/EM_pretrain_data/kasthuri",
+  "tos_prefix": "tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/kasthuri",
+  "total_bytes": 109361203776
+}

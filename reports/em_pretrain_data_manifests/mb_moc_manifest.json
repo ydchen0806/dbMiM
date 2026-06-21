@@ -1,0 +1,256 @@
+{
+  "group": "mb_moc",
+  "has_hf_token": false,
+  "manifest_source": "hf_api",
+  "repo": "cyd0806/EM_pretrain_data",
+  "requires_hf_token": true,
+  "selected_files": [
+    {
+      "lastCommit": {
+        "date": "2024-06-06T17:48:09.000Z",
+        "id": "64ede21a6064e03c540ac6512f3156852f2f77bd",
+        "title": "Upload mb_moc_hdf_1.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 21263553957
+      },
+      "oid": "def09e588212fca1a05769eec35c738921d94cad",
+      "path": "mb_moc_hdf_1.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/ad76eea925cf388d9d2e77dff1a9fe2290f72251780bad513692f2aedef628ff?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 21263553957,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-08T04:18:33.000Z",
+        "id": "502adb24bcafb6e1cca84b59ca691dd468e16296",
+        "title": "Upload mb_moc_hdf_2.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 21225116725
+      },
+      "oid": "9ba3e8a0cf93ad32d3d1af07401da526168296ca",
+      "path": "mb_moc_hdf_2.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/6c0b088fc43c535eb4e7fe62a5b48cee827cc7d0245b99598550ad5b514b4d2b?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 21225116725,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-06T20:57:24.000Z",
+        "id": "ea56294f9c8b243525ea4877cba32962c7a4acf3",
+        "title": "Upload mb_moc_hdf_3.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 21222686110
+      },
+      "oid": "0fad214c7bbae2ca16732a71e56591313a8b0ba1",
+      "path": "mb_moc_hdf_3.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/f3a54a0b8e94fef3340f1a0d5a9479c3f041cf02fbc43b385915b7271a081aac?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 21222686110,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-06T17:02:04.000Z",
+        "id": "d033f940d641aae3772a11bc30cbef848c30de24",
+        "title": "Upload mb_moc_hdf_4.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 21206915418
+      },
+      "oid": "d233e84f687a48d35a6a8964c23650ab0b8176bd",
+      "path": "mb_moc_hdf_4.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/e7039936bdb48825ae682936890841f0072e24b7a1d62789c3736f77bddac28e?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 21206915418,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-06T19:23:39.000Z",
+        "id": "d8fab8539a13d3af494fda72bff9dfcb8b42f7ef",
+        "title": "Upload mb_moc_hdf_5.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 21221284794
+      },
+      "oid": "694ecf1b53c64088f4af4da4e859d75419b1a15b",
+      "path": "mb_moc_hdf_5.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/9877d6b1f7f9d975ba5753802d2705c7af4245f5dc0d5854c763b58c27976b29?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 21221284794,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-08T05:05:32.000Z",
+        "id": "32a97c510ff741c79f77bc424c5d3573d4249a2b",
+        "title": "Upload mb_moc_hdf_6.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 136,
+        "size": 21224882846
+      },
+      "oid": "641bdbe29d3adf6a8ed1e7f4d22d08a32c78875f",
+      "path": "mb_moc_hdf_6.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "status": "unscanned"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "unscanned",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/1254d92e575b2dd8031dd03f96aeb80fce1102d01e78c415a62d50800b6e4425?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 21224882846,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T20:09:14.000Z",
+        "id": "b9c3f6f0d6f3bbeef449de19acca85006259de2c",
+        "title": "Upload mb_moc_hdf_7.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 134,
+        "size": 959308184
+      },
+      "oid": "5d6c2d03ef40a18bd5670be6378c0b75ee0a2164",
+      "path": "mb_moc_hdf_7.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "message": "",
+          "status": "safe"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/94752e75e72e1503db4c08a33b0aa0f3ebb97d68f634f491613ecb96c819f788?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 959308184,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    }
+  ],
+  "status": "manifest",
+  "target_dir": "/volume/med-train/users/dchen02/code/dbMiM/data/EM_pretrain_data/mb_moc",
+  "tos_prefix": "tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/mb_moc",
+  "total_bytes": 128323748034
+}

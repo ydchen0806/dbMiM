@@ -1,0 +1,85 @@
+{
+  "group": "mitoem",
+  "has_hf_token": false,
+  "manifest_source": "hf_api",
+  "repo": "cyd0806/EM_pretrain_data",
+  "requires_hf_token": true,
+  "selected_files": [
+    {
+      "lastCommit": {
+        "date": "2024-06-06T14:08:50.000Z",
+        "id": "d7ea092668d454ea848fa4fd965a6a0e1ecd021e",
+        "title": "Upload MitoEM_human_hdf_1.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 135,
+        "size": 8208187067
+      },
+      "oid": "71d2746f3c7ce87755129160d6591e50c0877c4c",
+      "path": "MitoEM_human_hdf_1.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/14aed7d2d828aefeb69217cd1be33aca07c36bbfc5e5ffa57ce0c91539246aef?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 8208187067,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    },
+    {
+      "lastCommit": {
+        "date": "2024-06-07T20:18:07.000Z",
+        "id": "aa376f16a61ac4ddaa8a774f674342d81269ba60",
+        "title": "Upload MitoEM_rat_hdf_1.zip with huggingface_hub"
+      },
+      "lfs": {
+        "oid": "****************************************************************",
+        "pointerSize": 135,
+        "size": 8450193355
+      },
+      "oid": "a802ff07ea41921cebcdf8a532474f389463dca6",
+      "path": "MitoEM_rat_hdf_1.zip",
+      "securityFileStatus": {
+        "avScan": {
+          "status": "unscanned"
+        },
+        "pickleImportScan": {
+          "pickleImports": [],
+          "status": "safe",
+          "version": "0.0.15"
+        },
+        "protectAiScan": {
+          "status": "unscanned"
+        },
+        "status": "safe",
+        "virusTotalScan": {
+          "message": "File not scanned in VirusTotal",
+          "reportLink": "https://www.virustotal.com/gui/file/439c12eea3851e0b0bf3386af4d663d49892101201ca06850c8dcbe3b7ac8783?utm_source=huggingface",
+          "status": "unscanned"
+        }
+      },
+      "size": 8450193355,
+      "type": "file",
+      "xetHash": "****************************************************************"
+    }
+  ],
+  "status": "manifest",
+  "target_dir": "/volume/med-train/users/dchen02/code/dbMiM/data/EM_pretrain_data/mitoem",
+  "tos_prefix": "tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/mitoem",
+  "total_bytes": 16658380422
+}
