@@ -919,3 +919,48 @@ under that mounted path. This avoids re-copying hundreds of GB for R21 after
 R20 staged the same data. The run still has a hard gate: if any required group
 is absent after the copy/skip step, it exits 21 and does not silently fall back
 to CREMI-only.
+
+## 2026-06-23 00:12 China R21 Watcher Snapshot
+
+At `2026-06-23T00:04-00:12+08:00`, the reliable live state was:
+
+- dchen02 had 5 unique running/queued tasks using 18 GPUs total.
+- dbMiM used 10 GPUs total, all on `med-model`:
+  - R21 decoder-aware pretrain `388347d2-3a33-4cd3-ab65-78b6d6ab2949`, 4 GPUs.
+  - R20 MSE full-EM downstream `0e29a6b1-26bb-45c2-813d-db8efb266d21`, 2 GPUs.
+  - R20 BCAR full-EM downstream `eb647c53-f408-4a5f-99c9-ead3d7b1f2df`, 2 GPUs.
+  - R20 DPP full-EM downstream `e52d773c-abae-481f-9da7-c3b34cab38a8`, 2 GPUs.
+- R21 `train_log.jsonl` had reached step `42100` by the first stable watcher
+  poll. Earlier direct probes showed step `36120` loss `0.1070` and step
+  `40620` soon after; the run was progressing normally.
+- R20 DPP finetune had completed supervised step `12000`, last logged
+  `train_loss=0.024395`, `train_main_loss=0.022607`. Its official A/B/C
+  evaluation prefix was still empty, so no VOI/ARAND conclusion was available.
+- R20 MSE and R20 BCAR had both completed supervised step `12000`, but their
+  official eval prefixes were also empty. The current bottleneck remained
+  CPU-heavy waterz/post-processing inside the post-train evaluation pods.
+
+A stable R21 downstream watcher is running in screen:
+
+```bash
+screen -ls
+tail -n 40 "$(cat outputs/watchers/r21_decoderaware_finetune_screen.latest_log)"
+```
+
+The watcher uses:
+
+```bash
+scripts/watch_and_submit_r21_decoderaware_finetune.sh
+```
+
+It waits for R21 `train_log.jsonl` to reach `DBMIM_R20_MIN_STEP=80000` before
+submitting four 2-GPU downstream jobs with post-train official A/B/C waterz
+evaluation:
+
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-scratch-r21q`
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-decoderaware-r21q`
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-dpp-scratch-r21q`
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-decoderaware-dpp-r21q`
+
+This gives a matched `scratch/pretrained x DPP/no-DPP` comparison after full
+decoder-aware pretraining, rather than judging an early 40k/60k checkpoint.

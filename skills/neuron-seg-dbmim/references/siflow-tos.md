@@ -70,6 +70,18 @@ Interpretation:
 
 Watcher processes do not use GPUs. They are login-node polling processes.
 
+When a watcher probes a numeric threshold with a Python helper under
+`set -euo pipefail`, wrap the helper in `set +e` / `set -e` and capture its
+status explicitly. Otherwise a normal "checkpoint exists but max_step is still
+below threshold" return code of 1 can terminate the whole watcher before it
+writes `checkpoint_wait` or sleeps. This happened while adapting the R20
+finetune watcher for R21 decoder-aware pretraining on 2026-06-23.
+
+If a watcher needs a second independent submission wave, make marker paths
+configurable and set unique values. Reusing the R20 default marker
+`outputs/watchers/full-em-r20-finetune.submitted` will make a later R21 watcher
+exit as `already_submitted`.
+
 ## Log Access
 
 SiFlow SDK status/log APIs can timeout. If they do:
