@@ -72,6 +72,13 @@ checkpoint, and official A/B/C waterz eval fixed. This isolates whether MSE is
 the better downstream affinity objective and whether BCAR helps in the MSE
 regime.
 
+R17 completed with the best current A/B/C VOI. The winning arm is
+`UNETR-aniso-EM + MAWS + pure MSE + publicEM`, best VOI `1.002919`. The matched
+scratch control is `1.095164`, so publicEM pretraining finally shows a stable
+gain under the official A/B/C waterz protocol. R18 crosses this MSE loss with
+long-affinity six-channel output to test whether the R16 ARAND advantage can be
+combined with R17's VOI advantage.
+
 ## Batch Size Semantics
 
 `train.batch_size` is per rank/per GPU. Distributed jobs use:

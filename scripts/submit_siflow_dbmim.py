@@ -721,6 +721,48 @@ ABLATION_RUNS = {
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_bcar_rank_scratch_r17q",
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q",
     },
+    "arch-explore-longaff-mse-publicem-r18q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_longaff_publicem_r18q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_longaff_publicem_r18q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_longaff_publicem_r18q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_longaff_publicem_r18q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_longaff_publicem_r18q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_longaff_publicem_r18q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_longaff_publicem_r18q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q",
+        "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
+    "arch-explore-longaff-mse-scratch-r18q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_longaff_scratch_r18q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_longaff_scratch_r18q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_longaff_scratch_r18q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_longaff_scratch_r18q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_longaff_scratch_r18q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_longaff_scratch_r18q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_longaff_scratch_r18q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q",
+    },
+    "arch-explore-longaff-mse-bcar-rank-publicem-r18q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_publicem_r18q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_publicem_r18q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_longaff_bcar_rank_publicem_r18q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_longaff_bcar_rank_publicem_r18q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_longaff_bcar_rank_publicem_r18q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_longaff_bcar_rank_publicem_r18q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_longaff_bcar_rank_publicem_r18q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_publicem_r18q",
+        "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
+    "arch-explore-longaff-mse-bcar-rank-scratch-r18q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_scratch_r18q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_scratch_r18q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_longaff_bcar_rank_scratch_r18q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_longaff_bcar_rank_scratch_r18q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_longaff_bcar_rank_scratch_r18q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_longaff_bcar_rank_scratch_r18q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_longaff_bcar_rank_scratch_r18q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -742,6 +784,11 @@ ABLATION_SUPERHUMAN_OFFICIAL_ABC_CALIBRATION_STAGES = {
     for name, spec in ABLATION_RUNS.items()
     if "official_abc_eval" in spec
 }
+ABLATION_SUPERHUMAN_OFFICIAL_ABC_FINE_CALIBRATION_STAGES = {
+    f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-fine-{name}"
+    for name, spec in ABLATION_RUNS.items()
+    if "official_abc_eval" in spec
+}
 SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-pretrained-r3",
     "eval-cremi-unetr-aniso-superhuman-calibration-neg-boundary-scratch-r3",
@@ -755,7 +802,7 @@ SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-bce-pretrained-r5",
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-bce-scratch-r5",
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-encoderlr-pretrained-r5",
-} | ABLATION_SUPERHUMAN_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_ABC_CALIBRATION_STAGES
+} | ABLATION_SUPERHUMAN_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_ABC_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_ABC_FINE_CALIBRATION_STAGES
 SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION_STAGES
 CREMI_STAGES = {
     "pretrain-cremi",
@@ -814,6 +861,7 @@ CREMI_EVAL_STAGES = {
 def _ablation_name_from_stage(stage: str) -> str | None:
     for prefix in [
         "finetune-cremi-unetr-aniso-",
+        "eval-cremi-unetr-aniso-superhuman-calibration-official-abc-fine-",
         "eval-cremi-unetr-aniso-superhuman-calibration-official-abc-",
         "eval-cremi-unetr-aniso-superhuman-calibration-official-",
         "eval-cremi-unetr-aniso-superhuman-calibration-",
@@ -1309,6 +1357,10 @@ def make_bundle(
             )
         if "official_abc_eval" in spec:
             eval_stage_map[f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-{name}"] = (
+                spec["output"],
+                "DBMIM_EVAL_CKPT",
+            )
+            eval_stage_map[f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-fine-{name}"] = (
                 spec["output"],
                 "DBMIM_EVAL_CKPT",
             )
@@ -1995,6 +2047,17 @@ def main() -> None:
         ablation_name = _ablation_name_from_stage(args.stage)
         cremi_boundary_ignore_args = ""
         if ablation_name is not None and args.stage.startswith(
+            "eval-cremi-unetr-aniso-superhuman-calibration-official-abc-fine-"
+        ):
+            spec = ABLATION_RUNS[ablation_name]
+            config = spec["config"]
+            out_dir = spec.get("official_abc_eval", f"{spec['official_calibration_eval']}_abc") + "_fine"
+            suffix = f"official-abc-fine-{ablation_name}"
+            thresholds = "0.10 0.15 0.20 0.25 0.30 0.35 0.40 0.45 0.50"
+            calibration_biases = "0 0 0 -0.125 -0.25 -0.25 -0.25 -0.5 -0.5 -0.375 -0.75 -0.75 -0.5 -1.0 -1.0 -0.75 -1.25 -1.25"
+            max_samples = "0"
+            cremi_boundary_ignore_args = "--cremi-boundary-ignore-distance-xy 1 --cremi-boundary-ignore-distance-z 0 "
+        elif ablation_name is not None and args.stage.startswith(
             "eval-cremi-unetr-aniso-superhuman-calibration-official-abc-"
         ):
             spec = ABLATION_RUNS[ablation_name]

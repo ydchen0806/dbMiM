@@ -324,3 +324,9 @@ Operational rules:
 - Sample-A rows with VOI around `0.2-0.4` under boundary-ignore are plausible;
   A/B/C aggregate rows should normally be around `1.x`. Always state `n=1` or
   `n=3` before comparing to prior CREMI-scale numbers.
+- A/B/C official waterz completed for R16/R17 on 2026-06-22. The expected
+  scale check passed: best rows are around VOI `1.00-1.10`, not the broken
+  `7-10` graph-CC regime. Current best VOI is R17 MAWS+MSE publicEM
+  (`1.002919`); current best ARAND is R16 long-affinity SHW-MSE publicEM
+  (`0.181445`). Use those as the active baselines until R18 and the fine
+  calibration sweep finish.

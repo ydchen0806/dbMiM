@@ -115,6 +115,15 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_publicem_r17q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q"),
     ],
+    "r18q": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_longaff_publicem_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_longaff_scratch_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_publicem_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_publicem_r18q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_scratch_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q"),
+    ],
+    "r17q_fine": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q_fine"),
+    ],
 }
 
 SIFLOW_UUIDS = {
@@ -162,6 +171,11 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q": "1d218802-03e8-4121-8101-09637a775089",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_publicem_r17q": "8f9e4a5e-729f-42b5-8516-d0c0784fb8cb",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q": "d208dea6-9b2c-4dc3-ae94-a5104ad38d39",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q": "353e6a63-4071-473e-9a67-e8aa1485be2d",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q": "acc136c7-b5d6-4e51-b500-d0f391247daa",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_publicem_r18q": "deac4066-3261-4739-8887-f3d3c4629aae",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q": "dffb90bf-1526-4a8a-8a65-ee7d36065824",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q_fine": "4503d96c-9b52-4974-8e5e-7ee08bc21362",
 }
 
 

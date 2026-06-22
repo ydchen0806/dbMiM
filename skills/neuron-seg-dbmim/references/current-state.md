@@ -593,3 +593,65 @@ Submit stage:
 ```text
 finetune-cremi-unetr-aniso-arch-explore-longaff-publicem-r16q
 ```
+
+## 2026-06-22 Latest Result Snapshot
+
+R16 and R17 official A/B/C waterz-only evaluations have completed. All rows use
+full CREMI A/B/C, `crop-size 0 0 0`, waterz `hist_quantile`, skimage
+VOI/ARAND, and CREMI boundary-ignore `xy=1,z=0`. The poller summaries were
+rebuilt from SiFlow stdout fallback, with `records=60` and sample names
+`A/B/C` for every arm.
+
+| arm | best VOI | ARAND at best VOI | best ARAND | interpretation |
+|---|---:|---:|---:|---|
+| R16 longaff + SHW-MSE + publicEM | `1.012079` | `0.181445` | `0.181445` | best ARAND so far |
+| R16 longaff + SHW-MSE scratch | `1.036742` | `0.200020` | `0.193729` | publicEM helps |
+| R16 MAWS+BCAR + SHW-MSE + publicEM | `1.026490` | `0.187259` | `0.186044` | publicEM helps |
+| R16 MAWS+BCAR + SHW-MSE scratch | `1.062392` | `0.192804` | `0.192804` | weaker control |
+| R17 MAWS + MSE + publicEM | `1.002919` | `0.188832` | `0.188832` | best VOI so far |
+| R17 MAWS + MSE scratch | `1.095164` | `0.213401` | `0.210442` | publicEM strongly helps |
+| R17 MAWS + MSE+BCAR + publicEM | `1.063910` | `0.197817` | `0.193443` | BCAR hurts here |
+| R17 MAWS + MSE+BCAR scratch | `1.087732` | `0.200894` | `0.196075` | not better than pure MSE |
+
+Key current conclusion: publicEM dbMiM pretraining now gives a stable
+A/B/C improvement under matched controls, and the strongest downstream stack is
+`UNETR-aniso-EM + MAWS + pure MSE + publicEM`. BCAR is not universally helpful;
+it helped some SHW-MSE settings but hurt the best R17 MSE setting.
+
+R18 was submitted to cross the best components:
+
+| arm | UUID | status at submission |
+|---|---|---|
+| long-affinity + MSE + publicEM | `353e6a63-4071-473e-9a67-e8aa1485be2d` | Running |
+| long-affinity + MSE scratch | `acc136c7-b5d6-4e51-b500-d0f391247daa` | Running |
+| long-affinity + MSE+BCAR + publicEM | `deac4066-3261-4739-8887-f3d3c4629aae` | Running |
+| long-affinity + MSE+BCAR scratch | `dffb90bf-1526-4a8a-8a65-ee7d36065824` | Running |
+
+R18 watcher:
+
+```text
+/volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/poll_r18q_20260622T095756.log
+```
+
+A fine waterz calibration sweep was also submitted for the current best R17
+checkpoint:
+
+| eval | UUID | note |
+|---|---|---|
+| `r17q_fine` MAWS+MSE publicEM | `4503d96c-9b52-4974-8e5e-7ee08bc21362` | 9 thresholds x 6 biases x A/B/C |
+
+Fine watcher:
+
+```text
+/volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/poll_r17q_fine_20260622T100119.log
+```
+
+Poll commands:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r18q --once --logs --siflow-fallback
+
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r17q_fine --once --logs --siflow-fallback
+```
