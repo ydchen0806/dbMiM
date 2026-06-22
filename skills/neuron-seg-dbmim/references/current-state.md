@@ -964,3 +964,16 @@ evaluation:
 
 This gives a matched `scratch/pretrained x DPP/no-DPP` comparison after full
 decoder-aware pretraining, rather than judging an early 40k/60k checkpoint.
+
+At `2026-06-23T00:17+08:00`, R20 official A/B/C results began landing:
+
+| arm | source | records | VOI sum | best ARAND | note |
+|---|---|---:|---:|---:|---|
+| R20 full-EM MSE+MAWS | TOS summary/stdout | 60 | `1.085331` | `0.195722` | small gain vs R17 scratch VOI `1.095164`, ARAND gain larger |
+| R20 full-EM MSE+MAWS+BCAR | TOS summary/stdout | 60 | `1.179617` | `0.236163` | worse than matched scratch; do not pursue BCAR here |
+| R20 full-EM MSE+MAWS+DPP | stdout fallback | 45 | `0.798560` | `0.108556` | strong positive signal, but TOS eval directory was still empty; wait for full upload/records before treating as final |
+
+The useful current hypothesis is therefore not "more BCAR", but
+`full-EM pretraining + pure MSE/MAWS + differentiable learned postprocess`.
+The R21 watcher will test whether decoder-aware pretraining preserves or
+amplifies that DPP signal under matched scratch/pretrained controls.
