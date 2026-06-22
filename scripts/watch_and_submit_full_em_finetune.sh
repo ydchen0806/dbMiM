@@ -14,8 +14,8 @@ GPUS=${DBMIM_GPUS_PER_POD:-2}
 INTERVAL=${DBMIM_WATCH_INTERVAL_SEC:-600}
 MAX_POLLS=${DBMIM_MAX_POLLS:-720}
 STAGES=${DBMIM_R20_FINETUNE_STAGES:-"finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-r20q finetune-cremi-unetr-aniso-arch-explore-maws-mse-bcar-rank-fullem-r20q"}
-MARKER="$ROOT/outputs/watchers/full-em-r20-finetune.submitted"
-PARTIAL_MARKER="$ROOT/outputs/watchers/full-em-r20-finetune.partial"
+MARKER=${DBMIM_FINETUNE_SUBMIT_MARKER:-"$ROOT/outputs/watchers/full-em-r20-finetune.submitted"}
+PARTIAL_MARKER=${DBMIM_FINETUNE_PARTIAL_MARKER:-"$ROOT/outputs/watchers/full-em-r20-finetune.partial"}
 
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 cd "$ROOT"
@@ -45,6 +45,7 @@ probe_min_step() {
     rm -f "$probe"
     return 1
   fi
+  set +e
   python - "$probe" "$MIN_STEP" <<'PY'
 import json
 import sys
@@ -66,6 +67,7 @@ print(max_step)
 raise SystemExit(0 if max_step >= min_step else 1)
 PY
   local status=$?
+  set -e
   rm -f "$probe"
   return "$status"
 }
