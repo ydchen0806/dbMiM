@@ -1031,3 +1031,87 @@ Treat learned-RAG as the current "可学习后处理" branch. It can plausibly s
 up inference because it replaces waterz agglomeration/sweep with one learned
 edge-score pass plus union-find, although 2D watershed fragment generation is
 still CPU-bound in this first version.
+
+## 2026-06-23 01:20 China R21 and Learned-RAG Update
+
+R21 decoder-aware pretraining completed its 80k-step trigger point and the
+watcher submitted the two retained downstream arms. The old DPP downstream arms
+were intentionally removed before this submission because the completed R20 DPP
+result was negative.
+
+R21 pretraining:
+
+- UUID: `388347d2-3a33-4cd3-ab65-78b6d6ab2949`
+- Status: `Succeeded`
+- Output prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_decoderaware_dbmim_r21/`
+- Final TOS `train_log.jsonl`: `step=80000`, `loss=0.130470`,
+  `pixel_loss=0.106881`, `structure_loss=0.033845`,
+  `affinity_loss=0.052893`, elapsed about `6884s`.
+
+The R21 watcher log is:
+
+```text
+outputs/watchers/r21_decoderaware_nodpp_watch_20260622T163956Z.log
+```
+
+It submitted:
+
+| arm | UUID | status at 2026-06-23 01:20 CST | GPUs | pool |
+|---|---|---|---:|---|
+| R21 scratch no-DPP | `dae6bec4-3dc8-46a0-b7af-6a2f39619be2` | Running | 2 | `med-model` |
+| R21 decoder-aware pretrained no-DPP | `89a29ac5-03d5-4c85-8e86-55ef8ad19f52` | Running | 2 | `med-model` |
+
+At that time these two R21 finetune/eval jobs were the only active dbMiM
+SiFlow jobs found by `tasks.list` for running/pending/queueing states, so dbMiM
+occupied 4 GPUs. Re-query before reporting because jobs may have moved into
+post-train CPU-heavy waterz evaluation or finished.
+
+Poll after they finish with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r21q --once --logs --siflow-fallback
+```
+
+The fixed learned-RAG rerun also completed:
+
+- Failed first attempt: `57808e2d-e0e8-43cb-88d2-105ab58641ab`; import path
+  bug, `ModuleNotFoundError: No module named 'scripts.evaluate_cremi_segmentation'`.
+- Fixed attempt: `c6416133-74d8-421b-936d-676a87894dbc`; status `Succeeded`.
+- Output prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_learned_rag_r20q/`
+- Artifacts: `learned_rag_summary.json`, `learned_rag_records.json`,
+  `learned_rag_scorer.pt`.
+
+Complete learned-RAG result:
+
+| split | best threshold | VOI sum | ARAND | postprocess sec | note |
+|---|---:|---:|---:|---:|---|
+| A/B/C all records (`n=3`) | `0.7` | `7.025362` | `0.963295` | `9.40` | far worse than R20 waterz |
+| C holdout (`n=1`) | `0.7` | `6.590155` | `0.932134` | `9.77` | does not generalize |
+
+Training set pair stats were large enough for a real probe:
+`train_pairs=3164125`, positive fraction about `0.668`. The failure is
+therefore not a missing-output or no-training issue. The first learned-RAG
+scorer over simple boundary features is too aggressive/poorly calibrated for
+CREMI instance segmentation, merging many true boundaries. Keep this branch as
+a negative baseline and as scaffolding for a more principled learnable
+postprocess, but do not present it as a positive method.
+
+Current method ranking from complete official-style results:
+
+| method | complete result | conclusion |
+|---|---|---|
+| R17 publicEM MSE+MAWS | VOI `1.002919`, ARAND `0.188832` | best positive pretraining signal so far |
+| R20 full-EM MSE+MAWS | VOI `1.085331`, ARAND `0.195722` | small gain over R17 scratch but worse than R17 publicEM |
+| R17 scratch MSE+MAWS | VOI `1.095164`, ARAND `0.210442` | main scratch reference |
+| R20 full-EM DPP | VOI `1.123336`, ARAND `0.210163` | negative; stop automatic DPP expansion |
+| R20 full-EM BCAR | VOI `1.179617`, ARAND `0.236163` | negative |
+| R20 learned-RAG one-pass merge | VOI `7.025362`, ARAND `0.963295` | strong negative |
+
+The next useful direction is not another simple edge MLP over frozen fragment
+statistics. Better candidates are: improve affinity prediction and calibration
+inside the UNETR path; keep waterz/elf as the quality reference; and only
+replace post-processing with a learned method if it preserves monotonic merge
+constraints or optimizes a segmentation-aware loss on held-out volumes.

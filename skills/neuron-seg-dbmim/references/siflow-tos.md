@@ -172,6 +172,43 @@ On 2026-06-22 this was required to verify
 both watcher and manual `cp` timed out, while no-proxy `cp` downloaded the
 40.20 MB checkpoint successfully.
 
+The same rule applies to GitHub. This login environment can expose
+`HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` values pointing at
+`192.168.32.28:18000`; with those set, `git push` to GitHub may hang until a
+manual `timeout` kills it. Use a no-proxy wrapper and avoid printing or
+embedding tokens:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy \
+  GIT_TERMINAL_PROMPT=0 \
+  git -c http.version=HTTP/1.1 push origin main
+```
+
+Observed behavior on 2026-06-23:
+
+- Earlier no-proxy pushes succeeded for commits through `bb8ee57`.
+- Later pushes of the local learned-RAG commit `92576d6` timed out with
+  `rc=124` and no stderr even after clearing proxies.
+- No-proxy `git ls-remote --heads origin main` returned immediately, and
+  `curl -I https://github.com/ydchen0806/dbMiM.git` reached GitHub. The remote
+  `main` was still `bb8ee57`, while local `main` had two unpushed commits:
+  `92576d6` and `0d3a1b4`.
+- Disabling credentials/askpass made push fail immediately with
+  `fatal: could not read Username for 'https://github.com': terminal prompts
+  disabled`. The shell had `GIT_ASKPASS` pointing at a VS Code askpass script,
+  but lacked the required `VSCODE_GIT_ASKPASS_NODE`,
+  `VSCODE_GIT_ASKPASS_MAIN`, and `VSCODE_GIT_IPC_HANDLE` environment. There
+  was no SSH private key, no configured credential helper, no `.netrc`, and no
+  `.git-credentials`.
+- Therefore this specific push failure is best explained as non-interactive
+  GitHub credentials/askpass being unavailable or hanging, not a bad commit or
+  a remote rejection. If it happens, report the unpushed local commit hash,
+  keep SiFlow submissions based on the TOS bundle, and push later from an
+  authenticated shell or a safe non-logged credential path.
+- Do not add the user's GitHub token to `.git/config`, the remote URL, shell
+  history, scripts, or skill files.
+
 The yinda public submit helper truncates `name_prefix` to 35 characters before
 calling SiFlow. If the first 35 characters end with `-`, SiFlow rejects the
 task. `scripts/submit_siflow_dbmim.py` now shortens such arch-explore prefixes

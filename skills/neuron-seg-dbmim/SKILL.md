@@ -110,3 +110,17 @@ whether `pos_embed` interpolation was used.
   A/B evidence, and dependency/runtime probes whose conclusion has been
   absorbed into the code. Keep active pairs only when they still answer a live
   scientific question.
+- Clear proxy variables before GitHub, TOS, or SiFlow network operations in
+  this environment. `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` pointing at
+  `192.168.32.28:18000` can make `git push`, `tosutil`, and SDK calls hang.
+  If no-proxy `git ls-remote` works but `git push` hangs, inspect credentials:
+  this shell has no SSH key, no credential helper, and can inherit a VS Code
+  `GIT_ASKPASS` script without the required IPC environment. Never put a
+  GitHub token into the remote URL or logs.
+- Do not make method claims from partial post-processing stdout. R20 DPP looked
+  excellent on an intermediate 45-record fallback, but the complete 60-record
+  A/B/C summary was worse than the no-DPP control.
+- The first learned-RAG postprocess branch is a negative result: it saves a
+  learned scorer, but one-pass pairwise fragment merging over boundary stats
+  produced VOI/ARAND far worse than waterz. Keep it as evidence and baseline
+  code, not as the current recommended post-processing method.
