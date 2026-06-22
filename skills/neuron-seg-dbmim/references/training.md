@@ -55,11 +55,22 @@ pretraining-effect comparison meaningless.
   - `finetune_cremi_real_unetr_aniso_em_shwmse_longaff_scratch_r16q.yaml`
   - `finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q.yaml`
   - `finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q.yaml`
+- R17 MSE/MAWS matched controls:
+  - `finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml`
+  - `finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q.yaml`
+  - `finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_publicem_r17q.yaml`
+  - `finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q.yaml`
 
 For R16 evidence, compare matched publicEM-pretrained and scratch arms before
 claiming a pretraining gain. The old all-CREMI or membrane-R14 pretrained arms
 are useful baselines, but they do not isolate the new public-EM pretraining
 effect.
+
+For R17, the only intended changes versus R16 MAWS+BCAR are the supervised loss
+family and optional BCAR. Keep data, crop, model, encoder LR, publicEM
+checkpoint, and official A/B/C waterz eval fixed. This isolates whether MSE is
+the better downstream affinity objective and whether BCAR helps in the MSE
+regime.
 
 ## Batch Size Semantics
 

@@ -78,6 +78,53 @@ boundary-ignore `xy=1,z=0`:
 Use `scripts/poll_dbmim_tos_results.py --group r16q_waterz --once --logs
 --siflow-fallback` for these standalone waterz evals.
 
+As of 2026-06-22 08:16 China time, the standalone R16 waterz-only evals are
+still running and have only sample-A metric rows in SiFlow stdout. Current
+sample-A best rows under the official boundary-ignore mask are:
+
+| arm | best VOI | ARAND at best VOI | note |
+|---|---:|---:|---|
+| long-affinity + publicEM | `0.237032` | `0.028895` | bias `z=-0.25,y=-0.50,x=-0.50`, threshold `0.50` |
+| long-affinity scratch | `0.235447` | `0.040266` | threshold `0.50` |
+| MAWS+BCAR rank + publicEM | `0.234412` | `0.029636` | threshold `0.50` |
+| MAWS+BCAR rank scratch | `0.226193` | `0.033905` | threshold `0.50`; best ARAND row is `0.028309` with bias |
+
+Do not report these as A/B/C aggregates until `sample_B_20160501.hdf` and
+`sample_C_20160501.hdf` appear in `sample_names`.
+
+## 2026-06-22 R17 MSE/MAWS Wave
+
+R17 directly tests the user's MSE hypothesis under the strongest current
+structure: UNETR-aniso-EM + MAWS, with and without BCAR. It uses the same
+publicEM dbMiM checkpoint as R16 and matched scratch controls. All four jobs
+were submitted on `cn-shanghai/changliu`, pool `med-model`, `sci.g21-3`, 2
+GPUs each, with post-train official A/B/C waterz-only eval in the same pod.
+
+| arm | UUID | initial status |
+|---|---|---|
+| MAWS + MSE + publicEM dbMiM | `68013c0c-b712-4c93-9b46-984c69f812ac` | Running; step 960 loss `0.057741`, loaded 77 keys |
+| MAWS + MSE scratch | `1d218802-03e8-4121-8101-09637a775089` | Running; step 700 loss `0.102678` |
+| MAWS + MSE + BCAR + publicEM dbMiM | `8f9e4a5e-729f-42b5-8516-d0c0784fb8cb` | Running; step 360 loss `0.143978`, main `0.142010`, loaded 77 keys |
+| MAWS + MSE + BCAR scratch | `d208dea6-9b2c-4dc3-ae94-a5104ad38d39` | Running; step 160 loss `0.159586`, main `0.145523` |
+
+Configs:
+
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_publicem_r17q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q.yaml`
+
+Poll with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r17q --once --logs --siflow-fallback
+```
+
+The first training logs already show that publicEM initialization starts with a
+lower MSE loss than scratch, but this is not enough to claim segmentation
+improvement. Wait for waterz A/B/C VOI/ARAND.
+
 As of 2026-06-20, the earlier R3/R4 supervised finetuning results are
 invalidated as scientific evidence because the dataset applied random geometric
 flips to the image but not to the instance label. This broke image/label

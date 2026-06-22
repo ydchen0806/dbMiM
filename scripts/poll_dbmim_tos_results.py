@@ -109,6 +109,12 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_publicem_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q"),
         ("finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_scratch_r16q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q"),
     ],
+    "r17q": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_publicem_r17q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q"),
+    ],
 }
 
 SIFLOW_UUIDS = {
@@ -152,6 +158,10 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_longaff_scratch_r16q": "418b6d25-06df-4820-8594-53e7a55e9b9c",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_publicem_r16q": "a9456991-13c5-41cc-af72-f3f4427b3f26",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_shwmse_maws_bcar_rank_scratch_r16q": "b51f6415-2bae-4e34-8b95-50994f092496",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q": "68013c0c-b712-4c93-9b46-984c69f812ac",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q": "1d218802-03e8-4121-8101-09637a775089",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_publicem_r17q": "8f9e4a5e-729f-42b5-8516-d0c0784fb8cb",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q": "d208dea6-9b2c-4dc3-ae94-a5104ad38d39",
 }
 
 
@@ -380,6 +390,12 @@ def summarize(group: str) -> int:
                 print(
                     "SUMMARY",
                     eval_name,
+                    "source",
+                    summary.get("source", "tos"),
+                    "records",
+                    summary.get("num_records", "?"),
+                    "samples",
+                    ",".join(summary.get("sample_names", [])),
                     "VOI",
                     by_voi.get("voi_sum"),
                     "ARAND@VOI",

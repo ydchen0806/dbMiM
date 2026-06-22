@@ -156,6 +156,12 @@ Negative or fragile controls:
   early threshold grid again produced VOI around `7.9` on sample A. Do not use
   those early rows as a method conclusion; wait for waterz or run a standalone
   waterz-only official A/B/C eval.
+- The poller may synthesize a `cremi_segmentation_summary.json` from SiFlow
+  stdout before the canonical TOS summary exists. Treat that fallback summary
+  as partial unless `num_records` and `sample_names` prove that A/B/C all
+  completed. For the current waterz-only grid, expect three sample names and
+  about `3 samples x 3 calibration biases x 5 thresholds = 45` records per
+  arm.
 - CuPy sparse graph CC is not the same as a custom CUDA union-find; do not
   assume it eliminates the CPU bottleneck.
 - Full-volume post-processing can become a memory problem. Plan blockwise or
