@@ -112,24 +112,53 @@ def download_file(repo: str, item: dict, zip_dir: Path, token: str) -> Path:
     if out.exists() and expected > 0 and out.stat().st_size == expected:
         return out
     tmp = out.with_suffix(out.suffix + ".partial")
-    header = f"Authorization: Bearer {token}"
-    cmd = [
-        "curl",
-        "-L",
-        "--fail",
-        "--retry",
-        "20",
-        "--retry-delay",
-        "10",
-        "--continue-at",
-        "-",
-        "-H",
-        header,
-        "--output",
-        str(tmp),
-        resolve_url(repo, path),
-    ]
-    run(cmd)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    url = resolve_url(repo, path)
+    retries = 20
+    for attempt in range(1, retries + 1):
+        resume = tmp.stat().st_size if tmp.exists() else 0
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Bearer {token}")
+        if resume > 0:
+            req.add_header("Range", f"bytes={resume}-")
+        try:
+            with opener.open(req, timeout=120) as response:
+                status = int(getattr(response, "status", response.getcode()))
+                mode = "ab" if resume > 0 and status == 206 else "wb"
+                if resume > 0 and status != 206:
+                    resume = 0
+                done = resume
+                last_report = time.time()
+                with tmp.open(mode + "") as handle:
+                    while True:
+                        chunk = response.read(8 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+                        done += len(chunk)
+                        now = time.time()
+                        if now - last_report >= 30:
+                            payload = {
+                                "event": "download_progress",
+                                "file": path,
+                                "bytes": done,
+                                "total_bytes": expected,
+                                "pct": round(100.0 * done / expected, 3) if expected else None,
+                            }
+                            print(json.dumps(payload), flush=True)
+                            last_report = now
+            break
+        except Exception as exc:
+            if attempt >= retries:
+                raise
+            payload = {
+                "event": "download_retry",
+                "file": path,
+                "attempt": attempt,
+                "error": type(exc).__name__,
+            }
+            print(json.dumps(payload), flush=True)
+            time.sleep(min(60, 5 * attempt))
     if expected > 0 and tmp.stat().st_size != expected:
         raise RuntimeError(f"downloaded size mismatch for {path}: {tmp.stat().st_size} != {expected}")
     tmp.replace(out)
@@ -183,6 +212,22 @@ def upload_to_tos(local_dir: Path, tos_prefix: str, tosutil: Path, tos_conf: Pat
             str(local_dir),
             f"{tos_prefix}/{group}",
             "-r",
+            f"-conf={tos_conf}",
+        ]
+    )
+
+
+def upload_file_to_tos(local_file: Path, tos_prefix: str, tosutil: Path, tos_conf: Path) -> None:
+    if not tosutil.exists():
+        raise FileNotFoundError(f"tosutil not found: {tosutil}")
+    if not tos_conf.exists():
+        raise FileNotFoundError(f"tosutil config not found: {tos_conf}")
+    run(
+        [
+            str(tosutil),
+            "cp",
+            str(local_file),
+            f"{tos_prefix}/manifests/{local_file.name}",
             f"-conf={tos_conf}",
         ]
     )
@@ -262,12 +307,11 @@ def main() -> None:
     write_manifest(target / f"{args.group}_manifest.json", manifest)
     if args.upload_tos:
         upload_to_tos(group_dir, args.tos_prefix, Path(args.tosutil), Path(args.tos_conf), args.group)
-        upload_to_tos(
+        upload_file_to_tos(
             target / f"{args.group}_manifest.json",
             args.tos_prefix,
             Path(args.tosutil),
             Path(args.tos_conf),
-            args.group,
         )
 
 

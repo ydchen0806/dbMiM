@@ -852,6 +852,7 @@ CREMI_STAGES = {
     "pretrain-cremi-all-r6",
     "pretrain-em-all-r11",
     "pretrain-em-membrane-r14",
+    "pretrain-em-full-membrane-r20",
     "pretrain-public-em-membrane-r16",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
@@ -930,6 +931,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_em_all_dbmim_r11"
     if stage == "pretrain-em-membrane-r14":
         return "outputs/pretrain_em_membrane_dbmim_r14"
+    if stage == "pretrain-em-full-membrane-r20":
+        return "outputs/pretrain_em_full_membrane_dbmim_r20"
     if stage == "pretrain-public-em-membrane-r16":
         return "outputs/pretrain_public_em_membrane_dbmim_r16"
     if stage == "finetune-cremi":
@@ -1053,6 +1056,16 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_public_cfg["train"]["save_steps"] = max(int(pre_public_cfg["train"].get("save_steps", 0)), 2000)
         _write_yaml(pretrain_public_em_r16, pre_public_cfg)
 
+    pretrain_em_full_membrane_r20 = bundle / "configs" / "pretrain_em_full_membrane_r20.yaml"
+    if pretrain_em_full_membrane_r20.exists():
+        pre_full_cfg = yaml.safe_load(pretrain_em_full_membrane_r20.read_text(encoding="utf-8"))
+        pre_full_cfg["output_dir"] = "outputs/pretrain_em_full_membrane_dbmim_r20"
+        pre_full_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/all"]
+        pre_full_cfg["train"]["epochs"] = max(int(pre_full_cfg["train"].get("epochs", 1)), 100000)
+        pre_full_cfg["train"]["save_every"] = max(int(pre_full_cfg["train"].get("save_every", 1)), 5)
+        pre_full_cfg["train"]["save_steps"] = max(int(pre_full_cfg["train"].get("save_steps", 0)), 2000)
+        _write_yaml(pretrain_em_full_membrane_r20, pre_full_cfg)
+
     config_to_ablation = {spec["config"]: spec for spec in ABLATION_RUNS.values()}
     ablation_configs = set(config_to_ablation)
     for name, out_dir in [
@@ -1172,23 +1185,46 @@ def make_bundle(
                 "ls -lh data/CREMI",
             ]
         )
-    if stage in {"pretrain-em-all-r11", "pretrain-em-membrane-r14", "pretrain-public-em-membrane-r16"}:
+    if stage in {
+        "pretrain-em-all-r11",
+        "pretrain-em-membrane-r14",
+        "pretrain-em-full-membrane-r20",
+        "pretrain-public-em-membrane-r16",
+    }:
         em_data_dir = "data/EM_pretrain_data/public_em" if stage == "pretrain-public-em-membrane-r16" else "data/EM_pretrain_data/all"
         em_tos_groups = ["public_em"] if stage == "pretrain-public-em-membrane-r16" else ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
-        em_stage_cfgs = (
-            ["pretrain_public_em_membrane_r16.yaml"]
-            if stage == "pretrain-public-em-membrane-r16"
-            else ["pretrain_em_all_r11.yaml", "pretrain_em_membrane_r14.yaml"]
+        if stage == "pretrain-public-em-membrane-r16":
+            em_stage_cfgs = ["pretrain_public_em_membrane_r16.yaml"]
+        elif stage == "pretrain-em-full-membrane-r20":
+            em_stage_cfgs = ["pretrain_em_full_membrane_r20.yaml"]
+        else:
+            em_stage_cfgs = ["pretrain_em_all_r11.yaml", "pretrain_em_membrane_r14.yaml"]
+        required_em_groups = (
+            ["fafb", "fib25", "kasthuri", "mitoem", "mb_moc"]
+            if stage == "pretrain-em-full-membrane-r20"
+            else []
         )
+        required_em_group_expr = " ".join(required_em_groups) if required_em_groups else "__none__"
         prelude.extend(
             [
                 f"mkdir -p {em_data_dir}",
                 "em_data_found=0",
+                "missing_required_em_groups=\"\"",
                 f"for em_group in {' '.join(em_tos_groups)}; do",
                 f"  if bin/tosutil ls {EM_PRETRAIN_TOS_PREFIX}/$em_group -conf=\"$TOS_CONF\" >/dev/null 2>&1; then",
                 f"    bin/tosutil cp {EM_PRETRAIN_TOS_PREFIX}/$em_group {em_data_dir} -r -conf=\"$TOS_CONF\" || true",
                 "  fi",
                 "done",
+                f"for em_group in {required_em_group_expr}; do",
+                "  if [ \"$em_group\" = \"__none__\" ]; then continue; fi",
+                f"  if ! find {em_data_dir} -path \"*/$em_group/*\" -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) -print -quit | grep -q .; then",
+                "    missing_required_em_groups=\"$missing_required_em_groups $em_group\"",
+                "  fi",
+                "done",
+                "if [ -n \"$missing_required_em_groups\" ]; then",
+                "  echo \"{'em_pretrain_data_status':'missing_required_gated_groups','missing':'$missing_required_em_groups'}\"",
+                "  exit 21",
+                "fi",
                 f"if find {em_data_dir} -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) -print -quit | grep -q .; then",
                 "  em_data_found=1",
                 "fi",
@@ -1764,6 +1800,7 @@ def main() -> None:
             "pretrain-cremi-all-r6",
             "pretrain-em-all-r11",
             "pretrain-em-membrane-r14",
+            "pretrain-em-full-membrane-r20",
             "pretrain-public-em-membrane-r16",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
@@ -1838,6 +1875,9 @@ def main() -> None:
     elif args.stage == "pretrain-em-membrane-r14":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_membrane_r14.yaml"
         prefix = "dbmim-pretrain-em-membrane-r14"
+    elif args.stage == "pretrain-em-full-membrane-r20":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_full_membrane_r20.yaml"
+        prefix = "dbmim-pretrain-em-full-membrane-r20"
     elif args.stage == "pretrain-public-em-membrane-r16":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_membrane_r16.yaml"
         prefix = "dbmim-pretrain-public-em-membrane-r16"

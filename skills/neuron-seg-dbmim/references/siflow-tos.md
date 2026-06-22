@@ -313,6 +313,32 @@ python scripts/prepare_em_pretrain_data.py --group <fafb|fib25|kasthuri|mitoem|m
 This can download hundreds of GB; prefer one group at a time, verify free disk,
 and upload to TOS before launching all-EM pretraining.
 
+Current 2026-06-22 operational flow is automated by two detached `screen`
+sessions:
+
+```bash
+screen -ls
+tail -f outputs/watchers/full_em_download_20260622T032208Z.log
+tail -f outputs/watchers/full_em_pretrain_watch_20260622T032734Z.log
+```
+
+- `scripts/run_full_em_download_to_tos.sh` downloads/extracts/uploads the five
+  gated groups serially. It intentionally uses `EM_GROUP_LIST`, not bash
+  `GROUPS`; `GROUPS` is a readonly/special array in bash and expands to the
+  current group id (`0` here), which previously caused a silent invalid group
+  run.
+- `scripts/watch_and_submit_full_em_pretrain.sh` polls TOS every 600 seconds
+  and submits `pretrain-em-full-membrane-r20` on 8 `med-model` GPUs only after
+  `fafb`, `fib25`, `kasthuri`, `mitoem`, and `mb_moc` each contain HDF5 files
+  on TOS.
+- `scripts/submit_siflow_dbmim.py` has a pod-side hard gate for
+  `pretrain-em-full-membrane-r20`; it exits status 21 if any required gated
+  group is missing after TOS copy. This prevents a fallback CREMI/public-only
+  checkpoint from being mislabeled as full-EM pretraining.
+- Ordinary `nohup ... &` background jobs have been observed to disappear in
+  this execution environment. Use `screen -dmS ...` for multi-hour local
+  download/watch tasks.
+
 ## Polling Results
 
 `scripts/poll_dbmim_tos_results.py` has SiFlow stdout fallback support. It must

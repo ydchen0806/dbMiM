@@ -44,14 +44,69 @@ The public-EM pretraining path is now reproducible and TOS-backed:
   rank-0 logs are in SiFlow stdout and `pretrain_log.jsonl` on TOS.
 - The offline public-EM data is only about 195 MB and contains ISBI 2012 plus
   SNEMI3D raw HDF5 volumes. The larger HF `cyd0806/EM_pretrain_data` manifest
-  totals about 486 GB, but as of 2026-06-22 no `HF_TOKEN` or local HF token file
-  is available, so the gated data has not been downloaded or used.
+  totals about 486 GB. As of 2026-06-22 11:22 China time, the user-provided HF
+  token is stored only in `/volume/med-train/users/dchen02/secrets/hf_env_dchen02.sh`
+  and the gated full-EM data preparation is actively running. Do not print the
+  token or store it in git. Do not claim gated all-EM pretraining has started
+  until the five groups are present on TOS and the R20 pretraining submission
+  marker/log exists.
 
 Important operational pitfall: local `tosutil cp` and watcher probes can hang
 when proxy variables point at `192.168.32.28:18000`. Always unset
 `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and lowercase variants before TOS or
 SiFlow SDK probes. After unsetting proxies, `pretrained_latest.pt` downloaded
 successfully in under a second.
+
+## 2026-06-22 R20 Gated Full-EM Pretraining Setup
+
+Full gated HF data preparation is running locally in a detached screen session
+because this execution environment kills ordinary `nohup` background jobs:
+
+```bash
+screen -ls
+tail -f /volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/full_em_download_20260622T032208Z.log
+```
+
+The data script is `scripts/run_full_em_download_to_tos.sh`; it runs
+`scripts/prepare_em_pretrain_data.py --group <group> --download --extract
+--upload-tos` for `fafb`, `fib25`, `kasthuri`, `mitoem`, and `mb_moc`.
+`prepare_em_pretrain_data.py` uses Python streaming HTTP with Range resume, so
+the HF token stays in process memory and does not appear in argv, logs, or curl
+config files. Partial zip files under `data/EM_pretrain_data/_zips/<group>/`
+are resumable and expected while the download is running.
+
+Expected compressed bytes from the HF manifest:
+
+| group | compressed size |
+|---|---:|
+| `fafb` | about 117.38 GB |
+| `fib25` | about 116.10 GB |
+| `kasthuri` | about 115.37 GB |
+| `mitoem` | about 16.66 GB |
+| `mb_moc` | about 137.32 GB |
+
+Observed early download speed on 2026-06-22 was roughly 35-40 MB/s during
+`FAFB_crop_hdf_1.zip`, so pure download is on the order of 3.5-4 hours; unzip
+and TOS upload make the end-to-end preparation more likely 6-10 hours.
+
+The full-data pretraining config/stage is:
+
+- Config: `configs/pretrain_em_full_membrane_r20.yaml`
+- Stage: `pretrain-em-full-membrane-r20`
+- Output: `outputs/pretrain_em_full_membrane_dbmim_r20`
+
+An automatic watcher is running in a second detached screen session:
+
+```bash
+tail -f /volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/full_em_pretrain_watch_20260622T032734Z.log
+```
+
+It polls TOS every 600 seconds and submits the 8-GPU `med-model` R20 pretrain
+only after all five gated groups contain HDF5 files on TOS. The submitter also
+has a pod-side hard gate: `pretrain-em-full-membrane-r20` exits with status 21
+if any of `fafb/fib25/kasthuri/mitoem/mb_moc` is missing after TOS copy. This
+prevents another public-only or CREMI-only fallback from being mislabeled as
+full-EM pretraining.
 
 Matched R16 downstream controls are running on `med-model`, 2 GPUs each, all
 with post-train A/B/C architecture benchmark (`graph_cc`, `cupy_graph_cc`,
