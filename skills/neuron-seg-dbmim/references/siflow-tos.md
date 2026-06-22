@@ -359,19 +359,36 @@ under:
 /volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all
 ```
 
-Current active R20 pretrain task:
+Latest failed R20 pretrain task:
 
 - UUID: `ab50e050-a1c9-42ee-b40d-e4e43e109212`
 - Pool/instance: `cn-shanghai/changliu`, `med-model`, `sci.g21-3`
 - GPUs: 4
 - Start time: `2026-06-22T09:02:49Z`
-- State at 2026-06-22 17:05 China time: Running, staging the first full-EM
-  group from TOS at roughly 24-25 MB/s.
+- End time: `2026-06-22T10:23:27Z`
+- Failure mode: all five full-EM groups copied successfully from TOS, then the
+  launch script exited before training because `set -o pipefail` propagated a
+  SIGPIPE from the diagnostic `find ... | head -20` listing. The submitter now
+  appends `|| true` to that diagnostic pipeline.
 
 Do not count stopped R20 UUIDs as active: `1488e82a-301a-4b8a-961c-615657dd3491`
 (old bundle), `1d0916f7-0c98-4d2f-8c02-3ec7cd47a46b` (8-GPU quota short), and
 `a34bbacf-b483-4bb2-85cd-852adf9e8e16` (7-GPU fragmentation) were intentionally
-stopped before meaningful training.
+stopped before meaningful training. Also do not count
+`16b28f27-7e75-40d9-a5ec-04f3067b4001`; it was a post-patch 8-GPU retry that
+was stopped immediately because `med-model` still reported only 7 available
+instances for an 8-GPU request.
+
+Current active R20 pretrain task:
+
+- UUID: `7be2f62b-c1f3-482a-85a7-74cd63c63c35`
+- Pool/instance: `cn-shanghai/changliu`, `med-model`, `sci.g21-3`
+- GPUs: 4
+- Start time: `2026-06-22T13:46:02Z`
+- State at 2026-06-22 21:47 China time: Running. Bundle download, offline
+  dependency install, CREMI download, and CREMI extraction had succeeded; the
+  job was copying full-EM groups from TOS. Loss appears only after staging
+  finishes and `train_pretrain.py` starts.
 
 Once R20 is running, the downstream watcher can be launched immediately. It
 will wait for both `pretrained_latest.pt` and `train_log.jsonl` to reach the

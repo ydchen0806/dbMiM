@@ -1280,7 +1280,7 @@ def make_bundle(
                 "PY",
                 "else",
                 "  echo \"{'em_pretrain_data_status':'available_offline_tos'}\"",
-                f"  find {em_data_dir} -maxdepth 6 -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) | head -20",
+                f"  find {em_data_dir} -maxdepth 6 -type f \\( -name '*.h5' -o -name '*.hdf' -o -name '*.hdf5' \\) | head -20 || true",
                 "fi",
             ]
         )

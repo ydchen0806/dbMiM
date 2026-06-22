@@ -121,8 +121,15 @@ Important SiFlow scheduling state:
   `med-model` reported `实例配额不足 | 需求:8, 实际可用(实例配额):7`.
 - Fixed 7-GPU task `a34bbacf-b483-4bb2-85cd-852adf9e8e16` was stopped because
   SiFlow reported resource fragmentation.
-- Active task: `ab50e050-a1c9-42ee-b40d-e4e43e109212`, `med-model`,
-  `sci.g21-3`, 4 GPUs. It started running at `2026-06-22T09:02:49Z`.
+- Failed task: `ab50e050-a1c9-42ee-b40d-e4e43e109212`, `med-model`,
+  `sci.g21-3`, 4 GPUs. It started running at `2026-06-22T09:02:49Z` and
+  failed at `2026-06-22T10:23:27Z`, after all five full-EM groups had been
+  copied from TOS but before `train_pretrain.py` launched.
+- Retry 8-GPU task `16b28f27-7e75-40d9-a5ec-04f3067b4001` was stopped
+  immediately because `med-model` again reported
+  `实例配额不足 | 需求:8, 实际可用(实例配额):7`.
+- Active retry task: `7be2f62b-c1f3-482a-85a7-74cd63c63c35`, `med-model`,
+  `sci.g21-3`, 4 GPUs. It started running at `2026-06-22T13:46:02Z`.
 
 The active R20 bundle stages full-EM data to a mounted-volume path instead of
 the bundle temporary directory:
@@ -131,11 +138,18 @@ the bundle temporary directory:
 /volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all
 ```
 
-At 2026-06-22 17:05 China time, SiFlow stdout showed CREMI copied and the first
-full-EM group TOS copy in progress at roughly 24-25 MB/s for a 138.77 GB group.
-Training loss will not appear until all five groups finish staging and the
-pod-side hard gate passes. The gate still exits with status 21 if any of
-`fafb/fib25/kasthuri/mitoem/mb_moc` is missing after TOS copy.
+The `ab50e050-a1c9-42ee-b40d-e4e43e109212` logs showed successful staging for
+all five full-EM groups, then the shell exited before training because
+`set -euo pipefail` treated `find ... | head -20` as a failed pipeline when
+`head` closed early and `find` received SIGPIPE. The maintained submitter was
+patched on 2026-06-22 to append `|| true` to this diagnostic listing. If a new
+R20 run fails before training, inspect the generated `run.sh` and stdout before
+assuming a data or model issue.
+
+At `2026-06-22T13:47Z`, active retry
+`7be2f62b-c1f3-482a-85a7-74cd63c63c35` had downloaded the bundle, installed
+offline wheels, downloaded/extracted CREMI, and started the full-EM TOS copy.
+Expect no training loss until all five groups finish staging.
 
 A finetune watcher is available:
 
