@@ -115,7 +115,15 @@ def download_file(repo: str, item: dict, zip_dir: Path, token: str) -> Path:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     url = resolve_url(repo, path)
     retries = 20
-    for attempt in range(1, retries + 1):
+    attempt = 0
+    while True:
+        if expected > 0 and tmp.exists() and tmp.stat().st_size == expected:
+            break
+        if expected > 0 and tmp.exists() and tmp.stat().st_size > expected:
+            tmp.unlink()
+        attempt += 1
+        if attempt > retries:
+            raise RuntimeError(f"downloaded size mismatch for {path}: {tmp.stat().st_size if tmp.exists() else 0} != {expected}")
         resume = tmp.stat().st_size if tmp.exists() else 0
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {token}")
@@ -147,7 +155,17 @@ def download_file(repo: str, item: dict, zip_dir: Path, token: str) -> Path:
                             }
                             print(json.dumps(payload), flush=True)
                             last_report = now
-            break
+            if expected <= 0 or tmp.stat().st_size == expected:
+                break
+            payload = {
+                "event": "download_short_read_resume",
+                "file": path,
+                "bytes": tmp.stat().st_size,
+                "total_bytes": expected,
+                "attempt": attempt,
+            }
+            print(json.dumps(payload), flush=True)
+            time.sleep(min(60, 5 * attempt))
         except Exception as exc:
             if attempt >= retries:
                 raise
