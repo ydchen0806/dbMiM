@@ -1060,7 +1060,10 @@ def _patch_cremi_configs(bundle: Path) -> None:
     if pretrain_em_full_membrane_r20.exists():
         pre_full_cfg = yaml.safe_load(pretrain_em_full_membrane_r20.read_text(encoding="utf-8"))
         pre_full_cfg["output_dir"] = "outputs/pretrain_em_full_membrane_dbmim_r20"
-        pre_full_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/all"]
+        pre_full_cfg["data"]["train_paths"] = [
+            "data/CREMI",
+            "/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all",
+        ]
         pre_full_cfg["train"]["epochs"] = max(int(pre_full_cfg["train"].get("epochs", 1)), 100000)
         pre_full_cfg["train"]["save_every"] = max(int(pre_full_cfg["train"].get("save_every", 1)), 5)
         pre_full_cfg["train"]["save_steps"] = max(int(pre_full_cfg["train"].get("save_steps", 0)), 2000)
@@ -1191,8 +1194,18 @@ def make_bundle(
         "pretrain-em-full-membrane-r20",
         "pretrain-public-em-membrane-r16",
     }:
-        em_data_dir = "data/EM_pretrain_data/public_em" if stage == "pretrain-public-em-membrane-r16" else "data/EM_pretrain_data/all"
-        em_tos_groups = ["public_em"] if stage == "pretrain-public-em-membrane-r16" else ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
+        if stage == "pretrain-public-em-membrane-r16":
+            em_data_dir = "data/EM_pretrain_data/public_em"
+        elif stage == "pretrain-em-full-membrane-r20":
+            em_data_dir = "/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all"
+        else:
+            em_data_dir = "data/EM_pretrain_data/all"
+        if stage == "pretrain-public-em-membrane-r16":
+            em_tos_groups = ["public_em"]
+        elif stage == "pretrain-em-full-membrane-r20":
+            em_tos_groups = ["fafb", "fib25", "kasthuri", "mitoem", "mb_moc"]
+        else:
+            em_tos_groups = ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
         if stage == "pretrain-public-em-membrane-r16":
             em_stage_cfgs = ["pretrain_public_em_membrane_r16.yaml"]
         elif stage == "pretrain-em-full-membrane-r20":
