@@ -627,12 +627,12 @@ it helped some SHW-MSE settings but hurt the best R17 MSE setting.
 
 R18 was submitted to cross the best components:
 
-| arm | UUID | status at submission |
+| arm | UUID | current decision |
 |---|---|---|
-| long-affinity + MSE + publicEM | `353e6a63-4071-473e-9a67-e8aa1485be2d` | Running |
-| long-affinity + MSE scratch | `acc136c7-b5d6-4e51-b500-d0f391247daa` | Running |
-| long-affinity + MSE+BCAR + publicEM | `deac4066-3261-4739-8887-f3d3c4629aae` | Running |
-| long-affinity + MSE+BCAR scratch | `dffb90bf-1526-4a8a-8a65-ee7d36065824` | Running |
+| long-affinity + MSE + publicEM | `353e6a63-4071-473e-9a67-e8aa1485be2d` | stopped on 2026-06-22 after A/B partial was clearly worse than scratch |
+| long-affinity + MSE scratch | `acc136c7-b5d6-4e51-b500-d0f391247daa` | stopped after publicEM arm was killed; no longer a useful paired comparison |
+| long-affinity + MSE+BCAR + publicEM | `deac4066-3261-4739-8887-f3d3c4629aae` | keep running |
+| long-affinity + MSE+BCAR scratch | `dffb90bf-1526-4a8a-8a65-ee7d36065824` | keep running as matched control |
 
 R18 watcher:
 
@@ -688,3 +688,21 @@ R19 uses per-GPU batch 1 and 12k steps to fit the larger crop/decoder on
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r19q --once --logs --siflow-fallback
 ```
+
+## 2026-06-22 Cleanup Snapshot
+
+After the R16/R17 waterz-only A/B/C results and early R18/R19 partial rows,
+stale jobs were stopped to free GPUs. These should not be resumed unless a
+specific missing artifact is needed:
+
+| reason | UUIDs |
+|---|---|
+| R15 mempretrained variants superseded by publicEM R16/R17/R18/R19 | `73a40fd4-287b-4bfc-98b6-c57aa6a38c1a`, `08fad37f-4257-4f4f-9e9b-ad86c4b7f93f`, `cb58f241-4fac-490f-b958-1ca6376bfb14` |
+| R15 standalone postprocess benchmark superseded by waterz-only official A/B/C paths | `8ffeb749-2da8-4236-a46d-b60e9443598e` |
+| R16 arch-bench jobs superseded by standalone R16 waterz-only complete summaries | `11df9593-273a-4456-8da4-6f844b1d8292`, `198e39cc-c2aa-4ab1-82f3-edcc15e6917f`, `b8e5f3dc-9047-48a2-9b90-dd439f0265c7`, `997ba3ec-77f6-41f0-851b-83f770427cfd` |
+| R18 pure long-affinity + MSE pair stopped after bad publicEM A/B partial | `353e6a63-4071-473e-9a67-e8aa1485be2d`, `acc136c7-b5d6-4e51-b500-d0f391247daa` |
+
+Remaining active dbMiM tasks immediately after cleanup: seven tasks / 13 GPUs.
+They are R18 BCAR publicEM/scratch, R19 four structure-capacity arms, and R17
+fine calibration. Before launching new jobs, query live SiFlow state again
+because stopped tasks can linger briefly as `Stopping`.

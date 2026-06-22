@@ -288,13 +288,30 @@ tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_membrane_dbmim_r16
 That run has now succeeded. `pretrained_latest.pt` was downloaded and inspected
 on 2026-06-22: `global_step=160000`, `epoch=44`, and `max_steps=160000`.
 
-The large HF dataset is not currently usable from this environment. Local
-manifests show `cyd0806/EM_pretrain_data` totals about 486 GB, but there is no
-`HF_TOKEN`, `HUGGINGFACE_HUB_TOKEN`, `/root/.cache/huggingface/token`,
-`/volume/med-train/users/dchen02/.cache/huggingface/token`, or
-`/volume/med-train/users/dchen02/.huggingface/token`. Do not claim that the
-gated HF data has been downloaded or uploaded to TOS until a token/access probe
-and actual HDF5 files are verified.
+The large HF dataset is now accessible with the user-provided token, but the
+token must stay outside git. It is stored only in:
+
+```text
+/volume/med-train/users/dchen02/secrets/hf_env_dchen02.sh
+```
+
+Load it with `source .../hf_env_dchen02.sh` before gated HF download commands.
+Do not print the token, copy it into configs, or write it into a skill. The HF
+access probe on 2026-06-22 succeeded for `cyd0806/EM_pretrain_data`: 37 files,
+35 zip files, total about 485.84 GB. Do not claim the gated HF data has been
+used for training until actual zip downloads, extraction into HDF5 files, TOS
+upload, and pretrain logs are verified.
+
+Recommended gated download flow:
+
+```bash
+source /volume/med-train/users/dchen02/secrets/hf_env_dchen02.sh
+python scripts/prepare_em_pretrain_data.py --group <fafb|fib25|kasthuri|mitoem|mb_moc|all> \
+  --download --extract --upload-tos
+```
+
+This can download hundreds of GB; prefer one group at a time, verify free disk,
+and upload to TOS before launching all-EM pretraining.
 
 ## Polling Results
 

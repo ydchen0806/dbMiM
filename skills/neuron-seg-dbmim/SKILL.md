@@ -104,3 +104,9 @@ whether `pos_embed` interpolation was used.
   usage.
 - Watcher logs that only show `checkpoint_wait` mean no checkpoint has been
   observed in TOS yet. Do not infer loss or convergence from that.
+- Stop stale SiFlow jobs once a cleaner matched experiment supersedes them.
+  Typical candidates are old arch-bench jobs after waterz-only A/B/C results
+  exist, branches with a paired publicEM arm already clearly worse on partial
+  A/B evidence, and dependency/runtime probes whose conclusion has been
+  absorbed into the code. Keep active pairs only when they still answer a live
+  scientific question.
