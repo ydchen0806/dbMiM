@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset
-from dbmim.models import DBMIM3DMAE, DecisionModule
+from dbmim.models import DBMIM3DMAE, DecoderAwareDBMIM3DMAE, DecisionModule
 from dbmim.utils import (
     atomic_jsonl_append,
     count_parameters,
@@ -101,21 +101,50 @@ def main() -> None:
         drop_last=True,
     )
     model_cfg = cfg.get("model", {})
-    model = DBMIM3DMAE(
-        in_channels=int(model_cfg.get("in_channels", 1)),
-        volume_size=tuple(model_cfg.get("volume_size", [16, 64, 64])),
-        patch_size=tuple(model_cfg.get("patch_size", [4, 16, 16])),
-        embed_dim=int(model_cfg.get("embed_dim", 192)),
-        depth=int(model_cfg.get("depth", 6)),
-        num_heads=int(model_cfg.get("num_heads", 6)),
-        decoder_dim=int(model_cfg.get("decoder_dim", model_cfg.get("embed_dim", 192))),
-        mask_ratio=float(model_cfg.get("mask_ratio", 0.75)),
-        structure_weight=float(model_cfg.get("structure_weight", 0.1)),
-        structure_axis_weights=model_cfg.get("structure_axis_weights"),
-        membrane_weight=float(model_cfg.get("membrane_weight", 0.0)),
-        membrane_axis_weights=model_cfg.get("membrane_axis_weights"),
-        membrane_clip=float(model_cfg.get("membrane_clip", 5.0)),
-    ).to(device)
+    architecture = str(model_cfg.get("architecture", model_cfg.get("name", "dbmim"))).lower()
+    if architecture in {"decoder_aware", "decoder_aware_dbmim", "unetr_em_dbmim", "affinity_aware_dbmim"}:
+        model = DecoderAwareDBMIM3DMAE(
+            in_channels=int(model_cfg.get("in_channels", 1)),
+            out_channels=int(model_cfg.get("out_channels", 3)),
+            volume_size=tuple(model_cfg.get("volume_size", [32, 160, 160])),
+            patch_size=tuple(model_cfg.get("patch_size", [4, 16, 16])),
+            embed_dim=int(model_cfg.get("embed_dim", 192)),
+            depth=int(model_cfg.get("depth", 6)),
+            num_heads=int(model_cfg.get("num_heads", 6)),
+            feature_size=int(model_cfg.get("feature_size", 32)),
+            decoder_dim=int(model_cfg.get("decoder_dim", model_cfg.get("embed_dim", 192))),
+            mask_ratio=float(model_cfg.get("mask_ratio", 0.75)),
+            structure_weight=float(model_cfg.get("structure_weight", 0.1)),
+            structure_axis_weights=model_cfg.get("structure_axis_weights"),
+            membrane_weight=float(model_cfg.get("membrane_weight", 0.0)),
+            membrane_axis_weights=model_cfg.get("membrane_axis_weights"),
+            membrane_clip=float(model_cfg.get("membrane_clip", 5.0)),
+            affinity_weight=float(model_cfg.get("affinity_weight", 0.35)),
+            affinity_temperature=float(model_cfg.get("affinity_temperature", 1.0)),
+            affinity_axis_weights=model_cfg.get("affinity_axis_weights"),
+            dropout=float(model_cfg.get("dropout", 0.0)),
+            skip_indices=model_cfg.get("skip_indices"),
+            em_refine_depth=int(model_cfg.get("em_refine_depth", 2)),
+            channel_bias_init=model_cfg.get("channel_bias_init"),
+            use_dtrans=model_cfg.get("use_dtrans", None),
+            dtrans_stride_z=model_cfg.get("dtrans_stride_z", None),
+        ).to(device)
+    else:
+        model = DBMIM3DMAE(
+            in_channels=int(model_cfg.get("in_channels", 1)),
+            volume_size=tuple(model_cfg.get("volume_size", [16, 64, 64])),
+            patch_size=tuple(model_cfg.get("patch_size", [4, 16, 16])),
+            embed_dim=int(model_cfg.get("embed_dim", 192)),
+            depth=int(model_cfg.get("depth", 6)),
+            num_heads=int(model_cfg.get("num_heads", 6)),
+            decoder_dim=int(model_cfg.get("decoder_dim", model_cfg.get("embed_dim", 192))),
+            mask_ratio=float(model_cfg.get("mask_ratio", 0.75)),
+            structure_weight=float(model_cfg.get("structure_weight", 0.1)),
+            structure_axis_weights=model_cfg.get("structure_axis_weights"),
+            membrane_weight=float(model_cfg.get("membrane_weight", 0.0)),
+            membrane_axis_weights=model_cfg.get("membrane_axis_weights"),
+            membrane_clip=float(model_cfg.get("membrane_clip", 5.0)),
+        ).to(device)
     decision_cfg = cfg.get("decision", {})
     use_policy = bool(decision_cfg.get("enabled", True))
     decision_module = None
@@ -232,6 +261,9 @@ def main() -> None:
                     "loss": float(out.loss.detach().cpu()),
                     "pixel_loss": float(out.pixel_loss.detach().cpu()),
                     "structure_loss": float(out.structure_loss.detach().cpu()),
+                    "affinity_loss": float(out.affinity_loss.detach().cpu())
+                    if out.affinity_loss is not None
+                    else 0.0,
                     "membrane_weight_mean": float(out.membrane_weight_mean.detach().cpu()),
                     "policy_loss": float(policy_loss.detach().cpu()),
                     "mask_ratio": float(out.mask.float().mean().detach().cpu()),

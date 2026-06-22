@@ -23,6 +23,7 @@ from dbmim.models import (
     UNETRAffinityNet,
     UNETRAnisotropicAffinityNet,
     UNETREMAffinityNet,
+    LearnableAffinityPostProcessor,
     load_pretrained_backbone,
     membrane_edge_map_3d,
 )
@@ -165,6 +166,81 @@ def boundary_calibrated_affinity_ranking_loss(
     else:
         calib_loss = logits.new_tensor(0.0)
     return rank_loss, calib_loss
+
+
+def differentiable_connectivity_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    cfg: dict,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Differentiable local surrogate for calibrated post-processing.
+
+    Waterz/CC are discrete, but the useful trainable part is continuous: local
+    affinity calibration before thresholding. The surrogate combines two-hop
+    path consistency, foreground-smooth affinity calibration, and a lightweight
+    boundary contrast term.
+    """
+
+    prob = torch.sigmoid(logits)
+    target = target.to(device=prob.device, dtype=prob.dtype)
+    mask = torch.ones_like(prob) if valid_mask is None else valid_mask.to(device=prob.device, dtype=prob.dtype)
+    margin = float(cfg.get("dpp_margin", cfg.get("connectivity_margin", 0.05)))
+    path_weight = float(cfg.get("dpp_path_weight", 1.0))
+    smooth_weight = float(cfg.get("dpp_smooth_weight", 0.15))
+    contrast_weight = float(cfg.get("dpp_contrast_weight", 0.25))
+    pos_threshold = float(cfg.get("dpp_pos_threshold", 0.75))
+    neg_threshold = float(cfg.get("dpp_neg_threshold", 0.25))
+    max_pairs = int(cfg.get("dpp_max_pairs", 8192))
+
+    def adjacent(values: torch.Tensor, spatial_dim: int) -> tuple[torch.Tensor, torch.Tensor]:
+        dim = 1 + int(spatial_dim)
+        size = int(values.shape[dim])
+        return values.narrow(dim, 0, size - 1), values.narrow(dim, 1, size - 1)
+
+    path_losses: list[torch.Tensor] = []
+    smooth_losses: list[torch.Tensor] = []
+    for channel, spatial_dim in enumerate((0, 1, 2)):
+        if channel >= int(prob.shape[1]) or int(prob.shape[2 + spatial_dim]) <= 1:
+            continue
+        p0, p1 = adjacent(prob[:, channel], spatial_dim)
+        t0, t1 = adjacent(target[:, channel], spatial_dim)
+        m0, m1 = adjacent(mask[:, channel], spatial_dim)
+        local_mask = m0 * m1
+        denom = local_mask.sum().clamp_min(1.0)
+        pred_path = p0 * p1
+        target_path = t0 * t1
+        path_losses.append(((pred_path - target_path).pow(2) * local_mask).sum() / denom)
+
+        same_object = (t0 * t1).detach()
+        same_weight = local_mask * same_object
+        same_denom = same_weight.sum().clamp_min(1.0)
+        smooth_losses.append(((p0 - p1).pow(2) * same_weight).sum() / same_denom)
+
+    contrast_losses: list[torch.Tensor] = []
+    bool_mask = mask.to(dtype=torch.bool)
+    pos_mask = (target >= pos_threshold) & bool_mask
+    neg_mask = (target <= neg_threshold) & bool_mask
+    for channel in range(int(logits.shape[1])):
+        pos = logits[:, channel][pos_mask[:, channel]]
+        neg = logits[:, channel][neg_mask[:, channel]]
+        if pos.numel() == 0 or neg.numel() == 0:
+            continue
+        if max_pairs > 0:
+            if pos.numel() > max_pairs:
+                pos = pos[torch.randperm(pos.numel(), device=pos.device)[:max_pairs]]
+            if neg.numel() > max_pairs:
+                neg = neg[torch.randperm(neg.numel(), device=neg.device)[:max_pairs]]
+        contrast_losses.append(F.softplus(float(margin) - pos.mean() + neg.mean()))
+
+    total = logits.new_tensor(0.0)
+    if path_losses:
+        total = total + path_weight * torch.stack(path_losses).mean()
+    if smooth_losses:
+        total = total + smooth_weight * torch.stack(smooth_losses).mean()
+    if contrast_losses:
+        total = total + contrast_weight * torch.stack(contrast_losses).mean()
+    return total
 
 
 def make_affinity_valid_mask(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor | None:
@@ -442,6 +518,7 @@ def finetune_loss(
     labels: torch.Tensor,
     train_cfg: dict,
     image: torch.Tensor | None = None,
+    postprocess: LearnableAffinityPostProcessor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Affinity loss plus optional LSD-style auxiliary supervision."""
 
@@ -451,14 +528,26 @@ def finetune_loss(
     valid_mask = make_offset_affinity_valid_mask(labels, train_cfg, affinity_channels)
     if valid_mask is not None:
         valid_mask = valid_mask[:, :affinity_channels].to(logits.device)
+    postprocess_weight = float(cfg.get("differentiable_postprocess_weight", cfg.get("dpp_weight", 0.0)))
+    calibrated_logits = postprocess(affinity_logits) if postprocess is not None else affinity_logits
+    supervised_logits = calibrated_logits if postprocess_weight > 0.0 else affinity_logits
     spatial_weight = membrane_spatial_weight(image, affinity_target, train_cfg, valid_mask=valid_mask)
     loss, parts = affinity_loss(
-        affinity_logits,
+        supervised_logits,
         affinity_target,
         train_cfg,
         valid_mask=valid_mask,
         spatial_weight=spatial_weight,
     )
+    dpp_loss = logits.new_tensor(0.0)
+    if postprocess_weight > 0.0:
+        dpp_loss = differentiable_connectivity_loss(
+            calibrated_logits,
+            affinity_target,
+            cfg,
+            valid_mask=valid_mask,
+        )
+        loss = loss + postprocess_weight * dpp_loss
     lsd_weight = float(cfg.get("lsd_weight", train_cfg.get("lsd_weight", 0.0)))
     lsd_loss = logits.new_tensor(0.0)
     lsd_fg_loss = logits.new_tensor(0.0)
@@ -494,6 +583,7 @@ def finetune_loss(
             "lsd_loss": lsd_loss.detach(),
             "lsd_fg_loss": lsd_fg_loss.detach(),
             "lsd_offset_loss": lsd_offset_loss.detach(),
+            "differentiable_postprocess_loss": dpp_loss.detach(),
             "membrane_weight_mean": logits.new_tensor(1.0)
             if spatial_weight is None
             else spatial_weight.detach().mean(),
@@ -648,8 +738,16 @@ def build_optimizer(model: torch.nn.Module, train_cfg: dict) -> torch.optim.Opti
 
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, train_cfg: dict) -> dict[str, float]:
+def evaluate(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    train_cfg: dict,
+    postprocess: LearnableAffinityPostProcessor | None = None,
+) -> dict[str, float]:
     model.eval()
+    if postprocess is not None:
+        postprocess.eval()
     max_batches = int(train_cfg.get("eval_max_batches", 0))
     loss_m = AverageMeter()
     bce_m = AverageMeter()
@@ -668,8 +766,17 @@ def evaluate(model: torch.nn.Module, loader: DataLoader, device: torch.device, t
         labels = batch["label"].to(device, non_blocking=True)
         target = make_affinity_target(labels, train_cfg).to(device)
         logits = model(image)
-        loss, loss_parts = finetune_loss(logits, target, labels, train_cfg, image=image)
+        loss, loss_parts = finetune_loss(
+            logits,
+            target,
+            labels,
+            train_cfg,
+            image=image,
+            postprocess=postprocess,
+        )
         affinity_logits = logits[:, : target.shape[1]]
+        if postprocess is not None:
+            affinity_logits = postprocess(affinity_logits)
         bsz = image.shape[0]
         loss_m.update(float(loss.detach().cpu()), bsz)
         bce_m.update(float(loss_parts["bce_loss"].cpu()), bsz)
@@ -748,6 +855,17 @@ def main() -> None:
     )
 
     model = build_affinity_model(cfg).to(device)
+    loss_cfg = _loss_cfg(train_cfg)
+    dpp_weight = float(loss_cfg.get("differentiable_postprocess_weight", loss_cfg.get("dpp_weight", 0.0)))
+    postprocess = None
+    if dpp_weight > 0.0:
+        postprocess = LearnableAffinityPostProcessor(
+            channels=int(loss_cfg.get("dpp_channels", 3)),
+            init_bias=loss_cfg.get("dpp_init_bias", loss_cfg.get("postprocess_init_bias", None)),
+            init_scale=loss_cfg.get("dpp_init_scale", None),
+            smooth_kernel=int(loss_cfg.get("dpp_smooth_kernel", 3)),
+            residual_weight=float(loss_cfg.get("dpp_residual_weight", 0.25)),
+        ).to(device)
 
     pretrained = args.pretrained or cfg.get("pretrained", "")
     if pretrained:
@@ -759,14 +877,28 @@ def main() -> None:
     frozen_params = apply_param_freeze(model, train_cfg)
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
+        if postprocess is not None:
+            postprocess = torch.nn.parallel.DistributedDataParallel(postprocess, device_ids=[local_rank])
 
     optimizer = build_optimizer(model, train_cfg)
+    if postprocess is not None:
+        dpp_lr = float(loss_cfg.get("dpp_lr", train_cfg.get("lr", 1e-4)))
+        optimizer.add_param_group(
+            {
+                "params": list(postprocess.parameters()),
+                "lr": dpp_lr,
+                "weight_decay": 0.0,
+                "name": "differentiable_postprocess",
+            }
+        )
     start_epoch = 0
     global_step = 0
     best_score = -1.0
     if args.resume:
         ckpt = load_checkpoint(args.resume, map_location="cpu")
         unwrap(model).load_state_dict(ckpt["model"])
+        if postprocess is not None and ckpt.get("postprocess") is not None:
+            unwrap(postprocess).load_state_dict(ckpt["postprocess"])
         optimizer.load_state_dict(ckpt["optimizer"])
         start_epoch = int(ckpt.get("epoch", -1)) + 1
         global_step = int(ckpt.get("global_step", 0))
@@ -808,6 +940,8 @@ def main() -> None:
         if sampler is not None:
             sampler.set_epoch(epoch)
         model.train()
+        if postprocess is not None:
+            postprocess.train()
         for batch in loader:
             image = batch["image"].to(device, non_blocking=True)
             labels = batch["label"].to(device, non_blocking=True)
@@ -815,7 +949,14 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 logits = model(image)
-                loss, loss_parts = finetune_loss(logits, target, labels, train_cfg, image=image)
+                loss, loss_parts = finetune_loss(
+                    logits,
+                    target,
+                    labels,
+                    train_cfg,
+                    image=image,
+                    postprocess=postprocess,
+                )
             scaler.scale(loss).backward()
             if float(train_cfg.get("clip_grad", 0.0)) > 0:
                 scaler.unscale_(optimizer)
@@ -833,6 +974,9 @@ def main() -> None:
                     "train_dice_loss": float(loss_parts["dice_loss"].cpu()),
                     "train_boundary_dice_loss": float(loss_parts["boundary_dice_loss"].cpu()),
                     "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
+                    "train_differentiable_postprocess_loss": float(
+                        loss_parts["differentiable_postprocess_loss"].cpu()
+                    ),
                     "train_membrane_weight_mean": float(loss_parts["membrane_weight_mean"].cpu()),
                     "train_bcar_rank_loss": float(loss_parts["bcar_rank_loss"].cpu()),
                     "train_bcar_calibration_loss": float(loss_parts["bcar_calibration_loss"].cpu()),
@@ -847,6 +991,7 @@ def main() -> None:
                 if is_main(rank):
                     payload = {
                         "model": unwrap(model).state_dict(),
+                        "postprocess": unwrap(postprocess).state_dict() if postprocess is not None else None,
                         "optimizer": optimizer.state_dict(),
                         "epoch": epoch,
                         "global_step": global_step,
@@ -870,7 +1015,13 @@ def main() -> None:
         if distributed and should_eval:
             dist.barrier()
         if is_main(rank) and should_eval:
-            stats = evaluate(unwrap(model), val_loader, device, train_cfg)
+            stats = evaluate(
+                unwrap(model),
+                val_loader,
+                device,
+                train_cfg,
+                postprocess=unwrap(postprocess) if postprocess is not None else None,
+            )
             stats.update({"epoch": epoch, "step": global_step})
             print(stats, flush=True)
             atomic_jsonl_append(log_path, stats)
@@ -880,6 +1031,7 @@ def main() -> None:
                     output_dir / "finetuned_best.pt",
                     {
                         "model": unwrap(model).state_dict(),
+                        "postprocess": unwrap(postprocess).state_dict() if postprocess is not None else None,
                         "optimizer": optimizer.state_dict(),
                         "epoch": epoch,
                         "global_step": global_step,
@@ -898,6 +1050,7 @@ def main() -> None:
         if is_main(rank) and should_save:
             payload = {
                 "model": unwrap(model).state_dict(),
+                "postprocess": unwrap(postprocess).state_dict() if postprocess is not None else None,
                 "optimizer": optimizer.state_dict(),
                 "epoch": epoch,
                 "global_step": global_step,

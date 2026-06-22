@@ -337,3 +337,28 @@ Operational rules:
   (`1.002919`); current best ARAND is R16 long-affinity SHW-MSE publicEM
   (`0.181445`). Use those as the active baselines until R18 and the fine
   calibration sweep finish.
+
+## Learned Postprocess Evaluation Contract
+
+As of the R21 end-to-end postprocess branch, `train_finetune.py` can save a
+learned `postprocess` module inside the finetune checkpoint. The evaluator
+`scripts/evaluate_cremi_segmentation.py` must load and apply that module before
+sigmoid, thresholding, waterz, graph-CC, or affinity-stat reporting. It prints
+and writes:
+
+```text
+learned_postprocess_loaded: true|false
+```
+
+If this field is `false` for a DPP checkpoint, the evaluation is not testing
+the learned postprocess and must be rerun or debugged. The post-train official
+A/B/C eval in `scripts/submit_siflow_dbmim.py` uses the same checkpoint path,
+so DPP rows should have the module loaded automatically once the updated bundle
+is used.
+
+DPP rows should still report the normal calibration-bias sweep columns. The
+learned postprocess is applied first; the explicit eval-time calibration biases
+are then an additional sweep. This makes the comparison conservative: if DPP
+only learns the same bias that the sweep already tests, it may not improve the
+best-by-VOI row. A real DPP gain should appear as either lower best VOI/ARAND
+or a more robust plateau across calibration biases.

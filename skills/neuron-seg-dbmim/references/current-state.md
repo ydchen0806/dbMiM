@@ -860,3 +860,62 @@ Remaining active dbMiM tasks immediately after cleanup: seven tasks / 13 GPUs.
 They are R18 BCAR publicEM/scratch, R19 four structure-capacity arms, and R17
 fine calibration. Before launching new jobs, query live SiFlow state again
 because stopped tasks can linger briefly as `Stopping`.
+
+## 2026-06-22 Late R20/R21 End-to-End Postprocess Snapshot
+
+At 2026-06-22 23:12 China time, live SiFlow state had changed substantially:
+most older dbMiM work had completed or been stopped. Four dbMiM jobs were
+running on `med-model`: two R20 downstream official-eval pods, one R20+DPP pod,
+and one R21 decoder-aware pretrain pod. Always re-query live state before
+reporting GPU usage.
+
+R20 full-EM pretraining checkpoint status:
+
+- UUID `7be2f62b-c1f3-482a-85a7-74cd63c63c35`, `med-model`, 4 GPUs.
+- Final task status is `Failed`, not `Succeeded`.
+- Failure happened after useful training: TOS contains
+  `checkpoint_step_00060000.pt`, `pretrained_latest.pt`, and `train_log.jsonl`
+  under
+  `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_membrane_dbmim_r20/`.
+- Treat R20 as a 60k-step full-EM encoder-only checkpoint, not a completed
+  240k-step pretraining run. It is still valid for fast downstream signal, but
+  do not overstate convergence.
+
+R20 downstream status:
+
+| arm | UUID | state at 23:10 CST | note |
+|---|---|---|---|
+| MSE+MAWS + R20 full-EM | `0e29a6b1-26bb-45c2-813d-db8efb266d21` | Running | finetune reached step 12000, loss `0.021585`; post-train official A/B/C waterz not uploaded yet |
+| MSE+MAWS+BCAR + R20 full-EM | `eb647c53-f408-4a5f-99c9-ead3d7b1f2df` | Running | finetune reached step 12000, loss `0.025563`; post-train official A/B/C waterz not uploaded yet |
+
+Poll command:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r20q --once --logs --siflow-fallback
+```
+
+The poller showed the matched R17 scratch summaries are complete A/B/C:
+`MSE+MAWS scratch VOI=1.095164`, `bestARAND=0.210442`; and
+`MSE+MAWS+BCAR scratch VOI=1.087732`, `bestARAND=0.196075`. Do not claim R20
+pretraining gain until the two R20 official A/B/C summaries appear.
+
+New end-to-end postprocess and decoder-aware jobs:
+
+| purpose | stage/config | UUID | GPUs | status at submit |
+|---|---|---:|---:|---|
+| learned differentiable postprocess on R20 full-EM | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-dpp-fullem-r20q` / `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_dpp_fullem_r20q.yaml` | `e52d773c-abae-481f-9da7-c3b34cab38a8` | 2 | Running; started `2026-06-22T15:09:22Z` |
+| decoder-aware full-EM dbMiM pretraining | `pretrain-em-full-decoderaware-r21` / `configs/pretrain_em_full_decoderaware_r21.yaml` | `388347d2-3a33-4cd3-ab65-78b6d6ab2949` | 4 | Running; started `2026-06-22T15:11:13Z` |
+
+R21 pretraining uses the same five gated HF groups (`fafb`, `fib25`,
+`kasthuri`, `mitoem`, `mb_moc`) and the same mounted staging path:
+
+```text
+/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all
+```
+
+The submitter now skips TOS copy for a group if HDF5 files are already staged
+under that mounted path. This avoids re-copying hundreds of GB for R21 after
+R20 staged the same data. The run still has a hard gate: if any required group
+is absent after the copy/skip step, it exits 21 and does not silently fall back
+to CREMI-only.

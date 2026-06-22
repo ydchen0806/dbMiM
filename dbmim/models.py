@@ -184,6 +184,9 @@ class MAEOutput:
     target: torch.Tensor
     mask: torch.Tensor
     decision: dict[str, torch.Tensor] | None
+    affinity_loss: torch.Tensor | None = None
+    affinity_pred: torch.Tensor | None = None
+    affinity_target: torch.Tensor | None = None
 
 
 def _normalize_axis_weights(axis_weights: Sequence[float] | None) -> tuple[float, float, float]:
@@ -867,6 +870,278 @@ class UNETREMAffinityNet(UNETRAnisotropicAffinityNet):
             dropout=dropout,
             refine_depth=em_refine_depth,
             channel_bias_init=channel_bias_init,
+        )
+
+
+class LearnableAffinityPostProcessor(nn.Module):
+    """Differentiable local affinity calibration used as train-time postprocess.
+
+    Waterz/connected-components stay non-differentiable at evaluation time. This
+    module learns the part that is actually continuous: z/xy affinity scaling,
+    biasing, and a local smoothing gate before threshold/agglomeration. The
+    calibrated logits can be supervised end-to-end and used for metric-aligned
+    regularization without replacing the final waterz sweep.
+    """
+
+    def __init__(
+        self,
+        channels: int = 3,
+        init_bias: Sequence[float] | None = None,
+        init_scale: Sequence[float] | None = None,
+        smooth_kernel: int = 3,
+        residual_weight: float = 0.25,
+    ) -> None:
+        super().__init__()
+        self.channels = int(channels)
+        if self.channels <= 0:
+            raise ValueError("LearnableAffinityPostProcessor requires channels > 0")
+        bias = torch.zeros(self.channels, dtype=torch.float32)
+        if init_bias is not None:
+            values = [float(v) for v in init_bias]
+            if len(values) > self.channels:
+                raise ValueError(f"init_bias has {len(values)} values for {self.channels} channels")
+            bias[: len(values)] = torch.tensor(values, dtype=torch.float32)
+        scale = torch.ones(self.channels, dtype=torch.float32)
+        if init_scale is not None:
+            values = [float(v) for v in init_scale]
+            if len(values) > self.channels:
+                raise ValueError(f"init_scale has {len(values)} values for {self.channels} channels")
+            scale[: len(values)] = torch.tensor(values, dtype=torch.float32)
+        self.log_scale = nn.Parameter(scale.clamp_min(1e-3).log().view(1, self.channels, 1, 1, 1))
+        self.bias = nn.Parameter(bias.view(1, self.channels, 1, 1, 1))
+        self.residual_weight = nn.Parameter(torch.tensor(float(residual_weight), dtype=torch.float32))
+        self.smooth_kernel = max(1, int(smooth_kernel))
+        self.local_refine = nn.Conv3d(
+            self.channels,
+            self.channels,
+            kernel_size=3,
+            padding=1,
+            groups=self.channels,
+            bias=False,
+        )
+        with torch.no_grad():
+            self.local_refine.weight.zero_()
+
+    def forward(self, logits: torch.Tensor) -> torch.Tensor:
+        if int(logits.shape[1]) != self.channels:
+            raise ValueError(f"expected {self.channels} affinity channels, got {int(logits.shape[1])}")
+        calibrated = logits * self.log_scale.exp() + self.bias
+        if self.smooth_kernel > 1:
+            prob = torch.sigmoid(calibrated)
+            smooth = F.avg_pool3d(
+                prob,
+                kernel_size=self.smooth_kernel,
+                stride=1,
+                padding=self.smooth_kernel // 2,
+            )
+            residual = self.local_refine(prob - smooth)
+            calibrated = calibrated + self.residual_weight.tanh() * residual
+        return calibrated
+
+
+class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
+    """dbMiM variant that pretrains both encoder and EM decoder/head.
+
+    The original dbMiM checkpoint transfers only the ViT encoder into the
+    segmentation network. This variant keeps the masked-image reconstruction
+    objective, but also predicts a differentiable membrane-derived affinity
+    proxy with the exact UNETR-EM decoder/head names used during finetuning.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        out_channels: int = 3,
+        volume_size: tuple[int, int, int] = (32, 160, 160),
+        patch_size: tuple[int, int, int] = (4, 16, 16),
+        embed_dim: int = 192,
+        depth: int = 6,
+        num_heads: int = 6,
+        feature_size: int = 32,
+        decoder_dim: int = 192,
+        mask_ratio: float = 0.75,
+        structure_weight: float = 0.1,
+        structure_axis_weights: Sequence[float] | None = None,
+        membrane_weight: float = 0.0,
+        membrane_axis_weights: Sequence[float] | None = None,
+        membrane_clip: float = 5.0,
+        affinity_weight: float = 0.35,
+        affinity_temperature: float = 1.0,
+        affinity_axis_weights: Sequence[float] | None = None,
+        dropout: float = 0.0,
+        skip_indices: Sequence[int] | None = None,
+        em_refine_depth: int = 2,
+        channel_bias_init: Sequence[float] | None = None,
+        use_dtrans: bool | None = None,
+        dtrans_stride_z: int | None = None,
+    ) -> None:
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            volume_size=volume_size,
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            depth=depth,
+            num_heads=num_heads,
+            feature_size=feature_size,
+            dropout=dropout,
+            skip_indices=skip_indices,
+            use_dtrans=use_dtrans,
+            dtrans_stride_z=dtrans_stride_z,
+            em_refine_depth=em_refine_depth,
+            channel_bias_init=channel_bias_init,
+        )
+        self.in_channels = int(in_channels)
+        self.mask_ratio = float(mask_ratio)
+        self.structure_weight = float(structure_weight)
+        self.structure_axis_weights = _normalize_axis_weights(structure_axis_weights)
+        self.membrane_weight = float(membrane_weight)
+        self.membrane_axis_weights = _normalize_axis_weights(membrane_axis_weights)
+        self.membrane_clip = float(membrane_clip)
+        self.affinity_weight = float(affinity_weight)
+        self.affinity_temperature = float(affinity_temperature)
+        self.affinity_axis_weights = _normalize_axis_weights(affinity_axis_weights)
+        patch_dim = self.in_channels * math.prod(self.patch_size)
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.reconstruction_decoder = nn.Sequential(
+            nn.Linear(embed_dim, decoder_dim),
+            nn.GELU(),
+            nn.Linear(decoder_dim, patch_dim),
+        )
+        nn.init.trunc_normal_(self.mask_token, std=0.02)
+        for module in self.reconstruction_decoder.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.trunc_normal_(module.weight, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+
+    def patchify(self, x: torch.Tensor) -> torch.Tensor:
+        pz, py, px = self.patch_size
+        bsz, ch, depth, height, width = x.shape
+        x = x.reshape(bsz, ch, depth // pz, pz, height // py, py, width // px, px)
+        x = x.permute(0, 2, 4, 6, 1, 3, 5, 7)
+        return x.reshape(bsz, -1, ch * pz * py * px)
+
+    def unpatchify(self, patches: torch.Tensor) -> torch.Tensor:
+        pz, py, px = self.patch_size
+        gd, gh, gw = self.grid_size
+        bsz = patches.shape[0]
+        x = patches.reshape(bsz, gd, gh, gw, self.in_channels, pz, py, px)
+        x = x.permute(0, 4, 1, 5, 2, 6, 3, 7)
+        return x.reshape(bsz, self.in_channels, gd * pz, gh * py, gw * px)
+
+    def random_mask(self, bsz: int, device: torch.device) -> torch.Tensor:
+        num_mask = max(1, int(round(self.mask_ratio * self.num_patches)))
+        noise = torch.rand(bsz, self.num_patches, device=device)
+        ids = noise.argsort(dim=1)
+        mask = torch.zeros(bsz, self.num_patches, dtype=torch.bool, device=device)
+        mask.scatter_(1, ids[:, :num_mask], True)
+        return mask
+
+    def _pseudo_affinity_target(self, x: torch.Tensor) -> torch.Tensor:
+        channels = []
+        weights = self.affinity_axis_weights
+        for dim, weight in zip((-3, -2, -1), weights):
+            grad = x.diff(dim=dim).abs()
+            pad_shape = list(grad.shape)
+            pad_shape[dim] = 1
+            grad = torch.cat([x.new_zeros(pad_shape), grad], dim=dim)
+            reduce_dims = tuple(range(1, grad.ndim))
+            grad = grad / grad.mean(dim=reduce_dims, keepdim=True).clamp_min(1e-6)
+            affinity = torch.exp(-float(weight) * float(self.affinity_temperature) * grad)
+            channels.append(affinity)
+        return torch.cat(channels, dim=1).clamp(0.0, 1.0)
+
+    def _encode_with_mask(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[int, torch.Tensor]]:
+        tokens, grid = self.patch_embed(x)
+        if grid != self.grid_size:
+            raise ValueError(f"input grid {grid} does not match configured grid {self.grid_size}")
+        tokens = tokens + self.pos_embed
+        encoded = torch.where(mask.unsqueeze(-1), self.mask_token + self.pos_embed, tokens)
+        hidden_by_index: dict[int, torch.Tensor] = {}
+        for idx, block in enumerate(self.encoder_blocks):
+            encoded = block(encoded)
+            if idx in self.skip_indices:
+                hidden_by_index[idx] = encoded
+        return self.norm(encoded), hidden_by_index
+
+    def _decode_features_from_tokens(
+        self,
+        x: torch.Tensor,
+        tokens: torch.Tensor,
+        hidden_by_index: dict[int, torch.Tensor],
+    ) -> torch.Tensor:
+        x2, x3, x4 = [hidden_by_index.get(idx, tokens) for idx in self.skip_indices]
+        enc1 = self.encoder1(x)
+        enc2 = self.encoder2(self._tokens_to_grid(x2))
+        enc3 = self.encoder3(self._tokens_to_grid(x3))
+        enc4 = self.encoder4(self._tokens_to_grid(x4))
+        dec4 = self._tokens_to_grid(tokens)
+        dec3 = self.decoder5(dec4, enc4)
+        dec2 = self.decoder4(dec3, enc3)
+        dec1 = self.decoder3(dec2, enc2)
+        if self.use_dtrans:
+            dec1 = self.dtrans(dec1)
+        return self.decoder2(dec1, enc1)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        decision_module: DecisionModule | None = None,
+        target_mask_ratio: float | None = None,
+        deterministic_policy: bool = False,
+    ) -> MAEOutput:
+        target = self.patchify(x)
+        raw_tokens, grid = self.patch_embed(x)
+        if grid != self.grid_size:
+            raise ValueError(f"input grid {grid} does not match configured grid {self.grid_size}")
+        decision = None
+        if decision_module is None:
+            mask = self.random_mask(x.shape[0], x.device)
+        else:
+            decision = decision_module(
+                raw_tokens.detach(),
+                target_mask_ratio=target_mask_ratio,
+                deterministic=deterministic_policy,
+            )
+            mask = decision["mask"]
+        encoded, hidden_by_index = self._encode_with_mask(x, mask)
+        pred_patches = self.reconstruction_decoder(encoded)
+        per_patch = (pred_patches - target).pow(2).mean(dim=-1)
+        patch_weight = mask.new_ones(per_patch.shape, dtype=per_patch.dtype)
+        if self.membrane_weight > 0.0:
+            edge = membrane_edge_map_3d(
+                x,
+                axis_weights=self.membrane_axis_weights,
+                clip=self.membrane_clip,
+            )
+            patch_weight = 1.0 + self.membrane_weight * self.patchify(edge).mean(dim=-1)
+        weighted_mask = mask.float() * patch_weight
+        pixel_loss_per_sample = (per_patch * weighted_mask).sum(dim=1) / weighted_mask.sum(dim=1).clamp_min(1.0)
+        pixel_loss = pixel_loss_per_sample.mean()
+        pred_volume = self.unpatchify(pred_patches)
+        structure_loss = gradient_loss_3d(pred_volume, x, axis_weights=self.structure_axis_weights)
+        features = self._decode_features_from_tokens(x, encoded, hidden_by_index)
+        affinity_logits = self.head(features)
+        affinity_target = self._pseudo_affinity_target(x)
+        affinity_loss = F.mse_loss(torch.sigmoid(affinity_logits), affinity_target)
+        loss = pixel_loss + self.structure_weight * structure_loss + self.affinity_weight * affinity_loss
+        return MAEOutput(
+            loss=loss,
+            pixel_loss=pixel_loss,
+            structure_loss=structure_loss,
+            membrane_weight_mean=patch_weight.detach().mean(),
+            pred=pred_volume,
+            target=x,
+            mask=mask,
+            decision=decision,
+            affinity_loss=affinity_loss,
+            affinity_pred=torch.sigmoid(affinity_logits),
+            affinity_target=affinity_target,
         )
 
 

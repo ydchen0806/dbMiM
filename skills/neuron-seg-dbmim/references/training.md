@@ -367,3 +367,52 @@ Full R14 follow-up submitted after MA-dbMiM pretraining completed:
 If full R14 does not improve over scratch/CREMI-only pretraining, frame MAWS
 and BCAR as supervised alignment gains and avoid claiming a dbMiM pretraining
 benefit until all-EM pretraining data is actually available.
+
+## R20/R21 Decoder-Aware And End-to-End Postprocess Lessons
+
+R20 full-EM pretraining produced a useful but incomplete checkpoint:
+`pretrain_em_full_membrane_dbmim_r20/pretrained_latest.pt` at step 60000. The
+SiFlow task failed afterward, so downstream experiments using R20 should be
+described as 60k-step full-EM pretraining, not final convergence.
+
+The key hypothesis for R21 is that classic dbMiM only transfers the ViT/MAE
+encoder keys into UNETR; decoder/head remain random. `DecoderAwareDBMIM3DMAE`
+keeps the masked reconstruction objective but inherits `UNETREMAffinityNet`, so
+its checkpoint contains compatible UNETR decoder/head keys as well:
+
+- `encoder1/2/3/4`
+- `decoder5/4/3/2`
+- `dtrans`
+- `head.shared`, `head.z_refine`, `head.xy_refine`, `head.z_head`,
+  `head.xy_head`, `head.channel_bias`, `head.channel_scale`
+
+During pretraining it also supervises an unsupervised membrane-derived affinity
+proxy via sigmoid-MSE. The downstream loader already loads every shape-matched
+key, so decoder-aware checkpoints should report more loaded keys than the
+encoder-only 77-key publicEM/R20 checkpoints. If `loaded_pretrained_keys` stays
+near 77 for an R21 downstream arm, inspect checkpoint key names before trusting
+the result.
+
+New configs:
+
+- `configs/pretrain_em_full_decoderaware_r21.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r21q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_decoderaware_r21q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_dpp_scratch_r21q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_decoderaware_dpp_r21q.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_dpp_fullem_r20q.yaml`
+
+The differentiable postprocess path adds `LearnableAffinityPostProcessor`, a
+small trainable logit calibration module with channel scale/bias plus local
+depthwise smoothing residual. Training saves it in checkpoints under the
+`postprocess` key. Its loss is not waterz itself; it is a continuous surrogate
+over calibrated affinities:
+
+- two-hop path consistency against the affinity target;
+- foreground-smooth local affinity consistency;
+- boundary contrast between positive and negative affinity logits.
+
+Use DPP as an end-to-end calibration/postprocess experiment, not as a claim
+that waterz became differentiable. The final segmentation still uses standard
+waterz/threshold sweeps, but on logits that can include the learned calibration
+module.

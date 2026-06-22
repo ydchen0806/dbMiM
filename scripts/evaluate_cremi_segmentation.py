@@ -29,7 +29,8 @@ from dbmim.postprocess import (
     waterz_agglomeration,
     watershed_fragments,
 )
-from train_finetune import build_affinity_model
+from train_finetune import _loss_cfg, build_affinity_model
+from dbmim.models import LearnableAffinityPostProcessor
 from dbmim.utils import ensure_dir, load_checkpoint, load_config
 
 
@@ -148,9 +149,12 @@ def predict_affinities(
     stride: tuple[int, int, int],
     device: torch.device,
     channels: int = 3,
+    postprocess: torch.nn.Module | None = None,
     return_logits: bool = False,
 ) -> np.ndarray:
     model.eval()
+    if postprocess is not None:
+        postprocess.eval()
     volume = normalize_volume(raw)
     depth, height, width = volume.shape
     wd, wh, ww = window_size
@@ -176,7 +180,10 @@ def predict_affinities(
                 tensor = torch.from_numpy(patch[None, None]).float().to(device)
                 with torch.amp.autocast("cuda", enabled=amp_enabled):
                     logits = model(tensor)
-                logits_np = logits[:, :out_channels].float().cpu().numpy()[0]
+                    affinity_logits = logits[:, :out_channels]
+                    if postprocess is not None:
+                        affinity_logits = postprocess(affinity_logits)
+                logits_np = affinity_logits.float().cpu().numpy()[0]
                 logits_sum[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += logits_np
                 counts[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += 1.0
     logits_avg = logits_sum / np.maximum(counts, 1.0)
@@ -218,6 +225,24 @@ def build_model(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.M
     state = payload.get("model", payload)
     model.load_state_dict(state, strict=True)
     return model.to(device)
+
+
+def build_postprocess(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.Module | None:
+    payload = load_checkpoint(checkpoint, map_location="cpu")
+    state = payload.get("postprocess")
+    if state is None:
+        return None
+    effective_cfg = payload.get("config", cfg)
+    loss_cfg = _loss_cfg(effective_cfg.get("train", {}))
+    module = LearnableAffinityPostProcessor(
+        channels=int(loss_cfg.get("dpp_channels", 3)),
+        init_bias=loss_cfg.get("dpp_init_bias", loss_cfg.get("postprocess_init_bias", None)),
+        init_scale=loss_cfg.get("dpp_init_scale", None),
+        smooth_kernel=int(loss_cfg.get("dpp_smooth_kernel", 3)),
+        residual_weight=float(loss_cfg.get("dpp_residual_weight", 0.25)),
+    )
+    module.load_state_dict(state, strict=True)
+    return module.to(device)
 
 
 def metric_dict(obj) -> dict[str, float | int]:
@@ -473,6 +498,8 @@ def main() -> None:
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     output_dir = ensure_dir(args.output_dir)
     model = build_model(cfg, Path(args.checkpoint), device)
+    postprocess = build_postprocess(cfg, Path(args.checkpoint), device)
+    print({"learned_postprocess_loaded": postprocess is not None}, flush=True)
     model_window = tuple(int(v) for v in model.volume_size)
     stride = tuple(args.stride) if args.stride is not None else tuple(max(1, v // 2) for v in model_window)
     requested_crop_size = tuple(int(v) for v in args.crop_size)
@@ -531,7 +558,16 @@ def main() -> None:
             flush=True,
         )
         t0 = time.perf_counter()
-        logits_all = predict_affinities(model, raw, model_window, stride, device, channels=required_channels, return_logits=True)
+        logits_all = predict_affinities(
+            model,
+            raw,
+            model_window,
+            stride,
+            device,
+            channels=required_channels,
+            postprocess=postprocess,
+            return_logits=True,
+        )
         logits_np = logits_all[np.asarray(affinity_channel_indices, dtype=np.int64)]
         aff = sigmoid_np(logits_np).astype(np.float32, copy=False)
         infer_sec = time.perf_counter() - t0
@@ -718,6 +754,7 @@ def main() -> None:
         "cremi_boundary_ignore_distance_xy": int(args.cremi_boundary_ignore_distance_xy),
         "cremi_boundary_ignore_distance_z": int(args.cremi_boundary_ignore_distance_z),
         "replicate_affinity_boundary": bool(args.replicate_affinity_boundary),
+        "learned_postprocess_loaded": postprocess is not None,
         "calibration_biases": [list(bias) for bias in calibration_biases],
         "calibration_temperatures": calibration_temperatures,
         "waterz_scoring": list(waterz_scorings),
