@@ -965,15 +965,31 @@ evaluation:
 This gives a matched `scratch/pretrained x DPP/no-DPP` comparison after full
 decoder-aware pretraining, rather than judging an early 40k/60k checkpoint.
 
-At `2026-06-23T00:17+08:00`, R20 official A/B/C results began landing:
+At `2026-06-23T00:17+08:00`, R20 official A/B/C results began landing.
+At `2026-06-23T00:34+08:00`, the DPP summary completed and corrected the
+earlier partial-read impression:
 
 | arm | source | records | VOI sum | best ARAND | note |
 |---|---|---:|---:|---:|---|
 | R20 full-EM MSE+MAWS | TOS summary/stdout | 60 | `1.085331` | `0.195722` | small gain vs R17 scratch VOI `1.095164`, ARAND gain larger |
 | R20 full-EM MSE+MAWS+BCAR | TOS summary/stdout | 60 | `1.179617` | `0.236163` | worse than matched scratch; do not pursue BCAR here |
-| R20 full-EM MSE+MAWS+DPP | stdout fallback | 45 | `0.798560` | `0.108556` | strong positive signal, but TOS eval directory was still empty; wait for full upload/records before treating as final |
+| R20 full-EM MSE+MAWS+DPP | TOS summary/stdout | 60 | `1.123336` | `0.210163` | final complete result is worse than no-DPP and not better than scratch |
 
-The useful current hypothesis is therefore not "more BCAR", but
-`full-EM pretraining + pure MSE/MAWS + differentiable learned postprocess`.
-The R21 watcher will test whether decoder-aware pretraining preserves or
-amplifies that DPP signal under matched scratch/pretrained controls.
+Important pitfall: an intermediate stdout fallback with only 45 records showed
+`VOI=0.798560` and `ARAND=0.108556`, but that was a partial sweep and reversed
+after all 60 records appeared. Do not use partial waterz stdout rows for method
+claims unless the record count and sample coverage match the intended grid.
+
+The useful current hypothesis is therefore `full-EM pretraining + pure
+MSE/MAWS` with no BCAR and no current DPP claim. The R21 watcher still tests
+decoder-aware pretraining and the DPP controls under a matched design, but DPP
+should be treated as exploratory rather than a current positive result.
+
+At `2026-06-23T00:34+08:00`, only one dbMiM SiFlow task remained active:
+
+- R21 decoder-aware pretrain `388347d2-3a33-4cd3-ab65-78b6d6ab2949`, 4 GPUs,
+  `med-model`.
+- Latest TOS `train_log.jsonl`: step `56940/80000`, loss `0.131452`,
+  affinity loss `0.011736`, elapsed `4911s`.
+- The screen watcher had reached poll 8 and was waiting for step `80000` before
+  submitting the four R21 downstream arms.
