@@ -1170,3 +1170,66 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u al
 Do not submit more dbMiM GPU work while these four tasks are active unless a
 task finishes or is stopped; the user cap is 16 GPUs and the current planned
 occupancy is 14.
+
+## 2026-06-23 02:30 China Scale-aware Blockwise/Sparse-edge Wave
+
+The user asked to improve for MICRONS/CAVE-scale inference and add 4 GPUs for
+experiments. Implemented and committed:
+
+- `scripts/evaluate_cremi_blockwise_scale.py`: chunked+halo inference on CREMI
+  crops, full/seam/nonseam VOI/ARAND, throughput, and RAG edge-density stats.
+- `scripts/train_sparse_edge_postprocess.py`: sparse learned RAG edge scorer
+  with deterministic affinity-score baselines and held-out sample-C reporting.
+- `scripts/submit_siflow_dbmim.py` stage:
+  `eval-cremi-blockwise-scale-r17q`.
+
+Submission:
+
+| purpose | UUID | GPUs | pool | status at submit check |
+|---|---|---:|---|---|
+| R17 blockwise scale + sparse-edge pair | `68c11da3-6abc-4244-b50e-8ece35d5aa2f` | 4 | `med-model` | Queueing |
+
+The 4-GPU pod runs four single-GPU processes:
+
+| GPU | arm |
+|---:|---|
+| 0 | R17 publicEM MSE+MAWS blockwise/seam eval |
+| 1 | R17 scratch MSE+MAWS blockwise/seam eval |
+| 2 | R17 publicEM MSE+MAWS sparse learned-edge postprocess |
+| 3 | R17 scratch MSE+MAWS sparse learned-edge postprocess |
+
+Output prefixes after success:
+
+```text
+tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_blockwise_scale_r17q/
+tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_sparse_edge_r17q/
+```
+
+The stage intentionally avoids waterz to keep the experiment focused on
+scale-aware blockwise inference and sparse post-processing. It still installs
+`scikit-image` and `mahotas` from offline wheelhouses, but does not build
+waterz.
+
+At the status check immediately after submission, active/queued dbMiM GPU
+accounting was: 10 actually running GPUs (`R22` 8 + R21 decoder-aware 2) and
+4 queued GPUs for the new scale-aware job. The previously active R20 learned
+affinity calibration and R21 scratch downstream jobs had succeeded.
+
+The R20 learned affinity calibration result is a negative/no-gain result:
+
+| selection | variant | VOI | ARAND | note |
+|---|---|---:|---:|---|
+| best A/B/C by VOI | raw `pred` | `1.108290` | `0.202786` | worse than R20 raw baseline `1.085331` |
+| best A/B/C by ARAND | raw `pred` | `1.144105` | `0.198023` | learned calibrated variant not selected |
+| held-out C by VOI | raw `pred` | `1.750963` | `0.413981` | no held-out gain |
+
+Learned scale/bias were approximately:
+
+```text
+scale = [0.7962, 0.8303, 0.8072]
+bias  = [0.0600, 0.5843, 0.6307]
+```
+
+Conclusion: simple learnable z/y/x calibration is safer than learned-RAG, but
+it did not improve the current R20 full-EM checkpoint. The next useful learned
+postprocess evidence is the sparse-edge R17 publicEM vs scratch wave above.
