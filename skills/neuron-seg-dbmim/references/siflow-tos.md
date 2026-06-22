@@ -385,10 +385,15 @@ Current active R20 pretrain task:
 - Pool/instance: `cn-shanghai/changliu`, `med-model`, `sci.g21-3`
 - GPUs: 4
 - Start time: `2026-06-22T13:46:02Z`
-- State at 2026-06-22 21:47 China time: Running. Bundle download, offline
-  dependency install, CREMI download, and CREMI extraction had succeeded; the
-  job was copying full-EM groups from TOS. Loss appears only after staging
-  finishes and `train_pretrain.py` starts.
+- State at 2026-06-22 22:17 China time: Running and training. All five
+  full-EM groups copied from TOS; `available_offline_tos` printed at
+  `2026-06-22T14:13:52Z`; `dataset_size=131694592`, `batches=16461824`, and
+  `world_size=4` printed at `2026-06-22T14:13:57Z`.
+- TOS sync state at 2026-06-22 22:17 China time: `train_log.jsonl` had reached
+  step 4240 and `pretrained_latest.pt` was present on TOS, about 41 MB.
+- The sync loop uploads `pretrained_latest.pt` and `train_log.jsonl` every
+  `DBMIM_SYNC_SEC=60`, so the downstream watcher can trigger mid-training once
+  the TOS log reaches `DBMIM_R20_MIN_STEP=40000`.
 
 Once R20 is running, the downstream watcher can be launched immediately. It
 will wait for both `pretrained_latest.pt` and `train_log.jsonl` to reach the

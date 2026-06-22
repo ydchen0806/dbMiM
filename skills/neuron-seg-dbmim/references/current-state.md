@@ -151,6 +151,24 @@ At `2026-06-22T13:47Z`, active retry
 offline wheels, downloaded/extracted CREMI, and started the full-EM TOS copy.
 Expect no training loss until all five groups finish staging.
 
+At `2026-06-22T14:13:52Z`, the same retry completed all five full-EM TOS copy
+steps and printed `em_pretrain_data_status='available_offline_tos'`. The
+patched diagnostic `find ... | head -20 || true` passed, so the previous
+pipefail/SIGPIPE failure is fixed. Training launched at `2026-06-22T14:13:57Z`
+with:
+
+- `dataset_size=131694592`
+- `batches=16461824`
+- `world_size=4`
+- `model_trainable_params=3254848`
+- `decision_trainable_params=247555`
+
+Early loss was healthy enough for a real run: step 20 loss about `0.134`, step
+160 loss about `0.058`, and the TOS-synced `train_log.jsonl` reached step 4240
+by `2026-06-22T14:17Z`. `pretrained_latest.pt` also appeared on TOS by then
+with size about 41 MB. The downstream watcher still waits for
+`DBMIM_R20_MIN_STEP=40000` before submitting finetune/eval jobs.
+
 A finetune watcher is available:
 
 ```bash
