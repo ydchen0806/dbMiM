@@ -285,6 +285,17 @@ prefix is:
 tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_membrane_dbmim_r16/
 ```
 
+That run has now succeeded. `pretrained_latest.pt` was downloaded and inspected
+on 2026-06-22: `global_step=160000`, `epoch=44`, and `max_steps=160000`.
+
+The large HF dataset is not currently usable from this environment. Local
+manifests show `cyd0806/EM_pretrain_data` totals about 486 GB, but there is no
+`HF_TOKEN`, `HUGGINGFACE_HUB_TOKEN`, `/root/.cache/huggingface/token`,
+`/volume/med-train/users/dchen02/.cache/huggingface/token`, or
+`/volume/med-train/users/dchen02/.huggingface/token`. Do not claim that the
+gated HF data has been downloaded or uploaded to TOS until a token/access probe
+and actual HDF5 files are verified.
+
 ## Polling Results
 
 `scripts/poll_dbmim_tos_results.py` has SiFlow stdout fallback support. It must
@@ -301,3 +312,24 @@ When a summary is reconstructed from stdout, inspect:
 
 Use TOS-native `cremi_segmentation_summary.json` when available, but stdout
 fallback is useful while a long waterz eval is still streaming rows.
+
+For official A/B/C stages, the poller prints `PARTIAL` until all three CREMI
+samples appear in `sample_names`. This matters for `r17q_fine`: early stdout
+fallback with only sample A can have a very low VOI, but it is not an A/B/C
+result.
+
+Active R19 submissions on 2026-06-22:
+
+| purpose | UUID | GPUs | pool |
+|---|---|---:|---|
+| context48 publicEM | `e9e01802-c98e-466b-b3cf-f5cf1b0edbbd` | 2 | med-model |
+| context48 scratch | `6655b114-66b7-4a66-8efc-d55ca6d2dfcc` | 2 | med-model |
+| fs48 publicEM | `77d049b8-76a1-4369-84c7-d02bc361851e` | 2 | med-model |
+| fs48 scratch | `2ade7cb2-667c-4410-b25d-cba312fc112e` | 2 | med-model |
+
+Poll command:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r19q --once --logs --siflow-fallback
+```

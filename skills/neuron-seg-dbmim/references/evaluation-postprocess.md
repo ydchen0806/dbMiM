@@ -162,6 +162,13 @@ Negative or fragile controls:
   completed. For the current waterz-only grid, expect three sample names and
   about `3 samples x 3 calibration biases x 5 thresholds = 45` records per
   arm.
+- `scripts/poll_dbmim_tos_results.py` now prints `PARTIAL` for official A/B/C
+  stages until `sample_A_20160501.hdf`, `sample_B_20160501.hdf`, and
+  `sample_C_20160501.hdf` are all present. Do not count a `PARTIAL` summary as
+  complete even if it has a best VOI/ARAND row.
+- The R17 fine sweep uses 9 thresholds and 6 calibration biases across A/B/C,
+  so a full summary should contain 162 records. Early stdout fallback with 9 or
+  10 records is sample-A-only and only useful for sanity checking.
 - CuPy sparse graph CC is not the same as a custom CUDA union-find; do not
   assume it eliminates the CPU bottleneck.
 - Full-volume post-processing can become a memory problem. Plan blockwise or

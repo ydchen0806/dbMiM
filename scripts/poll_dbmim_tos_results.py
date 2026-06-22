@@ -121,6 +121,12 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_publicem_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_publicem_r18q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_longaff_bcar_rank_scratch_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q"),
     ],
+    "r19q": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_context48_publicem_r19q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_publicem_r19q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_context48_scratch_r19q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_scratch_r19q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_publicem_r19q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_publicem_r19q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_scratch_r19q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_scratch_r19q"),
+    ],
     "r17q_fine": [
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q_fine"),
     ],
@@ -176,6 +182,10 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_publicem_r18q": "deac4066-3261-4739-8887-f3d3c4629aae",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q": "dffb90bf-1526-4a8a-8a65-ee7d36065824",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q_fine": "4503d96c-9b52-4974-8e5e-7ee08bc21362",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_publicem_r19q": "e9e01802-c98e-466b-b3cf-f5cf1b0edbbd",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_scratch_r19q": "6655b114-66b7-4a66-8efc-d55ca6d2dfcc",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_publicem_r19q": "77d049b8-76a1-4369-84c7-d02bc361851e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_scratch_r19q": "2ade7cb2-667c-4410-b25d-cba312fc112e",
 }
 
 
@@ -279,7 +289,10 @@ print(json.dumps([str(item.content) for item in logs.logs]))
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip()[-500:] or proc.stdout.strip()[-500:])
     rows = []
-    for content in json.loads(proc.stdout):
+    contents = json.loads(proc.stdout)
+    if contents is None:
+        contents = []
+    for content in contents:
         for line in str(content).splitlines():
             start = line.find("{'sample'")
             if start < 0 or "voi_sum" not in line or "adapted_rand_error" not in line:
@@ -374,6 +387,20 @@ def write_siflow_fallback_summary(
     return True
 
 
+def _is_complete_summary(eval_name: str, summary: dict) -> bool:
+    """Return True only when a summary covers the intended evaluation scope."""
+
+    samples = {str(name) for name in summary.get("sample_names", [])}
+    if "official_abc" in eval_name:
+        expected = {
+            "sample_A_20160501.hdf",
+            "sample_B_20160501.hdf",
+            "sample_C_20160501.hdf",
+        }
+        return expected.issubset(samples)
+    return bool(samples)
+
+
 def summarize(group: str) -> int:
     root = ROOT / "outputs" / "tos_fetch" / group
     done = 0
@@ -396,13 +423,15 @@ def summarize(group: str) -> int:
             )
         summary_path = root / eval_name / "cremi_segmentation_summary.json"
         if summary_path.exists():
-            done += 1
             try:
                 summary = json.loads(summary_path.read_text())
                 by_voi = summary.get("best_by_voi_sum", {})
                 by_rand = summary.get("best_by_adapted_rand", {})
+                complete = _is_complete_summary(eval_name, summary)
+                if complete:
+                    done += 1
                 print(
-                    "SUMMARY",
+                    "SUMMARY" if complete else "PARTIAL",
                     eval_name,
                     "source",
                     summary.get("source", "tos"),

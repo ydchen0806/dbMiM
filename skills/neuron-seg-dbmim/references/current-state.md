@@ -37,8 +37,15 @@ The public-EM pretraining path is now reproducible and TOS-backed:
 - Dataset seen in pod: public ISBI2012 + SNEMI3D HDF5 volumes, plus CREMI.
 - Final available checkpoint:
   `pretrain_public_em_membrane_dbmim_r16/pretrained_latest.pt`, 40.20 MB.
+- The checkpoint was explicitly re-downloaded and inspected on 2026-06-22:
+  `global_step=160000`, `epoch=44`, `max_steps=160000`, and 82 model keys.
+  Do not describe it as an early or undertrained pretraining checkpoint.
 - Final observed pretrain loss near the end was about `0.0486`; the exact
   rank-0 logs are in SiFlow stdout and `pretrain_log.jsonl` on TOS.
+- The offline public-EM data is only about 195 MB and contains ISBI 2012 plus
+  SNEMI3D raw HDF5 volumes. The larger HF `cyd0806/EM_pretrain_data` manifest
+  totals about 486 GB, but as of 2026-06-22 no `HF_TOKEN` or local HF token file
+  is available, so the gated data has not been downloaded or used.
 
 Important operational pitfall: local `tosutil cp` and watcher probes can hang
 when proxy variables point at `192.168.32.28:18000`. Always unset
@@ -572,7 +579,7 @@ Active R16 public-EM pretraining:
 
 | run | UUID | GPUs | note |
 |---|---:|---:|---|
-| `pretrain-public-em-membrane-r16` | `5a10fe9e-2d34-4568-8009-5902c73cc592` | 8 | Running on `med-model`, output `pretrain_public_em_membrane_dbmim_r16` |
+| `pretrain-public-em-membrane-r16` | `5a10fe9e-2d34-4568-8009-5902c73cc592` | 8 | Succeeded on `med-model`, output `pretrain_public_em_membrane_dbmim_r16`, final `global_step=160000` |
 
 Startup logs confirmed:
 
@@ -640,6 +647,11 @@ checkpoint:
 |---|---|---|
 | `r17q_fine` MAWS+MSE publicEM | `4503d96c-9b52-4974-8e5e-7ee08bc21362` | 9 thresholds x 6 biases x A/B/C |
 
+As of 2026-06-22 10:13 China time, `r17q_fine` was still running and only
+sample A had appeared in stdout fallback. The poller now prints this as
+`PARTIAL` and does not count it as done until samples A/B/C all appear. Do not
+report sample-A-only fine rows as A/B/C.
+
 Fine watcher:
 
 ```text
@@ -654,4 +666,25 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u al
 
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r17q_fine --once --logs --siflow-fallback
+```
+
+R19 was submitted after R18 to test structure capacity without mixing in
+long-affinity targets. It keeps the current best R17 recipe
+(`UNETR-aniso-EM + MAWS + pure MSE`) and changes only context size or decoder
+width, each with a matched publicEM/scratch pair. All are 2-GPU `med-model`
+jobs with post-train official A/B/C waterz eval:
+
+| arm | UUID | config |
+|---|---|---|
+| context `48x192x192` + publicEM | `e9e01802-c98e-466b-b3cf-f5cf1b0edbbd` | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_context48_publicem_r19q.yaml` |
+| context `48x192x192` scratch | `6655b114-66b7-4a66-8efc-d55ca6d2dfcc` | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_context48_scratch_r19q.yaml` |
+| decoder `feature_size=48` + publicEM | `77d049b8-76a1-4369-84c7-d02bc361851e` | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_publicem_r19q.yaml` |
+| decoder `feature_size=48` scratch | `2ade7cb2-667c-4410-b25d-cba312fc112e` | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_scratch_r19q.yaml` |
+
+R19 uses per-GPU batch 1 and 12k steps to fit the larger crop/decoder on
+2-GPU H200 jobs. Poll with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r19q --once --logs --siflow-fallback
 ```

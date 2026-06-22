@@ -79,6 +79,22 @@ gain under the official A/B/C waterz protocol. R18 crosses this MSE loss with
 long-affinity six-channel output to test whether the R16 ARAND advantage can be
 combined with R17's VOI advantage.
 
+R19 keeps the R17 winning recipe and changes only structure capacity:
+
+- context `48x192x192` with publicEM/scratch controls;
+- decoder `feature_size=48` with publicEM/scratch controls.
+
+Both use per-GPU batch 1, 2 GPUs, 12k steps, pure MSE, MAWS, widened labels,
+and the same official A/B/C waterz evaluation. This isolates whether bigger
+context or decoder capacity improves EM segmentation and whether any gain
+still depends on dbMiM pretraining.
+
+Do not submit another "longer publicEM pretrain" unless there is new data or a
+new pretraining objective. The current R16 publicEM checkpoint has already
+reached `global_step=160000`. The larger HF `cyd0806/EM_pretrain_data` set is
+manifested at about 486 GB, but it was not downloaded because no HF token is
+available in the environment.
+
 ## Batch Size Semantics
 
 `train.batch_size` is per rank/per GPU. Distributed jobs use:

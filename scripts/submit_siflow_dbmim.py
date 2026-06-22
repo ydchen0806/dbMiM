@@ -763,6 +763,48 @@ ABLATION_RUNS = {
         "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_longaff_bcar_rank_scratch_r18q",
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q",
     },
+    "arch-explore-maws-mse-context48-publicem-r19q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_context48_publicem_r19q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_context48_publicem_r19q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_maws_context48_publicem_r19q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_maws_context48_publicem_r19q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_maws_context48_publicem_r19q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_maws_context48_publicem_r19q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_context48_publicem_r19q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_publicem_r19q",
+        "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
+    "arch-explore-maws-mse-context48-scratch-r19q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_context48_scratch_r19q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_context48_scratch_r19q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_maws_context48_scratch_r19q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_maws_context48_scratch_r19q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_maws_context48_scratch_r19q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_maws_context48_scratch_r19q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_context48_scratch_r19q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_scratch_r19q",
+    },
+    "arch-explore-maws-mse-fs48-publicem-r19q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_publicem_r19q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_publicem_r19q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_maws_fs48_publicem_r19q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_maws_fs48_publicem_r19q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_maws_fs48_publicem_r19q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_maws_fs48_publicem_r19q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_fs48_publicem_r19q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_publicem_r19q",
+        "pretrained_output": "pretrain_public_em_membrane_dbmim_r16",
+    },
+    "arch-explore-maws-mse-fs48-scratch-r19q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_scratch_r19q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_fs48_scratch_r19q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_maws_fs48_scratch_r19q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_maws_fs48_scratch_r19q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_maws_fs48_scratch_r19q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_maws_fs48_scratch_r19q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_fs48_scratch_r19q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_scratch_r19q",
+    },
 }
 ABLATION_TRAIN_STAGES = {f"finetune-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
 ABLATION_EVAL_STAGES = {f"eval-cremi-unetr-aniso-{name}" for name in ABLATION_RUNS}
@@ -1511,6 +1553,9 @@ def make_bundle(
         if "official_abc_eval" in spec:
             eval_output_dirs[f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-{name}"] = (
                 f"outputs/{spec['official_abc_eval']}"
+            )
+            eval_output_dirs[f"eval-cremi-unetr-aniso-superhuman-calibration-official-abc-fine-{name}"] = (
+                f"outputs/{spec['official_abc_eval']}_fine"
             )
     if stage in eval_output_dirs:
         postlude.extend(
