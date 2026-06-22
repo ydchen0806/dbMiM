@@ -924,6 +924,7 @@ SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION
 LEARNED_POSTPROCESS_STAGES = {
     "eval-cremi-learned-rag-r20q",
     "eval-cremi-learned-affinity-calibration-r20q",
+    "eval-cremi-sparse-edge-publicem-r17q",
 }
 CREMI_STAGES = {
     "pretrain-cremi",
@@ -960,6 +961,8 @@ CREMI_STAGES = {
     "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-learned-rag-r20q",
     "eval-cremi-learned-affinity-calibration-r20q",
+    "eval-cremi-blockwise-scale-r17q",
+    "eval-cremi-sparse-edge-publicem-r17q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -981,6 +984,8 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-learned-rag-r20q",
     "eval-cremi-learned-affinity-calibration-r20q",
+    "eval-cremi-blockwise-scale-r17q",
+    "eval-cremi-sparse-edge-publicem-r17q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -1240,8 +1245,10 @@ def make_bundle(
         "train_finetune.py",
         "scripts/evaluate_cremi_segmentation.py",
         "scripts/evaluate_cremi_diagnostics.py",
+        "scripts/evaluate_cremi_blockwise_scale.py",
         "scripts/train_learned_rag_postprocess.py",
         "scripts/train_learned_affinity_calibration.py",
+        "scripts/train_sparse_edge_postprocess.py",
         "requirements-dbMIM.txt",
     ]:
         src = PROJECT / name
@@ -1263,18 +1270,27 @@ def make_bundle(
     waterz_source = PROJECT.parent / "_refs" / "waterz_v08"
     if not waterz_source.exists():
         waterz_source = PROJECT.parent / "_refs" / "waterz"
-    needs_superhuman_eval = (
+    needs_skimage_eval = (
         stage in SUPERHUMAN_DEP_STAGES
         or post_train_official_eval
         or post_train_official_abc_eval
         or post_train_arch_bench
         or stage == "eval-cremi-arch-explore-postprocess-r15q"
         or stage in LEARNED_POSTPROCESS_STAGES
+        or stage == "eval-cremi-blockwise-scale-r17q"
     )
-    if needs_superhuman_eval and waterz_source.exists():
+    needs_waterz_eval = (
+        stage in SUPERHUMAN_DEP_STAGES
+        or post_train_official_eval
+        or post_train_official_abc_eval
+        or post_train_arch_bench
+        or stage == "eval-cremi-arch-explore-postprocess-r15q"
+        or stage == "eval-cremi-learned-affinity-calibration-r20q"
+    )
+    if needs_waterz_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
     boost_headers = PROJECT / "third_party" / "boost_1_84_0" / "boost"
-    if needs_superhuman_eval and boost_headers.exists():
+    if needs_waterz_eval and boost_headers.exists():
         boost_dst = out / "third_party" / "boost" / "include" / "boost"
         boost_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(boost_headers, boost_dst)
@@ -1447,12 +1463,17 @@ def make_bundle(
                 "mkdir -p outputs/finetune_cremi_real_dbmim outputs/finetune_cremi_real_unetr_pretrained outputs/finetune_cremi_real_unetr_scratch outputs/finetune_cremi_real_unetr_aniso_pretrained outputs/finetune_cremi_real_unetr_aniso_scratch outputs/finetune_cremi_real_unetr_aniso_longpretrained outputs/finetune_cremi_real_zdice outputs/finetune_cremi_real_zdice_focal outputs/eval_cremi_real_dbmim outputs/eval_cremi_unetr_pretrained outputs/eval_cremi_unetr_scratch outputs/eval_cremi_unetr_aniso_pretrained outputs/eval_cremi_unetr_aniso_scratch outputs/eval_cremi_unetr_aniso_longpretrained outputs/eval_cremi_unetr_aniso_large_pretrained outputs/eval_cremi_unetr_aniso_large_scratch outputs/eval_cremi_unetr_aniso_large_longpretrained outputs/eval_cremi_postprocess_sweep outputs/eval_cremi_gpu_probe outputs/eval_cremi_rag_ablation outputs/eval_cremi_aniso_graph outputs/eval_cremi_scale64 outputs/eval_cremi_zdice outputs/eval_cremi_zdice_focal",
             ]
         )
-    if needs_superhuman_eval:
+    if needs_skimage_eval:
         prelude.extend(
             [
                 "if [ -d wheelhouse_superhuman_eval ]; then",
                 "  python -m pip install --user --no-index --find-links wheelhouse_superhuman_eval scikit-image",
                 "fi",
+            ]
+        )
+    if needs_waterz_eval:
+        prelude.extend(
+            [
                 "if ! python - <<'PY'\nimport importlib.util\nraise SystemExit(0 if importlib.util.find_spec('waterz') else 1)\nPY\nthen",
                 "  if [ -d third_party/waterz ]; then",
                 "    if [ -d third_party/boost/include ]; then",
@@ -1527,6 +1548,45 @@ def make_bundle(
         )
     if stage == "eval-cremi-learned-affinity-calibration-r20q":
         model_prefix = "finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q"
+        prelude.extend(
+            [
+                f"mkdir -p outputs/{model_prefix}",
+                "if bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_latest.pt",
+                "else",
+                "  bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_best.pt",
+                "fi",
+            ]
+        )
+    if stage == "eval-cremi-blockwise-scale-r17q":
+        blockwise_models = [
+            "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q",
+            "finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q",
+        ]
+        prelude.extend([f"mkdir -p outputs/{model_prefix}" for model_prefix in blockwise_models])
+        for model_prefix in blockwise_models:
+            prelude.extend(
+                [
+                    "if bin/tosutil cp "
+                    f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                    f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                    f"  echo \"{{'checkpoint_ready':'{model_prefix}/finetuned_latest.pt'}}\"",
+                    "else",
+                    "  bin/tosutil cp "
+                    f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                    f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                    f"  cp outputs/{model_prefix}/finetuned_best.pt outputs/{model_prefix}/finetuned_latest.pt",
+                    f"  echo \"{{'checkpoint_ready':'{model_prefix}/finetuned_best.pt'}}\"",
+                    "fi",
+                ]
+            )
+    if stage == "eval-cremi-sparse-edge-publicem-r17q":
+        model_prefix = "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q"
         prelude.extend(
             [
                 f"mkdir -p outputs/{model_prefix}",
@@ -1854,6 +1914,23 @@ def make_bundle(
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi-blockwise-scale-r17q":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_blockwise_scale_r17q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+                "if [ -d outputs/eval_cremi_sparse_edge_r17q ]; then "
+                "bin/tosutil cp outputs/eval_cremi_sparse_edge_r17q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"; fi",
+            ]
+        )
+    if stage == "eval-cremi-sparse-edge-publicem-r17q":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_sparse_edge_publicem_r17q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "eval-cremi-zdice":
         postlude.extend(
             [
@@ -2046,6 +2123,8 @@ def main() -> None:
             "eval-cremi-arch-explore-postprocess-r15q",
             "eval-cremi-learned-rag-r20q",
             "eval-cremi-learned-affinity-calibration-r20q",
+            "eval-cremi-blockwise-scale-r17q",
+            "eval-cremi-sparse-edge-publicem-r17q",
             "eval-cremi-zdice",
             "eval-cremi-zdice-focal",
             "smoke",
@@ -2744,6 +2823,182 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-learn-aff-calib-r20q"
+    elif args.stage == "eval-cremi-blockwise-scale-r17q":
+        entrypoint = (
+            "python - <<'PY'\n"
+            "import importlib.util\n"
+            "missing=[m for m in ['skimage','mahotas'] if importlib.util.find_spec(m) is None]\n"
+            "print({'blockwise_scale_missing_modules': missing})\n"
+            "if missing:\n"
+            "    raise SystemExit('missing blockwise scale modules: '+','.join(missing))\n"
+            "PY\n"
+            "mkdir -p outputs/eval_cremi_blockwise_scale_r17q/publicem outputs/eval_cremi_blockwise_scale_r17q/scratch outputs/eval_cremi_sparse_edge_r17q/publicem outputs/eval_cremi_sparse_edge_r17q/scratch outputs/eval_cremi_sparse_edge_publicem_r17q\n"
+            "(\n"
+            "  CUDA_VISIBLE_DEVICES=0 python scripts/evaluate_cremi_blockwise_scale.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml "
+            "--checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q/finetuned_latest.pt "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_blockwise_scale_r17q/publicem "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--chunk-size 32 256 256 "
+            "--halo 8 64 64 "
+            "--seam-width 2 16 16 "
+            "--backends graph_cc seeded_rag "
+            "--thresholds 0.0 "
+            "--z-thresholds 0.10 0.20 0.30 0.50 "
+            "--xy-thresholds 0.10 0.20 0.30 0.50 "
+            "--seed-distance 10 "
+            "--boundary-threshold 0.5 "
+            "--min-boundary 4 "
+            "--score-mode mean q25 "
+            "--metric-backend skimage "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--compare-no-halo "
+            "--compute-rag-stats "
+            "--max-samples 3 "
+            "--device cuda "
+            "--fail-on-backend-error\n"
+            ") > outputs/eval_cremi_blockwise_scale_r17q/publicem.log 2>&1 &\n"
+            "pid_publicem=$!\n"
+            "(\n"
+            "  CUDA_VISIBLE_DEVICES=1 python scripts/evaluate_cremi_blockwise_scale.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q.yaml "
+            "--checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q/finetuned_latest.pt "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_blockwise_scale_r17q/scratch "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--chunk-size 32 256 256 "
+            "--halo 8 64 64 "
+            "--seam-width 2 16 16 "
+            "--backends graph_cc seeded_rag "
+            "--thresholds 0.0 "
+            "--z-thresholds 0.10 0.20 0.30 0.50 "
+            "--xy-thresholds 0.10 0.20 0.30 0.50 "
+            "--seed-distance 10 "
+            "--boundary-threshold 0.5 "
+            "--min-boundary 4 "
+            "--score-mode mean q25 "
+            "--metric-backend skimage "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--compare-no-halo "
+            "--compute-rag-stats "
+            "--max-samples 3 "
+            "--device cuda "
+            "--fail-on-backend-error\n"
+            ") > outputs/eval_cremi_blockwise_scale_r17q/scratch.log 2>&1 &\n"
+            "pid_scratch=$!\n"
+            "(\n"
+            "  CUDA_VISIBLE_DEVICES=2 python scripts/train_sparse_edge_postprocess.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml "
+            "--checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q/finetuned_latest.pt "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_sparse_edge_r17q/publicem "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--boundary-threshold 0.5 "
+            "--seed-distance 10 "
+            "--min-boundary 4 "
+            "--merge-thresholds 0.30 0.40 0.50 0.60 0.70 "
+            "--baseline-thresholds 0.10 0.20 0.30 0.40 0.50 "
+            "--epochs 100 "
+            "--metric-backend skimage "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda\n"
+            ") > outputs/eval_cremi_sparse_edge_r17q/publicem.log 2>&1 &\n"
+            "pid_sparse_publicem=$!\n"
+            "(\n"
+            "  CUDA_VISIBLE_DEVICES=3 python scripts/train_sparse_edge_postprocess.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q.yaml "
+            "--checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q/finetuned_latest.pt "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_sparse_edge_r17q/scratch "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--boundary-threshold 0.5 "
+            "--seed-distance 10 "
+            "--min-boundary 4 "
+            "--merge-thresholds 0.30 0.40 0.50 0.60 0.70 "
+            "--baseline-thresholds 0.10 0.20 0.30 0.40 0.50 "
+            "--epochs 100 "
+            "--metric-backend skimage "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda\n"
+            ") > outputs/eval_cremi_sparse_edge_r17q/scratch.log 2>&1 &\n"
+            "pid_sparse_scratch=$!\n"
+            "set +e\n"
+            "wait $pid_publicem; rc_publicem=$?\n"
+            "wait $pid_scratch; rc_scratch=$?\n"
+            "wait $pid_sparse_publicem; rc_sparse_publicem=$?\n"
+            "wait $pid_sparse_scratch; rc_sparse_scratch=$?\n"
+            "set -e\n"
+            "tail -n 40 outputs/eval_cremi_blockwise_scale_r17q/publicem.log || true\n"
+            "tail -n 40 outputs/eval_cremi_blockwise_scale_r17q/scratch.log || true\n"
+            "tail -n 40 outputs/eval_cremi_sparse_edge_r17q/publicem.log || true\n"
+            "tail -n 40 outputs/eval_cremi_sparse_edge_r17q/scratch.log || true\n"
+            "python - <<'PY'\n"
+            "import json\n"
+            "from pathlib import Path\n"
+            "root=Path('outputs/eval_cremi_blockwise_scale_r17q')\n"
+            "out={}\n"
+            "for arm in ['publicem','scratch']:\n"
+            "    p=root/arm/'blockwise_scale_summary.json'\n"
+            "    if p.exists():\n"
+            "        data=json.loads(p.read_text())\n"
+            "        out[arm]={'best_full_by_voi_sum':data.get('best_full_by_voi_sum'), 'best_seam_by_voi_sum':data.get('best_seam_by_voi_sum'), 'throughput_records':data.get('throughput_records', [])[:2]}\n"
+            "for arm in ['publicem','scratch']:\n"
+            "    sparse=Path('outputs/eval_cremi_sparse_edge_r17q')/arm/'sparse_edge_postprocess_summary.json'\n"
+            "    if sparse.exists():\n"
+            "        data=json.loads(sparse.read_text())\n"
+            "        out[f'sparse_edge_{arm}']={'best_by_voi_sum':data.get('best_by_voi_sum'), 'holdout_best_by_voi_sum':data.get('holdout_best_by_voi_sum')}\n"
+            "Path('outputs/eval_cremi_blockwise_scale_r17q/combined_summary.json').write_text(json.dumps(out, indent=2, sort_keys=True)+'\\n')\n"
+            "print(out)\n"
+            "PY\n"
+            "if [ \"$rc_publicem\" -ne 0 ] || [ \"$rc_scratch\" -ne 0 ] || [ \"$rc_sparse_publicem\" -ne 0 ] || [ \"$rc_sparse_scratch\" -ne 0 ]; then\n"
+            "  echo \"{'rc_publicem':$rc_publicem,'rc_scratch':$rc_scratch,'rc_sparse_publicem':$rc_sparse_publicem,'rc_sparse_scratch':$rc_sparse_scratch}\" >&2\n"
+            "  exit 31\n"
+            "fi"
+        )
+        prefix = "dbmim-blockwise-sparse-r17q"
+    elif args.stage == "eval-cremi-sparse-edge-publicem-r17q":
+        entrypoint = (
+            "python - <<'PY'\n"
+            "import importlib.util\n"
+            "missing=[m for m in ['skimage','mahotas'] if importlib.util.find_spec(m) is None]\n"
+            "print({'sparse_edge_missing_modules': missing})\n"
+            "if missing:\n"
+            "    raise SystemExit('missing sparse edge modules: '+','.join(missing))\n"
+            "PY\n"
+            "python scripts/train_sparse_edge_postprocess.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_sparse_edge_publicem_r17q "
+            "--crop-size 64 512 512 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--boundary-threshold 0.5 "
+            "--seed-distance 10 "
+            "--min-boundary 4 "
+            "--merge-thresholds 0.30 0.40 0.50 0.60 0.70 "
+            "--baseline-thresholds 0.10 0.20 0.30 0.40 0.50 "
+            "--epochs 100 "
+            "--metric-backend skimage "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda"
+        )
+        prefix = "dbmim-sparse-edge-publicem-r17q"
     elif args.stage == "eval-cremi-zdice":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "

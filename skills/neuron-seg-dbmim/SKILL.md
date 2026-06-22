@@ -124,3 +124,12 @@ whether `pos_embed` interpolation was used.
   learned scorer, but one-pass pairwise fragment merging over boundary stats
   produced VOI/ARAND far worse than waterz. Keep it as evidence and baseline
   code, not as the current recommended post-processing method.
+- MICrONS/CAVE-scale claims require blockwise evidence. Use
+  `scripts/evaluate_cremi_blockwise_scale.py` to report full/seam/nonseam
+  VOI/ARAND, chunk size, halo, voxels/sec, and RAG-edge density. A method that
+  only improves whole-crop CREMI but worsens seam rows is not scale-ready.
+- For learnable post-processing, prefer sparse fragment-edge scoring over dense
+  global pairwise merging. `scripts/train_sparse_edge_postprocess.py` trains a
+  small edge scorer on RAG boundary features and compares against deterministic
+  affinity-score baselines; judge it on held-out sample C before calling it a
+  positive learned-postprocess result.

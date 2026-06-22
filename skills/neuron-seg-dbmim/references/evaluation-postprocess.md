@@ -362,3 +362,57 @@ are then an additional sweep. This makes the comparison conservative: if DPP
 only learns the same bias that the sweep already tests, it may not improve the
 best-by-VOI row. A real DPP gain should appear as either lower best VOI/ARAND
 or a more robust plateau across calibration biases.
+
+## Large-scale Blockwise Inference Lessons
+
+For MICRONS/CAVE-style deployment, do not extrapolate from a single whole-crop
+CREMI forward pass. Run the blockwise scale proxy:
+
+```bash
+python scripts/evaluate_cremi_blockwise_scale.py \
+  --config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml \
+  --checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q/finetuned_latest.pt \
+  --data-dir data/CREMI \
+  --output-dir outputs/eval_cremi_blockwise_scale_r17q/publicem \
+  --crop-size 64 512 512 \
+  --stride 16 80 80 \
+  --chunk-size 32 256 256 \
+  --halo 8 64 64 \
+  --seam-width 2 16 16 \
+  --backends graph_cc seeded_rag \
+  --metric-backend skimage \
+  --cremi-boundary-ignore-distance-xy 1 \
+  --cremi-boundary-ignore-distance-z 0
+```
+
+Required reporting columns:
+
+- `affinity_variant`: at least `blockwise_halo`; optionally `blockwise_no_halo`.
+- `region`: `full`, `seam`, and `nonseam`.
+- `chunk_size`, `halo`, `seam_width`, `num_chunks`, and `voxels_per_sec`.
+- `num_fragments`, `num_rag_edges`, and `rag_edges_per_mvoxel` when RAG stats
+  are enabled.
+
+Scale-readiness rule: compare publicEM-pretrained and scratch on both full and
+seam rows. A lower full-volume VOI with a worse seam VOI is not a convincing
+large-scale method. For deployment, the post-processing output should be
+chunked fragments plus sparse RAG edges, not a monolithic waterz/mahotas run
+over the whole dataset.
+
+## Sparse Learned Edge Postprocess
+
+`scripts/train_sparse_edge_postprocess.py` is the current preferred scaffold
+for a learnable, scale-aware post-processing experiment. It:
+
+- builds slice-wise watershed fragments;
+- extracts sparse RAG boundary features only for touching fragments;
+- trains `LearnedRAGMergeScorer` on train samples A/B;
+- reports held-out C metrics separately;
+- compares against deterministic `mean`, `xy_mean`, and conservative affinity
+  edge scores.
+
+Do not call this a positive method unless the held-out best row beats the
+deterministic sparse baseline and does not reproduce the earlier learned-RAG
+failure mode of severe over-merging. The saved `sparse_edge_scorer.pt` is useful
+only with its feature standardization metadata and exact fragment-generation
+settings.
