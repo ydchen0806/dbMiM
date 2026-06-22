@@ -288,8 +288,8 @@ tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_membrane_dbmim_r16
 That run has now succeeded. `pretrained_latest.pt` was downloaded and inspected
 on 2026-06-22: `global_step=160000`, `epoch=44`, and `max_steps=160000`.
 
-The large HF dataset is now accessible with the user-provided token, but the
-token must stay outside git. It is stored only in:
+The large HF dataset is accessible with the user-provided token, but the token
+must stay outside git. It is stored only in:
 
 ```text
 /volume/med-train/users/dchen02/secrets/hf_env_dchen02.sh
@@ -298,9 +298,20 @@ token must stay outside git. It is stored only in:
 Load it with `source .../hf_env_dchen02.sh` before gated HF download commands.
 Do not print the token, copy it into configs, or write it into a skill. The HF
 access probe on 2026-06-22 succeeded for `cyd0806/EM_pretrain_data`: 37 files,
-35 zip files, total about 485.84 GB. Do not claim the gated HF data has been
-used for training until actual zip downloads, extraction into HDF5 files, TOS
-upload, and pretrain logs are verified.
+35 zip files, total about 485.84 GB.
+
+As of 2026-06-22, the gated HF download, extraction, and TOS upload completed
+for all five groups: `fafb`, `fib25`, `kasthuri`, `mitoem`, and `mb_moc`.
+TOS contains actual HDF5 files for each group under:
+
+```text
+tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/<group>/
+```
+
+The upload layout is nested (`<group>/<group>/...`) because `tosutil cp` copied
+local group directories to same-named group prefixes. This is valid for the
+current pretrain bundle because the pod-side gate searches `*/<group>/*` and the
+dataset code recurses through HDF5 files.
 
 Recommended gated download flow:
 
@@ -313,7 +324,7 @@ python scripts/prepare_em_pretrain_data.py --group <fafb|fib25|kasthuri|mitoem|m
 This can download hundreds of GB; prefer one group at a time, verify free disk,
 and upload to TOS before launching all-EM pretraining.
 
-Current 2026-06-22 operational flow is automated by two detached `screen`
+The 2026-06-22 gated download flow was automated by detached `screen`
 sessions:
 
 ```bash
@@ -338,6 +349,52 @@ tail -f outputs/watchers/full_em_pretrain_watch_20260622T032734Z.log
 - Ordinary `nohup ... &` background jobs have been observed to disappear in
   this execution environment. Use `screen -dmS ...` for multi-hour local
   download/watch tasks.
+
+R20 full-EM pretraining has a specific runtime staging pitfall. Do not copy the
+full HF corpus into the bundle temporary directory under `/tmp`: it is hundreds
+of GB and can fill local node storage. The maintained submitter now stages it
+under:
+
+```text
+/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all
+```
+
+Current active R20 pretrain task:
+
+- UUID: `ab50e050-a1c9-42ee-b40d-e4e43e109212`
+- Pool/instance: `cn-shanghai/changliu`, `med-model`, `sci.g21-3`
+- GPUs: 4
+- Start time: `2026-06-22T09:02:49Z`
+- State at 2026-06-22 17:05 China time: Running, staging the first full-EM
+  group from TOS at roughly 24-25 MB/s.
+
+Do not count stopped R20 UUIDs as active: `1488e82a-301a-4b8a-961c-615657dd3491`
+(old bundle), `1d0916f7-0c98-4d2f-8c02-3ec7cd47a46b` (8-GPU quota short), and
+`a34bbacf-b483-4bb2-85cd-852adf9e8e16` (7-GPU fragmentation) were intentionally
+stopped before meaningful training.
+
+Once R20 is running, the downstream watcher can be launched immediately. It
+will wait for both `pretrained_latest.pt` and `train_log.jsonl` to reach the
+default `DBMIM_R20_MIN_STEP=40000` before submitting finetune jobs. This avoids
+running downstream on a very early 2000-step checkpoint.
+
+```bash
+screen -dmS dbmim_r20_finetune_watch bash -lc \
+  'cd /volume/med-train/users/dchen02/code/dbMiM && \
+   ./scripts/watch_and_submit_full_em_finetune.sh \
+   > outputs/watchers/full_em_finetune_watch_$(date -u +%Y%m%dT%H%M%SZ).log 2>&1'
+```
+
+It submits:
+
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-r20q`
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-bcar-rank-fullem-r20q`
+
+with `--post-train-official-abc-eval`. Summarize with:
+
+```bash
+python scripts/poll_dbmim_tos_results.py --group r20q --once --logs --siflow-fallback
+```
 
 ## Polling Results
 

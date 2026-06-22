@@ -57,25 +57,24 @@ when proxy variables point at `192.168.32.28:18000`. Always unset
 SiFlow SDK probes. After unsetting proxies, `pretrained_latest.pt` downloaded
 successfully in under a second.
 
-## 2026-06-22 R20 Gated Full-EM Pretraining Setup
+## 2026-06-22 R20 Gated Full-EM Pretraining
 
-Full gated HF data preparation is running locally in a detached screen session
-because this execution environment kills ordinary `nohup` background jobs:
+Full gated HF data preparation finished on 2026-06-22. The download/upload log
+is:
 
 ```bash
-screen -ls
-tail -f /volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/full_em_download_20260622T032208Z.log
+tail -n 80 /volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/full_em_download_20260622T033243Z.log
 ```
 
-The data script is `scripts/run_full_em_download_to_tos.sh`; it runs
-`scripts/prepare_em_pretrain_data.py --group <group> --download --extract
---upload-tos` for `fafb`, `fib25`, `kasthuri`, `mitoem`, and `mb_moc`.
-`prepare_em_pretrain_data.py` uses Python streaming HTTP with Range resume, so
-the HF token stays in process memory and does not appear in argv, logs, or curl
-config files. Partial zip files under `data/EM_pretrain_data/_zips/<group>/`
-are resumable and expected while the download is running.
+It ended with `done_group mb_moc`, `done_full_em_download`, and
+`exit_full_em_download code=0`. There are no remaining screen sessions for the
+download/watcher path.
 
-Expected compressed bytes from the HF manifest:
+The source dataset was `cyd0806/EM_pretrain_data`. The user-provided HF token is
+stored only in `/volume/med-train/users/dchen02/secrets/hf_env_dchen02.sh`.
+Never print the token or commit it.
+
+Compressed bytes from the HF manifest:
 
 | group | compressed size |
 |---|---:|
@@ -85,28 +84,78 @@ Expected compressed bytes from the HF manifest:
 | `mitoem` | about 16.66 GB |
 | `mb_moc` | about 137.32 GB |
 
-Observed early download speed on 2026-06-22 was roughly 35-40 MB/s during
-`FAFB_crop_hdf_1.zip`, so pure download is on the order of 3.5-4 hours; unzip
-and TOS upload make the end-to-end preparation more likely 6-10 hours.
+Extracted local HDF5 counts/sizes after completion:
+
+| group | HDF5 count | local size |
+|---|---:|---:|
+| `fafb` | 1421 | about 139 GB |
+| `fib25` | 1857 | about 182 GB |
+| `kasthuri` | 1732 | about 170 GB |
+| `mitoem` | 81 | about 8.0 GB |
+| `mb_moc` | 2944 | about 121 GB |
+
+TOS contains actual HDF5 files for all five groups under:
+
+```text
+tos://agi-data/users/dchen02/dbmim/assets/em_pretrain_data/<group>/
+```
+
+Because the upload command copied each group directory to a same-named TOS
+prefix, object paths are nested like `<group>/<group>/...`. This is expected;
+the pod-side gate checks `*/<group>/*` and the dataset loader recurses.
 
 The full-data pretraining config/stage is:
 
 - Config: `configs/pretrain_em_full_membrane_r20.yaml`
 - Stage: `pretrain-em-full-membrane-r20`
 - Output: `outputs/pretrain_em_full_membrane_dbmim_r20`
+- Output TOS prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_membrane_dbmim_r20/`
 
-An automatic watcher is running in a second detached screen session:
+Important SiFlow scheduling state:
 
-```bash
-tail -f /volume/med-train/users/dchen02/code/dbMiM/outputs/watchers/full_em_pretrain_watch_20260622T032734Z.log
+- Initial 8-GPU task `1488e82a-301a-4b8a-961c-615657dd3491` was stopped before
+  running because the first bundle would have copied hundreds of GB of full-EM
+  data into the bundle/runtime temporary path.
+- Fixed 8-GPU task `1d0916f7-0c98-4d2f-8c02-3ec7cd47a46b` was stopped because
+  `med-model` reported `实例配额不足 | 需求:8, 实际可用(实例配额):7`.
+- Fixed 7-GPU task `a34bbacf-b483-4bb2-85cd-852adf9e8e16` was stopped because
+  SiFlow reported resource fragmentation.
+- Active task: `ab50e050-a1c9-42ee-b40d-e4e43e109212`, `med-model`,
+  `sci.g21-3`, 4 GPUs. It started running at `2026-06-22T09:02:49Z`.
+
+The active R20 bundle stages full-EM data to a mounted-volume path instead of
+the bundle temporary directory:
+
+```text
+/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all
 ```
 
-It polls TOS every 600 seconds and submits the 8-GPU `med-model` R20 pretrain
-only after all five gated groups contain HDF5 files on TOS. The submitter also
-has a pod-side hard gate: `pretrain-em-full-membrane-r20` exits with status 21
-if any of `fafb/fib25/kasthuri/mitoem/mb_moc` is missing after TOS copy. This
-prevents another public-only or CREMI-only fallback from being mislabeled as
-full-EM pretraining.
+At 2026-06-22 17:05 China time, SiFlow stdout showed CREMI copied and the first
+full-EM group TOS copy in progress at roughly 24-25 MB/s for a 138.77 GB group.
+Training loss will not appear until all five groups finish staging and the
+pod-side hard gate passes. The gate still exits with status 21 if any of
+`fafb/fib25/kasthuri/mitoem/mb_moc` is missing after TOS copy.
+
+A finetune watcher is available:
+
+```bash
+scripts/watch_and_submit_full_em_finetune.sh
+```
+
+It polls
+`tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_membrane_dbmim_r20/pretrained_latest.pt`
+and `train_log.jsonl`. By default it waits for at least step 40000 before
+submitting downstream arms, matching the R20 decision-module freeze point and
+avoiding very early 2000-step checkpoints. Override with `DBMIM_R20_MIN_STEP`
+only for smoke tests. It then submits two 2-GPU downstream arms with post-train
+official A/B/C waterz evaluation:
+
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-r20q`
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-bcar-rank-fullem-r20q`
+
+These are matched to the existing R17 scratch controls in
+`scripts/poll_dbmim_tos_results.py --group r20q`.
 
 Matched R16 downstream controls are running on `med-model`, 2 GPUs each, all
 with post-train A/B/C architecture benchmark (`graph_cc`, `cupy_graph_cc`,

@@ -115,6 +115,12 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_publicem_r17q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q"),
     ],
+    "r20q": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fullem_r20q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_fullem_r20q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_fullem_r20q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q"),
+    ],
     "r18q": [
         ("finetune_cremi_real_unetr_aniso_em_mse_longaff_publicem_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_longaff_scratch_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q"),
