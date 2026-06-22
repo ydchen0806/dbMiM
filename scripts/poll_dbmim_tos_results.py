@@ -121,6 +121,17 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_fullem_r20q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_fullem_r20q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_bcar_rank_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q"),
     ],
+    "r20q_dpp": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fullem_r20q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_dpp_fullem_r20q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_dpp_fullem_r20q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
+    ],
+    "r21q": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r21q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r21q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_decoderaware_r21q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_decoderaware_r21q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_dpp_scratch_r21q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_dpp_scratch_r21q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_decoderaware_dpp_r21q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_decoderaware_dpp_r21q"),
+    ],
     "r18q": [
         ("finetune_cremi_real_unetr_aniso_em_mse_longaff_publicem_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_longaff_scratch_r18q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q"),
@@ -192,6 +203,9 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_context48_scratch_r19q": "6655b114-66b7-4a66-8efc-d55ca6d2dfcc",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_publicem_r19q": "77d049b8-76a1-4369-84c7-d02bc361851e",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fs48_scratch_r19q": "2ade7cb2-667c-4410-b25d-cba312fc112e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fullem_r20q": "0e29a6b1-26bb-45c2-813d-db8efb266d21",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_fullem_r20q": "eb647c53-f408-4a5f-99c9-ead3d7b1f2df",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_dpp_fullem_r20q": "e52d773c-abae-481f-9da7-c3b34cab38a8",
 }
 
 
