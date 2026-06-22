@@ -203,6 +203,24 @@ sample-A best rows under the official boundary-ignore mask are:
 Do not report these as A/B/C aggregates until `sample_B_20160501.hdf` and
 `sample_C_20160501.hdf` appear in `sample_names`.
 
+## 2026-06-22 Best Current Downstream Signal
+
+The most reliable positive signal so far is the R17 MSE+MAWS publicEM-vs-scratch
+comparison under official A/B/C full-volume waterz evaluation:
+
+| arm | VOI sum | best ARAND | note |
+|---|---:|---:|---|
+| MSE+MAWS + publicEM dbMiM | 1.002919 | 0.188832 | best current publicEM arm |
+| MSE+MAWS scratch | 1.095164 | 0.210442 | matched architecture/loss |
+| MSE+MAWS+BCAR + publicEM dbMiM | 1.063910 | 0.193443 | positive but weaker |
+| MSE+MAWS+BCAR scratch | 1.087732 | 0.196075 | matched BCAR control |
+
+This gives roughly `-0.092` VOI and `-0.0216` best-ARAND for publicEM
+pretraining on the strongest MSE+MAWS arm. R19 context48/fs48 also shows
+positive pretraining deltas but does not beat R17 MSE+MAWS. Therefore the R20
+full-EM downstream watcher follows the R17 MSE+MAWS and MSE+MAWS+BCAR-rank
+recipes rather than prioritizing context48/fs48.
+
 ## 2026-06-22 R17 MSE/MAWS Wave
 
 R17 directly tests the user's MSE hypothesis under the strongest current
