@@ -921,6 +921,10 @@ SUPERHUMAN_CALIBRATION_STAGES = {
     "eval-cremi-unetr-aniso-superhuman-calibration-official-superhuman-encoderlr-pretrained-r5",
 } | ABLATION_SUPERHUMAN_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_ABC_CALIBRATION_STAGES | ABLATION_SUPERHUMAN_OFFICIAL_ABC_FINE_CALIBRATION_STAGES
 SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION_STAGES
+LEARNED_POSTPROCESS_STAGES = {
+    "eval-cremi-learned-rag-r20q",
+    "eval-cremi-learned-affinity-calibration-r20q",
+}
 CREMI_STAGES = {
     "pretrain-cremi",
     "pretrain-cremi-long",
@@ -929,6 +933,7 @@ CREMI_STAGES = {
     "pretrain-em-membrane-r14",
     "pretrain-em-full-membrane-r20",
     "pretrain-em-full-decoderaware-r21",
+    "pretrain-em-full-decoderaware-r22",
     "pretrain-public-em-membrane-r16",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
@@ -954,6 +959,7 @@ CREMI_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-learned-rag-r20q",
+    "eval-cremi-learned-affinity-calibration-r20q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -974,6 +980,7 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-scale64",
     "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-learned-rag-r20q",
+    "eval-cremi-learned-affinity-calibration-r20q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -1013,6 +1020,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_em_full_membrane_dbmim_r20"
     if stage == "pretrain-em-full-decoderaware-r21":
         return "outputs/pretrain_em_full_decoderaware_dbmim_r21"
+    if stage == "pretrain-em-full-decoderaware-r22":
+        return "outputs/pretrain_em_full_decoderaware_dbmim_r22"
     if stage == "pretrain-public-em-membrane-r16":
         return "outputs/pretrain_public_em_membrane_dbmim_r16"
     if stage == "finetune-cremi":
@@ -1162,6 +1171,19 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_dec_cfg["train"]["save_steps"] = max(int(pre_dec_cfg["train"].get("save_steps", 0)), 2000)
         _write_yaml(pretrain_em_full_decoderaware_r21, pre_dec_cfg)
 
+    pretrain_em_full_decoderaware_r22 = bundle / "configs" / "pretrain_em_full_decoderaware_r22.yaml"
+    if pretrain_em_full_decoderaware_r22.exists():
+        pre_dec_r22_cfg = yaml.safe_load(pretrain_em_full_decoderaware_r22.read_text(encoding="utf-8"))
+        pre_dec_r22_cfg["output_dir"] = "outputs/pretrain_em_full_decoderaware_dbmim_r22"
+        pre_dec_r22_cfg["data"]["train_paths"] = [
+            "data/CREMI",
+            "/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all",
+        ]
+        pre_dec_r22_cfg["train"]["epochs"] = max(int(pre_dec_r22_cfg["train"].get("epochs", 1)), 100000)
+        pre_dec_r22_cfg["train"]["save_every"] = max(int(pre_dec_r22_cfg["train"].get("save_every", 1)), 5)
+        pre_dec_r22_cfg["train"]["save_steps"] = max(int(pre_dec_r22_cfg["train"].get("save_steps", 0)), 2000)
+        _write_yaml(pretrain_em_full_decoderaware_r22, pre_dec_r22_cfg)
+
     config_to_ablation = {spec["config"]: spec for spec in ABLATION_RUNS.values()}
     ablation_configs = set(config_to_ablation)
     for name, out_dir in [
@@ -1219,6 +1241,7 @@ def make_bundle(
         "scripts/evaluate_cremi_segmentation.py",
         "scripts/evaluate_cremi_diagnostics.py",
         "scripts/train_learned_rag_postprocess.py",
+        "scripts/train_learned_affinity_calibration.py",
         "requirements-dbMIM.txt",
     ]:
         src = PROJECT / name
@@ -1246,7 +1269,7 @@ def make_bundle(
         or post_train_official_abc_eval
         or post_train_arch_bench
         or stage == "eval-cremi-arch-explore-postprocess-r15q"
-        or stage == "eval-cremi-learned-rag-r20q"
+        or stage in LEARNED_POSTPROCESS_STAGES
     )
     if needs_superhuman_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
@@ -1288,17 +1311,26 @@ def make_bundle(
         "pretrain-em-membrane-r14",
         "pretrain-em-full-membrane-r20",
         "pretrain-em-full-decoderaware-r21",
+        "pretrain-em-full-decoderaware-r22",
         "pretrain-public-em-membrane-r16",
     }:
         if stage == "pretrain-public-em-membrane-r16":
             em_data_dir = "data/EM_pretrain_data/public_em"
-        elif stage in {"pretrain-em-full-membrane-r20", "pretrain-em-full-decoderaware-r21"}:
+        elif stage in {
+            "pretrain-em-full-membrane-r20",
+            "pretrain-em-full-decoderaware-r21",
+            "pretrain-em-full-decoderaware-r22",
+        }:
             em_data_dir = "/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all"
         else:
             em_data_dir = "data/EM_pretrain_data/all"
         if stage == "pretrain-public-em-membrane-r16":
             em_tos_groups = ["public_em"]
-        elif stage in {"pretrain-em-full-membrane-r20", "pretrain-em-full-decoderaware-r21"}:
+        elif stage in {
+            "pretrain-em-full-membrane-r20",
+            "pretrain-em-full-decoderaware-r21",
+            "pretrain-em-full-decoderaware-r22",
+        }:
             em_tos_groups = ["fafb", "fib25", "kasthuri", "mitoem", "mb_moc"]
         else:
             em_tos_groups = ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
@@ -1308,11 +1340,18 @@ def make_bundle(
             em_stage_cfgs = ["pretrain_em_full_membrane_r20.yaml"]
         elif stage == "pretrain-em-full-decoderaware-r21":
             em_stage_cfgs = ["pretrain_em_full_decoderaware_r21.yaml"]
+        elif stage == "pretrain-em-full-decoderaware-r22":
+            em_stage_cfgs = ["pretrain_em_full_decoderaware_r22.yaml"]
         else:
             em_stage_cfgs = ["pretrain_em_all_r11.yaml", "pretrain_em_membrane_r14.yaml"]
         required_em_groups = (
             ["fafb", "fib25", "kasthuri", "mitoem", "mb_moc"]
-            if stage in {"pretrain-em-full-membrane-r20", "pretrain-em-full-decoderaware-r21"}
+            if stage
+            in {
+                "pretrain-em-full-membrane-r20",
+                "pretrain-em-full-decoderaware-r21",
+                "pretrain-em-full-decoderaware-r22",
+            }
             else []
         )
         required_em_group_expr = " ".join(required_em_groups) if required_em_groups else "__none__"
@@ -1484,6 +1523,32 @@ def make_bundle(
                 f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
                 f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_best.pt",
                 "fi",
+            ]
+        )
+    if stage == "eval-cremi-learned-affinity-calibration-r20q":
+        model_prefix = "finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q"
+        prelude.extend(
+            [
+                f"mkdir -p outputs/{model_prefix}",
+                "if bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_latest.pt",
+                "else",
+                "  bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_best.pt",
+                "fi",
+            ]
+        )
+    if stage == "pretrain-em-full-decoderaware-r22":
+        prelude.extend(
+            [
+                "mkdir -p outputs/pretrain_em_full_decoderaware_dbmim_r21",
+                "bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/pretrain_em_full_decoderaware_dbmim_r21/pretrained_latest.pt "
+                "outputs/pretrain_em_full_decoderaware_dbmim_r21/pretrained_latest.pt -conf=\"$TOS_CONF\"",
             ]
         )
     eval_stage_map = {
@@ -1782,6 +1847,13 @@ def make_bundle(
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi-learned-affinity-calibration-r20q":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_learned_affinity_calibration_r20q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "eval-cremi-zdice":
         postlude.extend(
             [
@@ -1942,6 +2014,7 @@ def main() -> None:
             "pretrain-em-membrane-r14",
             "pretrain-em-full-membrane-r20",
             "pretrain-em-full-decoderaware-r21",
+            "pretrain-em-full-decoderaware-r22",
             "pretrain-public-em-membrane-r16",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
@@ -1972,6 +2045,7 @@ def main() -> None:
             "eval-cremi-scale64",
             "eval-cremi-arch-explore-postprocess-r15q",
             "eval-cremi-learned-rag-r20q",
+            "eval-cremi-learned-affinity-calibration-r20q",
             "eval-cremi-zdice",
             "eval-cremi-zdice-focal",
             "smoke",
@@ -2023,6 +2097,13 @@ def main() -> None:
     elif args.stage == "pretrain-em-full-decoderaware-r21":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_full_decoderaware_r21.yaml"
         prefix = "dbmim-pretrain-em-full-decoderaware-r21"
+    elif args.stage == "pretrain-em-full-decoderaware-r22":
+        entrypoint = (
+            f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py "
+            "--config configs/pretrain_em_full_decoderaware_r22.yaml "
+            "--resume outputs/pretrain_em_full_decoderaware_dbmim_r21/pretrained_latest.pt"
+        )
+        prefix = "dbmim-pretrain-em-full-decoderaware-r22"
     elif args.stage == "pretrain-public-em-membrane-r16":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_membrane_r16.yaml"
         prefix = "dbmim-pretrain-public-em-membrane-r16"
@@ -2630,6 +2711,39 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-learned-rag-r20q"
+    elif args.stage == "eval-cremi-learned-affinity-calibration-r20q":
+        entrypoint = (
+            "python - <<'PY'\n"
+            "import importlib.util\n"
+            "missing=[m for m in ['skimage','mahotas','waterz'] if importlib.util.find_spec(m) is None]\n"
+            "print({'learned_affinity_calibration_missing_modules': missing})\n"
+            "if missing:\n"
+            "    raise SystemExit('missing learned affinity calibration modules: '+','.join(missing))\n"
+            "PY\n"
+            "python scripts/train_learned_affinity_calibration.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_learned_affinity_calibration_r20q "
+            "--crop-size 0 0 0 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--epochs 800 "
+            "--lr 0.02 "
+            "--dice-weight 0.25 "
+            "--identity-weight 0.01 "
+            "--thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--boundary-threshold 0.5 "
+            "--seed-distance 10 "
+            "--waterz-scoring hist_quantile "
+            "--metric-backend skimage "
+            "--replicate-affinity-boundary "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda"
+        )
+        prefix = "dbmim-learn-aff-calib-r20q"
     elif args.stage == "eval-cremi-zdice":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "

@@ -1115,3 +1115,58 @@ statistics. Better candidates are: improve affinity prediction and calibration
 inside the UNETR path; keep waterz/elf as the quality reference; and only
 replace post-processing with a learned method if it preserves monotonic merge
 constraints or optimizes a segmentation-aware loss on held-out volumes.
+
+## 2026-06-23 01:50 China R22 and Learnable Calibration Wave
+
+The user requested continued full-data pretraining and learnable post-processing
+with a hard cap of 16 total GPUs. Live SiFlow state before submission was 4
+dbMiM GPUs: the two R21 downstream jobs, each 2 GPUs. The new wave deliberately
+uses 10 more GPUs, for 14 total dbMiM GPUs:
+
+| purpose | UUID | GPUs | pool | status at submit check |
+|---|---|---:|---|---|
+| R22 full-EM decoder-aware pretrain continuation | `f54b2ac9-81e2-407c-b39b-85b22deab40b` | 8 | `med-model` | Running |
+| R20 learned affinity calibration postprocess | `db054938-053d-4d25-9849-d616d66ff57e` | 2 | `med-model` | Pending, then startup logs appeared |
+| R21 scratch downstream | `dae6bec4-3dc8-46a0-b7af-6a2f39619be2` | 2 | `med-model` | Running |
+| R21 decoder-aware downstream | `89a29ac5-03d5-4c85-8e86-55ef8ad19f52` | 2 | `med-model` | Running |
+
+R22 details:
+
+- Stage: `pretrain-em-full-decoderaware-r22`
+- Config: `configs/pretrain_em_full_decoderaware_r22.yaml`
+- Output prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_decoderaware_dbmim_r22/`
+- It resumes from:
+  `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_decoderaware_dbmim_r21/pretrained_latest.pt`
+- R21 checkpoint size was verified on TOS before submission: about `213.04MB`.
+- R22 target `max_steps=160000`, LR `1e-4`, starting from R21 step 80000.
+- Startup logs showed all five full-EM groups already staged under the mounted
+  path and `em_pretrain_data_status='available_offline_tos'`. The R21
+  checkpoint downloaded successfully, and `torchrun` launched. Wait for
+  `train_log.jsonl` or `pretrained_latest.pt` under the R22 output prefix
+  before reporting loss.
+
+Learnable postprocess details:
+
+- Stage: `eval-cremi-learned-affinity-calibration-r20q`
+- Script: `scripts/train_learned_affinity_calibration.py`
+- Output prefix:
+  `tos://agi-data/users/dchen02/dbmim/outputs/eval_cremi_learned_affinity_calibration_r20q/`
+- It uses the R20 full-EM MSE+MAWS finetuned checkpoint and learns only a
+  differentiable global z/y/x affinity scale+bias on CREMI A/B affinity targets.
+  Final instance segmentation still uses waterz on A/B/C. This is intentionally
+  more conservative than learned-RAG: it cannot arbitrarily merge fragment
+  pairs, so it tests whether learnable calibration can improve waterz sweeps
+  without destroying topology.
+- Expected artifacts: `learned_affinity_calibration.json`,
+  `cremi_segmentation_summary.json`, and `cremi_segmentation_records.json`.
+- Poll with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r20q_learned_calib --once --logs --siflow-fallback
+```
+
+Do not submit more dbMiM GPU work while these four tasks are active unless a
+task finishes or is stopped; the user cap is 16 GPUs and the current planned
+occupancy is 14.
