@@ -993,3 +993,41 @@ At `2026-06-23T00:34+08:00`, only one dbMiM SiFlow task remained active:
   affinity loss `0.011736`, elapsed `4911s`.
 - The screen watcher had reached poll 8 and was waiting for step `80000` before
   submitting the four R21 downstream arms.
+
+At `2026-06-23T00:40+08:00`, the old R21 watcher was stopped and restarted with
+only two downstream stages:
+
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-scratch-r21q`
+- `finetune-cremi-unetr-aniso-arch-explore-maws-mse-decoderaware-r21q`
+
+The DPP R21 arms were deliberately removed from the automatic watcher because
+the completed R20 DPP result was not positive. The current watcher log is still
+tracked by:
+
+```bash
+cat outputs/watchers/r21_decoderaware_finetune_screen.latest_log
+```
+
+At `2026-06-23T00:48+08:00`, a replacement learned-postprocess experiment was
+submitted:
+
+- Stage: `eval-cremi-learned-rag-r20q`
+- UUID: `57808e2d-e0e8-43cb-88d2-105ab58641ab`
+- Pool/GPUs: `med-model`, 2 GPUs.
+- Status at submit check: `Pending`.
+
+This is not the old DPP affinity calibrator. It trains
+`LearnedRAGMergeScorer`, a lightweight MLP over watershed fragment-pair
+boundary features, and then merges fragment pairs once by learned probability.
+The intended comparison is:
+
+- quality: learned-RAG VOI/ARAND vs R20 waterz `VOI=1.085331`,
+  `bestARAND=0.195722`;
+- speed: learned-RAG `postprocess_sec` vs waterz `postprocess_sec`;
+- generalization: A/B train-like rows vs C holdout rows in
+  `learned_rag_summary.json`.
+
+Treat learned-RAG as the current "可学习后处理" branch. It can plausibly speed
+up inference because it replaces waterz agglomeration/sweep with one learned
+edge-score pass plus union-find, although 2D watershed fragment generation is
+still CPU-bound in this first version.

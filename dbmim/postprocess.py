@@ -327,6 +327,164 @@ def _reduce_pair_scores(
     return unique, scores.astype(np.float32, copy=False), counts.astype(np.int64, copy=False)
 
 
+def rag_boundary_features(
+    affinities: np.ndarray,
+    fragments: np.ndarray,
+    *,
+    min_boundary: int = 1,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return fragment-pair ids, boundary features, and boundary counts.
+
+    The feature order is intentionally simple and stable:
+
+    - z/y/x boundary mean affinity
+    - z/y/x boundary min affinity
+    - z/y/x boundary max affinity
+    - z/y/x boundary voxel count normalized by total pair count
+    - total boundary voxel count, log1p scaled
+    """
+
+    affinities = np.asarray(affinities, dtype=np.float32)
+    fragments = np.asarray(fragments, dtype=np.uint64)
+    if affinities.ndim != 4 or affinities.shape[0] != 3:
+        raise ValueError(f"expected affinities with shape [3,D,H,W], got {affinities.shape}")
+    if tuple(affinities.shape[1:]) != tuple(fragments.shape):
+        raise ValueError(f"affinity/fragment shape mismatch: {affinities.shape[1:]} vs {fragments.shape}")
+    max_id = int(fragments.max(initial=0))
+    if max_id <= 1:
+        return (
+            np.empty((0,), dtype=np.int64),
+            np.empty((0, 13), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+        )
+    base = max_id + 1
+    packed_parts: list[np.ndarray] = []
+    value_parts: list[np.ndarray] = []
+    axis_parts: list[np.ndarray] = []
+    axes = [
+        (0, fragments[1:], fragments[:-1], affinities[0, 1:]),
+        (1, fragments[:, 1:], fragments[:, :-1], affinities[1, :, 1:]),
+        (2, fragments[:, :, 1:], fragments[:, :, :-1], affinities[2, :, :, 1:]),
+    ]
+    for axis, left_labels, right_labels, values in axes:
+        packed, weights = _affinity_boundary_pairs(left_labels, right_labels, values, base)
+        if packed.size == 0:
+            continue
+        packed_parts.append(packed)
+        value_parts.append(weights)
+        axis_parts.append(np.full(packed.shape, axis, dtype=np.int8))
+    if not packed_parts:
+        return (
+            np.empty((0,), dtype=np.int64),
+            np.empty((0, 13), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+        )
+    packed_all = np.concatenate(packed_parts).astype(np.int64, copy=False)
+    values_all = np.concatenate(value_parts).astype(np.float32, copy=False)
+    axes_all = np.concatenate(axis_parts).astype(np.int8, copy=False)
+    unique, inverse = np.unique(packed_all, return_inverse=True)
+    counts = np.bincount(inverse, minlength=unique.size).astype(np.int64, copy=False)
+    features = np.zeros((unique.size, 13), dtype=np.float32)
+    safe_counts = np.maximum(counts.astype(np.float32), 1.0)
+    for axis in range(3):
+        axis_mask = axes_all == axis
+        if not np.any(axis_mask):
+            continue
+        axis_idx = inverse[axis_mask]
+        axis_values = values_all[axis_mask].astype(np.float32, copy=False)
+        axis_counts = np.bincount(axis_idx, minlength=unique.size).astype(np.float32, copy=False)
+        axis_sum = np.bincount(axis_idx, weights=axis_values, minlength=unique.size).astype(np.float32, copy=False)
+        valid = axis_counts > 0
+        features[valid, axis] = axis_sum[valid] / axis_counts[valid]
+        mins = np.full(unique.size, np.inf, dtype=np.float32)
+        maxs = np.full(unique.size, -np.inf, dtype=np.float32)
+        np.minimum.at(mins, axis_idx, axis_values)
+        np.maximum.at(maxs, axis_idx, axis_values)
+        features[valid, 3 + axis] = mins[valid]
+        features[valid, 6 + axis] = maxs[valid]
+        features[:, 9 + axis] = axis_counts / safe_counts
+    features[:, 12] = np.log1p(safe_counts)
+    keep = counts >= int(min_boundary)
+    return unique[keep], features[keep], counts[keep]
+
+
+def agglomerate_fragments_by_scores(
+    fragments: np.ndarray,
+    packed_pairs: np.ndarray,
+    merge_scores: np.ndarray,
+    threshold: float = 0.5,
+) -> np.ndarray:
+    """Merge fragment pairs with learned scores above threshold."""
+
+    fragments = np.asarray(fragments, dtype=np.uint64)
+    packed_pairs = np.asarray(packed_pairs, dtype=np.int64)
+    merge_scores = np.asarray(merge_scores, dtype=np.float32)
+    max_id = int(fragments.max(initial=0))
+    if max_id <= 1 or packed_pairs.size == 0:
+        return relabel_sequential(fragments)
+    base = max_id + 1
+    uf = UnionFind(max_id + 1)
+    selected = packed_pairs[merge_scores >= float(threshold)]
+    for packed in selected:
+        left = int(packed // base)
+        right = int(packed % base)
+        if left > 0 and right > 0:
+            uf.union(left, right)
+    roots = uf.compress()
+    root_labels = roots[fragments.astype(np.int64, copy=False)]
+    return relabel_sequential(root_labels)
+
+
+def rag_pair_labels_from_ground_truth(
+    packed_pairs: np.ndarray,
+    fragments: np.ndarray,
+    labels: np.ndarray,
+    *,
+    ignore_label: int | None = 0,
+    positive_fraction: float = 0.5,
+) -> np.ndarray:
+    """Label fragment pairs by majority ground-truth object consistency."""
+
+    packed_pairs = np.asarray(packed_pairs, dtype=np.int64)
+    fragments = np.asarray(fragments, dtype=np.uint64)
+    labels = np.asarray(labels)
+    max_id = int(fragments.max(initial=0))
+    base = max_id + 1
+    flat_frag = fragments.reshape(-1).astype(np.int64, copy=False)
+    flat_label = labels.reshape(-1).astype(np.int64, copy=False)
+    keep = (flat_frag > 0) & (flat_frag <= max_id) & (flat_label > 0)
+    if ignore_label is not None:
+        keep &= flat_label != int(ignore_label)
+    major = np.zeros(max_id + 1, dtype=np.int64)
+    confidence = np.zeros(max_id + 1, dtype=np.float32)
+    if np.any(keep):
+        kept_frag = flat_frag[keep]
+        kept_label = flat_label[keep]
+        label_base = int(kept_label.max(initial=0)) + 1
+        packed = kept_frag * label_base + kept_label
+        unique, counts = np.unique(packed, return_counts=True)
+        frag_ids = unique // label_base
+        label_ids = unique % label_base
+        totals = np.bincount(kept_frag, minlength=max_id + 1).astype(np.float32, copy=False)
+        order = np.lexsort((-counts, frag_ids))
+        sorted_frag = frag_ids[order]
+        first = np.r_[True, sorted_frag[1:] != sorted_frag[:-1]]
+        best = order[first]
+        best_frag = frag_ids[best].astype(np.int64, copy=False)
+        best_label = label_ids[best].astype(np.int64, copy=False)
+        major[best_frag] = best_label
+        confidence[best_frag] = counts[best].astype(np.float32, copy=False) / np.maximum(totals[best_frag], 1.0)
+    out = np.zeros(packed_pairs.shape, dtype=np.float32)
+    for idx, packed in enumerate(packed_pairs):
+        left = int(packed // base)
+        right = int(packed % base)
+        if left <= 0 or right <= 0 or left > max_id or right > max_id:
+            continue
+        if major[left] > 0 and major[left] == major[right]:
+            out[idx] = 1.0 if min(confidence[left], confidence[right]) >= float(positive_fraction) else 0.0
+    return out
+
+
 def _select_pairs_by_score(
     packed: np.ndarray,
     weights: np.ndarray,

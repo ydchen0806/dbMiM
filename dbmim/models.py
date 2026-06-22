@@ -939,6 +939,33 @@ class LearnableAffinityPostProcessor(nn.Module):
         return calibrated
 
 
+class LearnedRAGMergeScorer(nn.Module):
+    """Small MLP that scores whether neighboring watershed fragments should merge."""
+
+    def __init__(
+        self,
+        in_features: int = 13,
+        hidden_dim: int = 64,
+        depth: int = 2,
+        dropout: float = 0.05,
+    ) -> None:
+        super().__init__()
+        layers: list[nn.Module] = []
+        last = int(in_features)
+        for _ in range(max(1, int(depth))):
+            layers.append(nn.Linear(last, int(hidden_dim)))
+            layers.append(nn.LayerNorm(int(hidden_dim)))
+            layers.append(nn.GELU())
+            if float(dropout) > 0:
+                layers.append(nn.Dropout(float(dropout)))
+            last = int(hidden_dim)
+        layers.append(nn.Linear(last, 1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.net(features).squeeze(-1)
+
+
 class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
     """dbMiM variant that pretrains both encoder and EM decoder/head.
 

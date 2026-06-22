@@ -953,6 +953,7 @@ CREMI_STAGES = {
     "eval-cremi-aniso-graph",
     "eval-cremi-scale64",
     "eval-cremi-arch-explore-postprocess-r15q",
+    "eval-cremi-learned-rag-r20q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_TRAIN_STAGES | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -972,6 +973,7 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-aniso-graph",
     "eval-cremi-scale64",
     "eval-cremi-arch-explore-postprocess-r15q",
+    "eval-cremi-learned-rag-r20q",
     "eval-cremi-zdice",
     "eval-cremi-zdice-focal",
 } | ABLATION_EVAL_STAGES | ABLATION_LARGE_EVAL_STAGES | ABLATION_DIAG_STAGES | SUPERHUMAN_DEP_STAGES
@@ -1216,6 +1218,7 @@ def make_bundle(
         "train_finetune.py",
         "scripts/evaluate_cremi_segmentation.py",
         "scripts/evaluate_cremi_diagnostics.py",
+        "scripts/train_learned_rag_postprocess.py",
         "requirements-dbMIM.txt",
     ]:
         src = PROJECT / name
@@ -1243,6 +1246,7 @@ def make_bundle(
         or post_train_official_abc_eval
         or post_train_arch_bench
         or stage == "eval-cremi-arch-explore-postprocess-r15q"
+        or stage == "eval-cremi-learned-rag-r20q"
     )
     if needs_superhuman_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
@@ -1431,8 +1435,9 @@ def make_bundle(
         "eval-cremi-gpu-probe",
         "eval-cremi-rag-ablation",
         "eval-cremi-aniso-graph",
-        "eval-cremi-scale64",
-    }:
+            "eval-cremi-scale64",
+            "eval-cremi-learned-rag-r20q",
+        }:
         prelude.extend(
             [
                 "if bin/tosutil cp "
@@ -1449,6 +1454,23 @@ def make_bundle(
         )
     if stage == "eval-cremi-arch-explore-postprocess-r15q":
         model_prefix = "finetune_cremi_real_unetr_aniso_em_shwmse_maws_bcar_rank_allpretrained_r14q"
+        prelude.extend(
+            [
+                f"mkdir -p outputs/{model_prefix}",
+                "if bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_latest.pt",
+                "else",
+                "  bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                f"  export DBMIM_EVAL_CKPT=outputs/{model_prefix}/finetuned_best.pt",
+                "fi",
+            ]
+        )
+    if stage == "eval-cremi-learned-rag-r20q":
+        model_prefix = "finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q"
         prelude.extend(
             [
                 f"mkdir -p outputs/{model_prefix}",
@@ -1753,6 +1775,13 @@ def make_bundle(
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi-learned-rag-r20q":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_learned_rag_r20q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "eval-cremi-zdice":
         postlude.extend(
             [
@@ -1942,6 +1971,7 @@ def main() -> None:
             "eval-cremi-aniso-graph",
             "eval-cremi-scale64",
             "eval-cremi-arch-explore-postprocess-r15q",
+            "eval-cremi-learned-rag-r20q",
             "eval-cremi-zdice",
             "eval-cremi-zdice-focal",
             "smoke",
@@ -2570,6 +2600,36 @@ def main() -> None:
             "--fail-on-backend-error"
         )
         prefix = "dbmim-arch-explore-postprocess-r15q"
+    elif args.stage == "eval-cremi-learned-rag-r20q":
+        entrypoint = (
+            "python - <<'PY'\n"
+            "import importlib.util\n"
+            "missing=[m for m in ['skimage','mahotas'] if importlib.util.find_spec(m) is None]\n"
+            "print({'learned_rag_missing_modules': missing})\n"
+            "if missing:\n"
+            "    raise SystemExit('missing learned RAG eval modules: '+','.join(missing))\n"
+            "PY\n"
+            "python scripts/train_learned_rag_postprocess.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q.yaml "
+            "--checkpoint \"$DBMIM_EVAL_CKPT\" "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_learned_rag_r20q "
+            "--crop-size 0 0 0 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--boundary-threshold 0.5 "
+            "--seed-distance 10 "
+            "--min-boundary 4 "
+            "--merge-thresholds 0.30 0.40 0.50 0.60 0.70 "
+            "--epochs 120 "
+            "--metric-backend skimage "
+            "--replicate-affinity-boundary "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda"
+        )
+        prefix = "dbmim-learned-rag-r20q"
     elif args.stage == "eval-cremi-zdice":
         entrypoint = (
             "python scripts/evaluate_cremi_segmentation.py "
