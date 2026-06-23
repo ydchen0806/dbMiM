@@ -433,6 +433,16 @@ def _is_complete_summary(eval_name: str, summary: dict) -> bool:
     """Return True only when a summary covers the intended evaluation scope."""
 
     samples = {str(name) for name in summary.get("sample_names", [])}
+    if not samples:
+        records = summary.get("records") or []
+        samples = {str(row.get("sample") or row.get("sample_name")) for row in records if isinstance(row, dict)}
+    if not samples:
+        sample_records = summary.get("sample_records") or []
+        samples = {
+            str(row.get("sample") or row.get("sample_name"))
+            for row in sample_records
+            if isinstance(row, dict)
+        }
     if "official_abc" in eval_name:
         expected = {
             "sample_A_20160501.hdf",

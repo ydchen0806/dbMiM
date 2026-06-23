@@ -970,6 +970,7 @@ CREMI_STAGES = {
     "pretrain-em-full-decoderaware-r22",
     "pretrain-public-em-membrane-r16",
     "pretrain-public-em-decoderaware-r24",
+    "pretrain-public-em-decoderaware-r24-resume74",
     "pretrain-public-em-plain-mae-r23",
     "pretrain-em-full-plain-mae-r23",
     "finetune-cremi",
@@ -1066,6 +1067,8 @@ def _training_output_dir(stage: str) -> str | None:
     if stage == "pretrain-public-em-membrane-r16":
         return "outputs/pretrain_public_em_membrane_dbmim_r16"
     if stage == "pretrain-public-em-decoderaware-r24":
+        return "outputs/pretrain_public_em_decoderaware_dbmim_r24"
+    if stage == "pretrain-public-em-decoderaware-r24-resume74":
         return "outputs/pretrain_public_em_decoderaware_dbmim_r24"
     if stage == "pretrain-public-em-plain-mae-r23":
         return "outputs/pretrain_public_em_plain_mae_r23"
@@ -1407,12 +1410,14 @@ def make_bundle(
         "pretrain-em-full-decoderaware-r22",
         "pretrain-public-em-membrane-r16",
         "pretrain-public-em-decoderaware-r24",
+        "pretrain-public-em-decoderaware-r24-resume74",
         "pretrain-public-em-plain-mae-r23",
         "pretrain-em-full-plain-mae-r23",
     }:
         if stage in {
             "pretrain-public-em-membrane-r16",
             "pretrain-public-em-decoderaware-r24",
+            "pretrain-public-em-decoderaware-r24-resume74",
             "pretrain-public-em-plain-mae-r23",
         }:
             em_data_dir = "data/EM_pretrain_data/public_em"
@@ -1428,6 +1433,7 @@ def make_bundle(
         if stage in {
             "pretrain-public-em-membrane-r16",
             "pretrain-public-em-decoderaware-r24",
+            "pretrain-public-em-decoderaware-r24-resume74",
             "pretrain-public-em-plain-mae-r23",
         }:
             em_tos_groups = ["public_em"]
@@ -1442,7 +1448,7 @@ def make_bundle(
             em_tos_groups = ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
         if stage == "pretrain-public-em-membrane-r16":
             em_stage_cfgs = ["pretrain_public_em_membrane_r16.yaml"]
-        elif stage == "pretrain-public-em-decoderaware-r24":
+        elif stage in {"pretrain-public-em-decoderaware-r24", "pretrain-public-em-decoderaware-r24-resume74"}:
             em_stage_cfgs = ["pretrain_public_em_decoderaware_r24.yaml"]
         elif stage == "pretrain-public-em-plain-mae-r23":
             em_stage_cfgs = ["pretrain_public_em_plain_mae_r23.yaml"]
@@ -1706,6 +1712,15 @@ def make_bundle(
                 "bin/tosutil cp "
                 f"{TOS_OUTPUT_PREFIX}/pretrain_em_full_decoderaware_dbmim_r21/pretrained_latest.pt "
                 "outputs/pretrain_em_full_decoderaware_dbmim_r21/pretrained_latest.pt -conf=\"$TOS_CONF\"",
+            ]
+        )
+    if stage == "pretrain-public-em-decoderaware-r24-resume74":
+        prelude.extend(
+            [
+                "mkdir -p outputs/pretrain_public_em_decoderaware_dbmim_r24",
+                "timeout 900 bin/tosutil cp "
+                f"{TOS_OUTPUT_PREFIX}/pretrain_public_em_decoderaware_dbmim_r24/checkpoint_step_00074000.pt "
+                "outputs/pretrain_public_em_decoderaware_dbmim_r24/checkpoint_step_00074000.pt -conf=\"$TOS_CONF\"",
             ]
         )
     eval_stage_map = {
@@ -2191,6 +2206,7 @@ def main() -> None:
             "pretrain-em-full-decoderaware-r22",
             "pretrain-public-em-membrane-r16",
             "pretrain-public-em-decoderaware-r24",
+            "pretrain-public-em-decoderaware-r24-resume74",
             "pretrain-public-em-plain-mae-r23",
             "pretrain-em-full-plain-mae-r23",
             "finetune-cremi",
@@ -2289,6 +2305,13 @@ def main() -> None:
     elif args.stage == "pretrain-public-em-decoderaware-r24":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_decoderaware_r24.yaml"
         prefix = "dbmim-pretrain-public-em-decoderaware-r24"
+    elif args.stage == "pretrain-public-em-decoderaware-r24-resume74":
+        entrypoint = (
+            f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py "
+            "--config configs/pretrain_public_em_decoderaware_r24.yaml "
+            "--resume outputs/pretrain_public_em_decoderaware_dbmim_r24/checkpoint_step_00074000.pt"
+        )
+        prefix = "dbmim-pretrain-public-em-decoderaware-r24-resume74"
     elif args.stage == "pretrain-public-em-plain-mae-r23":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_plain_mae_r23.yaml"
         prefix = "dbmim-pretrain-public-em-plainmae-r23"

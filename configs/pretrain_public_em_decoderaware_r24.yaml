@@ -74,6 +74,7 @@ decision:
   lr: 0.0005
   policy_weight: 0.05
   freeze_after_steps: 40000
+  use_frozen_policy_after_freeze: false
 train:
   batch_size: 2
   epochs: 200

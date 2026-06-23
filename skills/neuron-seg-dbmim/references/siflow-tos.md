@@ -540,3 +540,26 @@ with post-train official A/B/C waterz evaluation.
 Do not count the fullEM plain-MAE shared retry as productive running work while
 it reports `实例配额不足 | 需求:4, 实际可用(实例配额):0`. It is a queued future
 control, not a completed or running baseline.
+
+The first R24 pretrain failed at step `74780` with NaN `DecisionModule`
+categorical logits. It uploaded checkpoints through
+`checkpoint_step_00074000.pt`. The patched resume stage is:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  /volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python \
+  scripts/submit_siflow_dbmim.py \
+  --stage pretrain-public-em-decoderaware-r24-resume74 \
+  --resource-pool med-model \
+  --gpus-per-pod 4 \
+  --submit
+```
+
+Resume UUID: `363306f7-e09d-4f07-8ccb-e24735d0fcd5`.
+
+After submitting or resubmitting the resume, ensure the watcher is running:
+
+```bash
+nohup scripts/watch_and_submit_public_em_decoderaware_r24_finetune.sh \
+  > outputs/watchers/public_em_decoderaware_r24_watcher.log 2>&1 &
+```

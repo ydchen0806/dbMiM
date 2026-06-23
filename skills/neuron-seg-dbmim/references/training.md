@@ -451,6 +451,13 @@ UNETR-EM decoder/head keys. A local compatibility check loaded 214 keys into
 the downstream UNETR-aniso-EM model, including encoder blocks, decoder modules,
 and the affinity head.
 
+Operational lesson from the first R24 run: the decision policy can become NaN
+after the freeze point even when the main dbMiM losses remain finite. Keep
+`use_frozen_policy_after_freeze: false` for long pretraining unless explicitly
+testing policy transfer, and preserve the `DecisionModule` finite-value guard.
+If R24 stops before 160k, resume from the latest `checkpoint_step_*.pt` instead
+of treating the partial run as a method result.
+
 Plain MAE means:
 
 - encoder-only `DBMIM3DMAE`;
@@ -478,6 +485,16 @@ Only the following interpretation is defensible:
 
 Early 40k plain-MAE checkpoints are useful for debugging and trend checks, but
 the paper-facing comparison should use the 160k checkpoint to match R16/R22.
+
+As of 2026-06-23 15:40 CST, the completed publicEM comparison is:
+
+- R16 publicEM dbMiM: `VOI=1.002919`, `best ARAND=0.188832`;
+- R23 publicEM plain MAE: `VOI=1.027073`, `best ARAND=0.189247`;
+- scratch: `VOI=1.095164`, `best ARAND=0.210442`.
+
+This is a positive dbMiM-over-MAE signal, but weak: `-0.0242` VOI and
+`-0.0004` best ARAND relative to plain MAE. R24 is the active attempt to make
+the gain stronger; do not claim it until its downstream eval finishes.
 
 For the publicEM paper-facing comparison, use:
 

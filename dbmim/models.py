@@ -137,8 +137,11 @@ class DecisionModule(nn.Module):
     ) -> dict[str, torch.Tensor]:
         h = self.feature(patch_features)
         h = h + self.context(h.mean(dim=1, keepdim=True))
+        h = torch.nan_to_num(h, nan=0.0, posinf=20.0, neginf=-20.0)
         logits = self.actor(h)
         value = self.critic(h).squeeze(-1).mean(dim=1)
+        logits = torch.nan_to_num(logits, nan=0.0, posinf=20.0, neginf=-20.0).clamp(-20.0, 20.0)
+        value = torch.nan_to_num(value, nan=0.0, posinf=20.0, neginf=-20.0).clamp(-20.0, 20.0)
         dist = torch.distributions.Categorical(logits=logits)
         if deterministic:
             actions = logits.argmax(dim=-1)

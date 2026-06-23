@@ -203,6 +203,8 @@ def main() -> None:
     save_steps = int(train_cfg.get("save_steps", 0))
     target_ratio = float(decision_cfg.get("target_mask_ratio", model_cfg.get("mask_ratio", 0.75)))
     freeze_policy_after = int(decision_cfg.get("freeze_after_steps", 0))
+    use_frozen_policy_after_freeze = bool(decision_cfg.get("use_frozen_policy_after_freeze", False))
+    deterministic_frozen_policy = bool(decision_cfg.get("deterministic_frozen_policy", True))
 
     if is_main(rank):
         print(f"output_dir={output_dir}")
@@ -229,10 +231,21 @@ def main() -> None:
             if update_policy:
                 policy_optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
+                active_decision_module = (
+                    decision_module
+                    if update_policy or (decision_module is not None and use_frozen_policy_after_freeze)
+                    else None
+                )
+                deterministic_policy = (
+                    deterministic_frozen_policy
+                    and active_decision_module is not None
+                    and not update_policy
+                )
                 out = model(
                     image,
-                    decision_module=decision_module,
+                    decision_module=active_decision_module,
                     target_mask_ratio=target_ratio,
+                    deterministic_policy=deterministic_policy,
                 )
                 loss = out.loss
                 policy_loss = image.new_tensor(0.0)

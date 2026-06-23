@@ -1379,3 +1379,41 @@ Final comparison:
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r24_dbmim_vs_mae --once --logs --siflow-fallback
 ```
+
+Update at 2026-06-23 15:40 CST:
+
+- R23 publicEM plain-MAE downstream completed. Its official A/B/C waterz
+  summary has 60 records and `n=3` for best rows.
+- R16 publicEM dbMiM is slightly better than R23 plain MAE, but the margin is
+  small:
+
+| arm | VOI sum | ARAND at best VOI | best ARAND | note |
+|---|---:|---:|---:|---|
+| R16 publicEM dbMiM + MSE+MAWS | `1.002919` | `0.188832` | `0.188832` | current dbMiM baseline |
+| R23 publicEM plain MAE + MSE+MAWS | `1.027073` | `0.192763` | `0.189247` | matched plain-MAE control |
+| R17 scratch + MSE+MAWS | `1.095164` | `0.213401` | `0.210442` | matched scratch |
+
+Current defensible claim: publicEM dbMiM has a real but weak gain over plain
+MAE: about `-0.0242` VOI (`2.35%` relative) and `-0.0004` best ARAND. This is
+not yet a strong paper-level method gain.
+
+R24 publicEM dbMiM++ pretrain failed at step `74780/160000`, after uploading
+`checkpoint_step_00074000.pt`. The failure was not a main-loss explosion; SiFlow
+logs show finite loss near failure and then `DecisionModule` produced NaN
+categorical logits after the policy freeze point. The code was patched to:
+
+- sanitize `DecisionModule` hidden state, logits, and value with
+  `torch.nan_to_num` and logit/value clipping;
+- stop using the frozen policy for mask sampling by default after
+  `freeze_after_steps` (`use_frozen_policy_after_freeze: false`);
+- add resume stage `pretrain-public-em-decoderaware-r24-resume74`.
+
+Resume task:
+
+| purpose | UUID/process | GPUs | pool | state |
+|---|---|---:|---|---|
+| R24 resume from 74k | `363306f7-e09d-4f07-8ccb-e24735d0fcd5` | 4 | `med-model` | Submitted at 2026-06-23 15:39 CST |
+| R24 watcher restart | PID from `outputs/watchers/public_em_decoderaware_r24_watcher.pid` | 0 | login node | Waiting for `checkpoint_step_00160000.pt` |
+
+Do not report R24 as a method result until this resume completes and the
+watcher-submitted downstream official A/B/C summary appears.
