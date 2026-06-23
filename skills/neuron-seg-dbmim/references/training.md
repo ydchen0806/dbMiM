@@ -416,3 +416,48 @@ Use DPP as an end-to-end calibration/postprocess experiment, not as a claim
 that waterz became differentiable. The final segmentation still uses standard
 waterz/threshold sweeps, but on logits that can include the learned calibration
 module.
+
+## Plain-MAE Control Requirement
+
+Do not claim a dbMiM-specific pretraining benefit from `pretrained vs scratch`
+alone. The current strongest positive signal (`R17 publicEM dbMiM +
+MSE+MAWS`, VOI about `1.0029` vs scratch `1.0952`) proves that an EM-pretrained
+initialization can help, but it does not by itself prove that the dbMiM
+membrane/structure/decision objective is better than ordinary masked
+autoencoding.
+
+Use R23 for the clean control:
+
+- publicEM dbMiM R16: `pretrain_public_em_membrane_dbmim_r16`, 160k steps;
+- publicEM plain MAE R23: `pretrain_public_em_plain_mae_r23`, target 160k
+  steps;
+- matched downstream: `UNETR-aniso-EM + MSE + MAWS`, 12k finetune steps, same
+  official A/B/C waterz sweep.
+
+Plain MAE means:
+
+- encoder-only `DBMIM3DMAE`;
+- random 75% mask;
+- masked voxel reconstruction only;
+- `structure_weight=0`;
+- `membrane_weight=0`;
+- `decision.enabled=false`;
+- no decoder-aware affinity proxy.
+
+For full-EM data, compare:
+
+- R22 decoder-aware dbMiM / full-EM pretraining;
+- R23 full-EM plain MAE, same data and 160k target;
+- same downstream MSE+MAWS official A/B/C waterz evaluation.
+
+Only the following interpretation is defensible:
+
+| comparison | defensible claim |
+|---|---|
+| pretrained > scratch | EM pretraining helps |
+| dbMiM > plain MAE > scratch | dbMiM objective adds value beyond ordinary MAE |
+| plain MAE ≈ dbMiM > scratch | generic MAE/data initialization explains most of the gain |
+| dbMiM ≈ plain MAE ≈ scratch | current pretraining claim is not stable |
+
+Early 40k plain-MAE checkpoints are useful for debugging and trend checks, but
+the paper-facing comparison should use the 160k checkpoint to match R16/R22.

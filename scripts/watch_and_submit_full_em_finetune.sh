@@ -13,6 +13,7 @@ RESOURCE_POOL=${DBMIM_RESOURCE_POOL:-med-model}
 GPUS=${DBMIM_GPUS_PER_POD:-2}
 INTERVAL=${DBMIM_WATCH_INTERVAL_SEC:-600}
 MAX_POLLS=${DBMIM_MAX_POLLS:-720}
+PROBE_TIMEOUT=${DBMIM_WATCH_PROBE_TIMEOUT_SEC:-45}
 STAGES=${DBMIM_R20_FINETUNE_STAGES:-"finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-r20q finetune-cremi-unetr-aniso-arch-explore-maws-mse-bcar-rank-fullem-r20q"}
 MARKER=${DBMIM_FINETUNE_SUBMIT_MARKER:-"$ROOT/outputs/watchers/full-em-r20-finetune.submitted"}
 PARTIAL_MARKER=${DBMIM_FINETUNE_PARTIAL_MARKER:-"$ROOT/outputs/watchers/full-em-r20-finetune.partial"}
@@ -25,34 +26,28 @@ echo "{\"event\":\"start_full_em_finetune_watcher\",\"pretrain_prefix\":\"$PRETR
 
 probe_checkpoint() {
   local target="$PRETRAIN_PREFIX/$CHECKPOINT_FILE"
-  local probe="/tmp/dbmim_r20_finetune_probe_$$.pt"
-  rm -f "$probe"
-  if timeout 120 "$TOSUTIL" cp "$target" "$probe" -conf="$TOS_CONF" >/dev/null 2>&1; then
-    if [[ -s "$probe" ]]; then
-      rm -f "$probe"
-      return 0
-    fi
+  if timeout "$PROBE_TIMEOUT" "$TOSUTIL" stat "$target" -conf="$TOS_CONF" >/dev/null 2>&1; then
+    return 0
   fi
-  rm -f "$probe"
   return 1
 }
 
-probe_min_step() {
+probe_max_step() {
   local target="$PRETRAIN_PREFIX/$LOG_FILE"
   local probe="/tmp/dbmim_r20_finetune_log_probe_$$.jsonl"
   rm -f "$probe"
-  if ! timeout 120 "$TOSUTIL" cp "$target" "$probe" -conf="$TOS_CONF" >/dev/null 2>&1; then
+  if ! timeout "$PROBE_TIMEOUT" "$TOSUTIL" cp "$target" "$probe" -conf="$TOS_CONF" >/dev/null 2>&1; then
     rm -f "$probe"
+    echo 0
     return 1
   fi
   set +e
-  python - "$probe" "$MIN_STEP" <<'PY'
+  python - "$probe" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-min_step = int(sys.argv[2])
 max_step = 0
 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
     line = line.strip()
@@ -64,7 +59,6 @@ for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         continue
     max_step = max(max_step, int(row.get("step", 0)))
 print(max_step)
-raise SystemExit(0 if max_step >= min_step else 1)
 PY
   local status=$?
   set -e
@@ -78,7 +72,24 @@ if [[ -f "$MARKER" ]]; then
 fi
 
 for idx in $(seq 1 "$MAX_POLLS"); do
-  if probe_checkpoint && probe_min_step; then
+  checkpoint_ok=0
+  max_step=0
+  min_step_ok=0
+  if probe_checkpoint; then
+    checkpoint_ok=1
+  fi
+  if [[ "$MIN_STEP" -le 0 ]]; then
+    min_step_ok=1
+  else
+    set +e
+    max_step=$(probe_max_step)
+    probe_status=$?
+    set -e
+    if [[ "$probe_status" -eq 0 && "$max_step" -ge "$MIN_STEP" ]]; then
+      min_step_ok=1
+    fi
+  fi
+  if [[ "$checkpoint_ok" -eq 1 && "$min_step_ok" -eq 1 ]]; then
     echo "{\"event\":\"checkpoint_ready\",\"poll\":$idx,\"min_step\":$MIN_STEP,\"time\":\"$(date -Iseconds)\"}"
     : > "$PARTIAL_MARKER"
     for stage in $STAGES; do
@@ -106,7 +117,7 @@ for idx in $(seq 1 "$MAX_POLLS"); do
     } > "$MARKER"
     exit 0
   fi
-  echo "{\"event\":\"checkpoint_wait\",\"poll\":$idx,\"time\":\"$(date -Iseconds)\"}"
+  echo "{\"event\":\"checkpoint_wait\",\"poll\":$idx,\"checkpoint_ok\":$checkpoint_ok,\"max_step\":$max_step,\"min_step\":$MIN_STEP,\"time\":\"$(date -Iseconds)\"}"
   sleep "$INTERVAL"
 done
 

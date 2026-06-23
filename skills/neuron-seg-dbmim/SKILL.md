@@ -47,6 +47,10 @@ current watcher logs under `outputs/watchers/`.
   public internet. Use TOS bootstrap bundles and ship all required assets.
 - Do not trust a result until the checkpoint, config, evaluation command, crop
   size, threshold grid, backend, and metric-selection rule are all known.
+- Do not claim the dbMiM objective itself improves neuron segmentation from a
+  pretrained-vs-scratch comparison alone. Require a matched plain-MAE
+  pretraining control with the same data, steps, UNETR finetune recipe, and
+  official A/B/C waterz evaluation. R23 is the maintained plain-MAE baseline.
 
 ## Standard CREMI Workflow
 
@@ -133,3 +137,7 @@ whether `pos_embed` interpolation was used.
   small edge scorer on RAG boundary features and compares against deterministic
   affinity-score baselines; judge it on held-out sample C before calling it a
   positive learned-postprocess result.
+- A small pretrained-vs-scratch gain is not enough for a paper claim. Compare
+  against `pretrain_public_em_plain_mae_r23` / `pretrain_em_full_plain_mae_r23`
+  before attributing the gain to membrane weighting, structure loss, decision
+  masking, or decoder-aware dbMiM.

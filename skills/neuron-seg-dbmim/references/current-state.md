@@ -1233,3 +1233,93 @@ bias  = [0.0600, 0.5843, 0.6307]
 Conclusion: simple learnable z/y/x calibration is safer than learned-RAG, but
 it did not improve the current R20 full-EM checkpoint. The next useful learned
 postprocess evidence is the sparse-edge R17 publicEM vs scratch wave above.
+
+## 2026-06-23 R23 Plain-MAE Control Baseline
+
+The user correctly challenged that the current `R17 publicEM dbMiM` gain is
+small and does not yet prove a dbMiM-specific contribution. Before R23, there
+was no clean completed `plain MAE pretrain -> same UNETR finetune -> same
+official A/B/C waterz` baseline. Existing evidence only showed:
+
+- `publicEM dbMiM` vs scratch, not dbMiM vs ordinary MAE;
+- several dbMiM objective/postprocess variants, most of which were negative or
+  weak;
+- R22 full-EM decoder-aware pretraining checkpoint, but not yet a matched
+  plain-MAE control.
+
+R23 adds the required control. Plain MAE is intentionally conservative:
+
+- same EM/CREMI data and same `32x160x160` crop as dbMiM pretraining;
+- `DBMIM3DMAE` encoder-only architecture with random 75% patch mask;
+- masked voxel reconstruction only;
+- `structure_weight: 0.0`;
+- `membrane_weight: 0.0`;
+- `decision.enabled: false`;
+- no affinity proxy, no membrane weighting, no decision-mask policy, no UNETR
+  decoder/head pretraining.
+
+This isolates whether the current gain is just generic MAE initialization.
+The decision rule is:
+
+| outcome | interpretation |
+|---|---|
+| plain MAE ≈ or better than dbMiM | dbMiM-specific claim is weak; use "MAE-style EM pretraining helps" instead |
+| dbMiM > plain MAE > scratch | membrane/structure/dbMiM objective has a real contribution |
+| dbMiM > scratch but plain MAE ≈ scratch | dbMiM objective is the main source of transfer |
+| all pretrained arms ≈ scratch | current gain is not stable enough for a method claim |
+
+Configs and stages:
+
+| purpose | config | stage/output |
+|---|---|---|
+| publicEM plain MAE pretrain | `configs/pretrain_public_em_plain_mae_r23.yaml` | `pretrain-public-em-plain-mae-r23` / `pretrain_public_em_plain_mae_r23` |
+| publicEM plain MAE finetune | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_plainmae_r23q.yaml` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-plainmae-r23q` |
+| fullEM plain MAE pretrain | `configs/pretrain_em_full_plain_mae_r23.yaml` | `pretrain-em-full-plain-mae-r23` / `pretrain_em_full_plain_mae_r23` |
+| fullEM plain MAE finetune | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_plainmae_r23q.yaml` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-plainmae-r23q` |
+
+Submission state at launch:
+
+| purpose | UUID | GPUs | pool | state |
+|---|---|---:|---|---|
+| publicEM plain MAE pretrain | `7e2aa43b-48b8-40ad-bba7-b04b48fe2f60` | 4 | `med-model` | Running |
+| fullEM plain MAE pretrain, first try | `f428bd1e-83bf-4d7e-9038-5fe497eb5847` | 4 | `med-model` | Stopped; actual quota was 3/4 |
+| fullEM plain MAE pretrain, shared retry | `9658bbd2-cf61-4a54-a392-a014ee488114` | 4 | `cn-shanghai-changliu-skyinfer-reserved-shared` | Queueing; actual quota was 0/4 at launch |
+
+The publicEM plain-MAE logs confirmed it is a true plain-MAE control:
+
+```text
+affinity_loss = 0.0
+membrane_weight_mean = 1.0
+policy_loss = 0.0
+mask_ratio = 0.75
+loss = pixel_loss
+```
+
+Use the fair 160k-step checkpoint for the main comparison, because the R16
+publicEM dbMiM checkpoint also ran to 160k. Do not compare a 40k early plain
+MAE checkpoint against the 160k dbMiM result except as an explicitly labeled
+early-signal table.
+
+Watchers:
+
+```bash
+tail -n 50 outputs/watchers/plain_mae_r23_watcher.log
+tail -n 50 outputs/watchers/plain_mae_full_r23_watcher.log
+```
+
+They wait for `pretrained_latest.pt` and `train_log.jsonl` with max step at
+least `160000`, then submit the corresponding 2-GPU finetune job with
+post-train official A/B/C waterz evaluation. Poll final publicEM plain-MAE
+comparison with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r23_plainmae --once --logs --siflow-fallback
+```
+
+Poll the fullEM plain-MAE comparison with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
+```
