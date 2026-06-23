@@ -1417,3 +1417,46 @@ Resume task:
 
 Do not report R24 as a method result until this resume completes and the
 watcher-submitted downstream official A/B/C summary appears.
+
+Update at 2026-06-23 22:50 CST:
+
+- R24 resume `363306f7-e09d-4f07-8ccb-e24735d0fcd5` completed the 160k-step
+  publicEM dbMiM++ pretraining. TOS now contains
+  `checkpoint_step_00160000.pt`, `pretrained_latest.pt`, and `train_log.jsonl`
+  under `pretrain_public_em_decoderaware_dbmim_r24`.
+- Final R24 pretrain log row near step 160000 was finite:
+  `loss=0.0520`, `pixel_loss=0.0352`, `structure_loss=0.0840`,
+  `affinity_loss=9.25e-05`, `mask_ratio=0.75`.
+- The old watcher process had exited after one `checkpoint_wait`, so the R24
+  downstream was submitted manually with post-train official A/B/C waterz eval.
+  UUID: `628faa9d-4e5a-4b19-98bd-555bef604302`, 2 GPUs, `med-model`.
+- R24 downstream loaded `214` pretrained keys from
+  `outputs/pretrain_public_em_decoderaware_dbmim_r24/pretrained_latest.pt`.
+  At about 22:47 CST it was running normally around step `5800/12000`, with
+  recent MSE+MAWS train losses mostly in the `0.03-0.06` range.
+
+R25 was added to test whether dbMiM's gain over MAE is larger in a
+label-efficient / early-finetune regime. It keeps the same UNETR-aniso-EM,
+MSE+MAWS loss, augmentation, and official A/B/C waterz evaluation, but stops
+finetuning at 3000 steps. All four arms use seed `250` to reduce augmentation
+noise:
+
+| arm | config | UUID | GPUs/pool |
+|---|---|---|---:|
+| R24 dbMiM++ early3k | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_publicem_decoderaware_r24q.yaml` | `191db4dd-9949-4e08-8b79-838b34c19755` | 2, `med-model` |
+| R23 plain MAE early3k | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_publicem_plainmae_r23q.yaml` | `d650fd4d-4447-44dc-b25e-64c3cb6b65d0` | 2, `med-model` |
+| R16 dbMiM early3k | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_publicem_r17q.yaml` | `2b6dda20-de13-4ca4-af18-05af44a9988f` | 2, `med-model` |
+| scratch early3k | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_scratch_r17q.yaml` | `ffb9c6a4-935a-4dc4-aee9-87cf62d36c89` | 2, `med-model` |
+
+Poll R25 with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r25_early3k --once --logs --siflow-fallback
+```
+
+GPU accounting at submission time: R24 full downstream plus four R25 early3k
+arms were running on `med-model`, total 10 GPUs. FullEM plain-MAE pretrain
+`9658bbd2-cf61-4a54-a392-a014ee488114` was still queueing in the shared pool
+with `实例配额不足 | 需求:4, 实际可用(实例配额):0`, so the active plus queued
+dbMiM work was within the user's 16-GPU cap.

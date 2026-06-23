@@ -563,3 +563,48 @@ After submitting or resubmitting the resume, ensure the watcher is running:
 nohup scripts/watch_and_submit_public_em_decoderaware_r24_finetune.sh \
   > outputs/watchers/public_em_decoderaware_r24_watcher.log 2>&1 &
 ```
+
+2026-06-23 operational update:
+
+- R24 resume completed to step 160000 and uploaded
+  `pretrain_public_em_decoderaware_dbmim_r24/pretrained_latest.pt`.
+- The watcher did not submit downstream after the checkpoint appeared, so the
+  downstream was submitted manually:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  /volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python \
+  scripts/submit_siflow_dbmim.py \
+  --stage finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-decoderaware-r24q \
+  --resource-pool med-model \
+  --gpus-per-pod 2 \
+  --post-train-official-abc-eval \
+  --submit
+```
+
+Downstream UUID: `628faa9d-4e5a-4b19-98bd-555bef604302`.
+
+R25 early3k submissions were added to test whether dbMiM gains over plain MAE
+are larger before full finetune saturation:
+
+```bash
+for stage in \
+  finetune-cremi-unetr-aniso-arch-explore-maws-mse-early3k-publicem-decoderaware-r24q \
+  finetune-cremi-unetr-aniso-arch-explore-maws-mse-early3k-publicem-plainmae-r23q \
+  finetune-cremi-unetr-aniso-arch-explore-maws-mse-early3k-publicem-r17q \
+  finetune-cremi-unetr-aniso-arch-explore-maws-mse-early3k-scratch-r17q; do
+  env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+    /volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python \
+    scripts/submit_siflow_dbmim.py \
+    --stage "$stage" \
+    --resource-pool med-model \
+    --gpus-per-pod 2 \
+    --post-train-official-abc-eval \
+    --submit
+done
+```
+
+UUIDs in submission order: `191db4dd-9949-4e08-8b79-838b34c19755`,
+`d650fd4d-4447-44dc-b25e-64c3cb6b65d0`,
+`2b6dda20-de13-4ca4-af18-05af44a9988f`, and
+`ffb9c6a4-935a-4dc4-aee9-87cf62d36c89`.

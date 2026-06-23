@@ -416,3 +416,31 @@ deterministic sparse baseline and does not reproduce the earlier learned-RAG
 failure mode of severe over-merging. The saved `sparse_edge_scorer.pt` is useful
 only with its feature standardization metadata and exact fragment-generation
 settings.
+
+## 2026-06-23 Learnable Postprocess Status
+
+Current learnable post-processing evidence is negative or inconclusive:
+
+- DPP / learnable affinity calibration inside finetuning is not a positive
+  result. The full R20 no-DPP A/B/C waterz row was `VOI=1.085331` and
+  `ARAND=0.195722`; the DPP arm worsened to `VOI=1.123336` and
+  `ARAND=0.210163`.
+- Post-hoc learned affinity calibration also did not improve the stable
+  waterz baseline. The R20 learned-calibration fallback summary was
+  `VOI=1.108290`, `ARAND@VOI=0.202786`, and best ARAND `0.198023`, worse than
+  R20 no-DPP.
+- The first learned-RAG branch remains a negative result; it learned an edge
+  scorer but produced severe segmentation degradation relative to waterz.
+- Sparse-edge postprocess summaries under
+  `outputs/tos_fetch/scale_r17q/sparse/{publicem,scratch}/` are useful
+  diagnostics, not positive method evidence. They ran on `64x512x512` crops and
+  had VOI around `4.48-4.81`, far from the stable official waterz scale around
+  `1.0`. PublicEM sparse-edge held-out C was best with deterministic
+  `baseline_mean` at threshold `0.3` (`VOI=4.744965`, `ARAND=0.831264`), not
+  the learned scorer.
+
+Do not spend more mainline GPU budget on dense learned-RAG or DPP unless the
+objective changes. The more promising learnable-postprocess direction is a
+sparse fragment-edge scorer that replaces the RAG merge score while keeping
+waterz/fragment generation stable, and it must be judged against deterministic
+sparse edge scores on held-out C before being called a method improvement.
