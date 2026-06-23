@@ -1493,3 +1493,36 @@ R26 full 12k was submitted on 2026-06-23 23:22 CST:
 At that time unique dbMiM GPU accounting was 16 GPUs including this R26 task:
 R24 full 2, R25 early3k four arms 8, R26 full 2, and fullEM plain-MAE queue 4.
 Do not submit another GPU job until one of these completes or is stopped.
+
+Update at 2026-06-23 23:50 CST:
+
+The poller was patched again so official A/B/C summaries are not counted as
+complete merely because sample C has appeared once. For `official_abc` evals,
+`_is_complete_summary` now requires all three samples and at least 60 records.
+This avoids mislabeling partial stdout fallback rows such as 41/60 or 54/60 as
+complete.
+
+Latest partial signals:
+
+- R24 full-init downstream has completed training (`step=12000`,
+  `loss=0.02568`) and is in C-sample waterz post-processing. Fallback has
+  47/60 rows across A/B/C, but it is still `PARTIAL`. Current partial best VOI
+  is about `1.158`, worse than both R16 dbMiM (`1.003`) and R23 plain MAE
+  (`1.027`). Wait for 60/60 before making the final call, but the trend does
+  not support transferring the R24 decoder/head.
+- R25 early3k remains partial. At 41-54/60 rows, R24 full-init early3k is much
+  worse than the other early3k arms; R16 dbMiM early3k and scratch early3k are
+  close, and plain MAE early3k is also weak. Do not use this as final
+  label-efficient evidence until all four arms reach 60/60.
+- R26 encoder-only full has trained normally and started official A/B/C eval.
+  It loaded exactly 77 keys with prefix counts
+  `{'encoder_blocks': 72, 'norm': 2, 'patch_embed': 2, 'pos_embed': 1}` and
+  no decoder/head keys. Its current sample-A-only fallback is strong
+  (`VOI≈0.245`, `ARAND≈0.040` at 7 records), but this is only sample A and
+  must not be compared to A/B/C aggregates.
+
+Current best hypothesis: R24's pseudo-affinity decoder/head transfer is likely
+harmful; the cleaner test is R26 encoder-only. If R26 A/B/C beats R23 plain MAE
+and R16 dbMiM, use encoder-only R24 as the method path. If R26 also fails, stay
+with R16 membrane dbMiM and focus on full-data pretraining or a better
+pretext-objective rather than transferring the decoder/head.
