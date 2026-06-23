@@ -1568,3 +1568,31 @@ stronger label-efficient gain over plain MAE:
 After this submission, expected active/queued dbMiM usage is 12 GPUs: R26 full
 2, R26 early3k 2, R25 R24 full-init early3k 2, R25 scratch early3k 2, and
 fullEM plain-MAE queue 4.
+
+Update at 2026-06-24 00:12 CST:
+
+R25 early3k completed enough to resolve the label-efficient question for the
+non-R26 arms:
+
+| early3k arm | records | VOI | ARAND at best VOI | best ARAND |
+|---|---:|---:|---:|---:|
+| R24 dbMiM++ full-init early3k | 60 | `2.913022` | `0.574107` | `0.565924` |
+| R23 plain MAE early3k | 60 | `1.566102` | `0.389115` | `0.374662` |
+| R16 dbMiM early3k | 60 | `1.550130` | `0.338732` | `0.338732` |
+| scratch early3k | 60 | `1.563107` | `0.309977` | `0.309226` |
+
+Interpretation:
+
+- R24 full-init is decisively negative at both 12k and 3k; do not spend more
+  GPU on transferring its decoder/head.
+- R16 dbMiM still beats plain MAE slightly on VOI at 3k and more clearly on
+  ARAND, but the gain is not large enough for a strong method claim by itself.
+- Scratch early3k is competitive, especially by ARAND, so early3k is a noisy
+  regime and should mainly be used to diagnose harmful transfer rather than as
+  the paper headline.
+- The open question is now R26: same R24 checkpoint, encoder-only loading.
+
+R26 encoder-only full is evaluating and has only sample A/B partial rows so
+far. R26 encoder-only early3k is running as SiFlow UUID
+`992d7ef4-dcca-43d5-9a01-1ba7ca9477cd`. Active/queued dbMiM usage at this
+timestamp is 8 GPUs: R26 full 2, R26 early3k 2, and fullEM plain-MAE queue 4.
