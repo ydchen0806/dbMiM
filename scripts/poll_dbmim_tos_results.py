@@ -248,6 +248,12 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_fullem_r20q": "eb647c53-f408-4a5f-99c9-ead3d7b1f2df",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_dpp_fullem_r20q": "e52d773c-abae-481f-9da7-c3b34cab38a8",
     "eval_cremi_learned_affinity_calibration_r20q": "db054938-053d-4d25-9849-d616d66ff57e",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_decoderaware_r24q": "628faa9d-4e5a-4b19-98bd-555bef604302",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_decoderaware_encoderonly_r26q": "faba607c-b53c-4e45-9de2-798eb8462612",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_decoderaware_r24q": "191db4dd-9949-4e08-8b79-838b34c19755",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_plainmae_r23q": "d650fd4d-4447-44dc-b25e-64c3cb6b65d0",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_r17q": "2b6dda20-de13-4ca4-af18-05af44a9988f",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_scratch_r17q": "ffb9c6a4-935a-4dc4-aee9-87cf62d36c89",
 }
 
 
