@@ -152,6 +152,29 @@ Negative or fragile controls:
   graph-CC convention and metric path are not the main failure.
 - Graph CC is a strong simple baseline. Beat it before investing in complex
   watershed/agglomeration.
+- For fast learnable post-processing, the current maintained target is
+  waterz-comparable quality with lower runtime, not absolute SOTA quality. R27
+  learns only a tiny per-axis affinity logit calibrator (`scale`, `bias`) on
+  CREMI A/B affinity targets, then benchmarks `pred` and `learned_calibrated`
+  affinities through `graph_cc`, `cupy_graph_cc`, `seeded_rag`, and `waterz` on
+  A/B/C. Judge it by held-out sample C and the aggregate `postprocess_sec` vs
+  VOI/ARAND tradeoff.
+- `scripts/train_learned_affinity_calibration.py` supports this R27 workflow
+  with `--backends`, `--z-thresholds`, `--xy-thresholds`, `--min-size`,
+  `--min-boundary`, and `--score-mode`. It writes
+  `learned_affinity_calibration.json`, `cremi_segmentation_summary.json`, and
+  `cremi_segmentation_records.json`. Keep both raw `pred` and
+  `learned_calibrated` rows in summaries; if calibration helps train samples
+  A/B but hurts holdout C, report it as overfitting.
+- R27 SiFlow stage: `eval-cremi-fast-learned-postprocess-r17q`. It runs the R17
+  publicEM and scratch checkpoints in parallel on a 2-GPU pod and writes
+  `outputs/eval_cremi_fast_learned_postprocess_r17q/{publicem,scratch}` plus a
+  `combined_summary.json`. Valid final retry UUID:
+  `b86d2af4-09ca-414e-a493-42e1d9c039e1`. Ignore the earlier short UUIDs
+  `a4c95d62-8434-4bcf-be8a-8750db6a92ab` and
+  `e5d3341b-dedb-4e24-a6e8-f1b3efe607be`: the first omitted waterz packaging,
+  and the second was stopped to remove fail-fast behavior so optional backend
+  failures cannot kill the waterz reference.
 - In the R15/R16 full-volume architecture benchmarks, simple graph-CC with the
   early threshold grid again produced VOI around `7.9` on sample A. Do not use
   those early rows as a method conclusion; wait for waterz or run a standalone

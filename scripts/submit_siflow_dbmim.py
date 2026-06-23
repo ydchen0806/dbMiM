@@ -1022,6 +1022,7 @@ SUPERHUMAN_DEP_STAGES = ABLATION_SUPERHUMAN_EVAL_STAGES | SUPERHUMAN_CALIBRATION
 LEARNED_POSTPROCESS_STAGES = {
     "eval-cremi-learned-rag-r20q",
     "eval-cremi-learned-affinity-calibration-r20q",
+    "eval-cremi-fast-learned-postprocess-r17q",
     "eval-cremi-sparse-edge-publicem-r17q",
 }
 CREMI_STAGES = {
@@ -1063,6 +1064,7 @@ CREMI_STAGES = {
     "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-learned-rag-r20q",
     "eval-cremi-learned-affinity-calibration-r20q",
+    "eval-cremi-fast-learned-postprocess-r17q",
     "eval-cremi-blockwise-scale-r17q",
     "eval-cremi-sparse-edge-publicem-r17q",
     "eval-cremi-zdice",
@@ -1086,6 +1088,7 @@ CREMI_EVAL_STAGES = {
     "eval-cremi-arch-explore-postprocess-r15q",
     "eval-cremi-learned-rag-r20q",
     "eval-cremi-learned-affinity-calibration-r20q",
+    "eval-cremi-fast-learned-postprocess-r17q",
     "eval-cremi-blockwise-scale-r17q",
     "eval-cremi-sparse-edge-publicem-r17q",
     "eval-cremi-zdice",
@@ -1431,6 +1434,7 @@ def make_bundle(
         or post_train_arch_bench
         or stage == "eval-cremi-arch-explore-postprocess-r15q"
         or stage == "eval-cremi-learned-affinity-calibration-r20q"
+        or stage == "eval-cremi-fast-learned-postprocess-r17q"
     )
     if needs_waterz_eval and waterz_source.exists():
         shutil.copytree(waterz_source, out / "third_party" / "waterz", ignore=shutil.ignore_patterns(".git"))
@@ -1731,6 +1735,28 @@ def make_bundle(
                 "fi",
             ]
         )
+    if stage == "eval-cremi-fast-learned-postprocess-r17q":
+        postprocess_models = [
+            "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q",
+            "finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q",
+        ]
+        prelude.extend([f"mkdir -p outputs/{model_prefix}" for model_prefix in postprocess_models])
+        for model_prefix in postprocess_models:
+            prelude.extend(
+                [
+                    "if bin/tosutil cp "
+                    f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_latest.pt "
+                    f"outputs/{model_prefix}/finetuned_latest.pt -conf=\"$TOS_CONF\"; then",
+                    f"  echo \"{{'checkpoint_ready':'{model_prefix}/finetuned_latest.pt'}}\"",
+                    "else",
+                    "  bin/tosutil cp "
+                    f"{TOS_OUTPUT_PREFIX}/{model_prefix}/finetuned_best.pt "
+                    f"outputs/{model_prefix}/finetuned_best.pt -conf=\"$TOS_CONF\"",
+                    f"  cp outputs/{model_prefix}/finetuned_best.pt outputs/{model_prefix}/finetuned_latest.pt",
+                    f"  echo \"{{'checkpoint_ready':'{model_prefix}/finetuned_best.pt'}}\"",
+                    "fi",
+                ]
+            )
     if stage == "eval-cremi-blockwise-scale-r17q":
         blockwise_models = [
             "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q",
@@ -2091,6 +2117,13 @@ def make_bundle(
                 f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
             ]
         )
+    if stage == "eval-cremi-fast-learned-postprocess-r17q":
+        postlude.extend(
+            [
+                "bin/tosutil cp outputs/eval_cremi_fast_learned_postprocess_r17q "
+                f"{TOS_OUTPUT_PREFIX} -r -conf=\"$TOS_CONF\"",
+            ]
+        )
     if stage == "eval-cremi-blockwise-scale-r17q":
         postlude.extend(
             [
@@ -2304,6 +2337,7 @@ def main() -> None:
             "eval-cremi-arch-explore-postprocess-r15q",
             "eval-cremi-learned-rag-r20q",
             "eval-cremi-learned-affinity-calibration-r20q",
+            "eval-cremi-fast-learned-postprocess-r17q",
             "eval-cremi-blockwise-scale-r17q",
             "eval-cremi-sparse-edge-publicem-r17q",
             "eval-cremi-zdice",
@@ -3020,6 +3054,114 @@ def main() -> None:
             "--device cuda"
         )
         prefix = "dbmim-learn-aff-calib-r20q"
+    elif args.stage == "eval-cremi-fast-learned-postprocess-r17q":
+        entrypoint = (
+            "python - <<'PY'\n"
+            "import importlib.util\n"
+            "missing=[m for m in ['skimage','mahotas','waterz'] if importlib.util.find_spec(m) is None]\n"
+            "print({'fast_learned_postprocess_missing_modules': missing})\n"
+            "if missing:\n"
+            "    raise SystemExit('missing fast learned postprocess modules: '+','.join(missing))\n"
+            "PY\n"
+            "mkdir -p outputs/eval_cremi_fast_learned_postprocess_r17q/publicem outputs/eval_cremi_fast_learned_postprocess_r17q/scratch\n"
+            "(\n"
+            "  CUDA_VISIBLE_DEVICES=0 python scripts/train_learned_affinity_calibration.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q.yaml "
+            "--checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q/finetuned_latest.pt "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_fast_learned_postprocess_r17q/publicem "
+            "--crop-size 0 0 0 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--epochs 500 "
+            "--lr 0.02 "
+            "--dice-weight 0.25 "
+            "--identity-weight 0.03 "
+            "--backends graph_cc cupy_graph_cc seeded_rag waterz "
+            "--thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--z-thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--xy-thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--min-size 0 "
+            "--boundary-threshold 0.5 "
+            "--seed-method maxima_distance "
+            "--seed-distance 10 "
+            "--min-boundary 4 "
+            "--score-mode mean q25 "
+            "--waterz-scoring hist_quantile "
+            "--metric-backend skimage "
+            "--replicate-affinity-boundary "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda\n"
+            ") > outputs/eval_cremi_fast_learned_postprocess_r17q/publicem.log 2>&1 &\n"
+            "pid_publicem=$!\n"
+            "(\n"
+            "  CUDA_VISIBLE_DEVICES=1 python scripts/train_learned_affinity_calibration.py "
+            "--config configs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q.yaml "
+            "--checkpoint outputs/finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q/finetuned_latest.pt "
+            "--data-dir data/CREMI "
+            "--output-dir outputs/eval_cremi_fast_learned_postprocess_r17q/scratch "
+            "--crop-size 0 0 0 "
+            "--stride 16 80 80 "
+            "--train-samples sample_A_20160501.hdf sample_B_20160501.hdf "
+            "--eval-samples sample_A_20160501.hdf sample_B_20160501.hdf sample_C_20160501.hdf "
+            "--epochs 500 "
+            "--lr 0.02 "
+            "--dice-weight 0.25 "
+            "--identity-weight 0.03 "
+            "--backends graph_cc cupy_graph_cc seeded_rag waterz "
+            "--thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--z-thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--xy-thresholds 0.05 0.10 0.20 0.30 0.50 "
+            "--min-size 0 "
+            "--boundary-threshold 0.5 "
+            "--seed-method maxima_distance "
+            "--seed-distance 10 "
+            "--min-boundary 4 "
+            "--score-mode mean q25 "
+            "--waterz-scoring hist_quantile "
+            "--metric-backend skimage "
+            "--replicate-affinity-boundary "
+            "--cremi-boundary-ignore-distance-xy 1 "
+            "--cremi-boundary-ignore-distance-z 0 "
+            "--device cuda\n"
+            ") > outputs/eval_cremi_fast_learned_postprocess_r17q/scratch.log 2>&1 &\n"
+            "pid_scratch=$!\n"
+            "set +e\n"
+            "wait $pid_publicem; rc_publicem=$?\n"
+            "wait $pid_scratch; rc_scratch=$?\n"
+            "set -e\n"
+            "tail -n 80 outputs/eval_cremi_fast_learned_postprocess_r17q/publicem.log || true\n"
+            "tail -n 80 outputs/eval_cremi_fast_learned_postprocess_r17q/scratch.log || true\n"
+            "python - <<'PY'\n"
+            "import json\n"
+            "from pathlib import Path\n"
+            "root=Path('outputs/eval_cremi_fast_learned_postprocess_r17q')\n"
+            "out={}\n"
+            "for arm in ['publicem','scratch']:\n"
+            "    p=root/arm/'cremi_segmentation_summary.json'\n"
+            "    if p.exists():\n"
+            "        data=json.loads(p.read_text())\n"
+            "        rows=data.get('per_backend_threshold', [])\n"
+            "        best_by_backend={}\n"
+            "        for row in rows:\n"
+            "            b=row.get('backend')\n"
+            "            if b is None:\n"
+            "                continue\n"
+            "            old=best_by_backend.get(b)\n"
+            "            if old is None or float(row.get('voi_sum', 1e9)) < float(old.get('voi_sum', 1e9)):\n"
+            "                best_by_backend[b]=row\n"
+            "        out[arm]={'scale':data.get('scale'), 'bias':data.get('bias'), 'best_by_voi_sum':data.get('best_by_voi_sum'), 'best_by_adapted_rand':data.get('best_by_adapted_rand'), 'best_by_backend':best_by_backend, 'num_metric_records':data.get('num_metric_records')}\n"
+            "root.joinpath('combined_summary.json').write_text(json.dumps(out, indent=2, sort_keys=True)+'\\n')\n"
+            "print(out)\n"
+            "PY\n"
+            "if [ \"$rc_publicem\" -ne 0 ] || [ \"$rc_scratch\" -ne 0 ]; then\n"
+            "  echo \"{'rc_publicem':$rc_publicem,'rc_scratch':$rc_scratch}\" >&2\n"
+            "  exit 32\n"
+            "fi"
+        )
+        prefix = "dbmim-fast-learned-post-r17q"
     elif args.stage == "eval-cremi-blockwise-scale-r17q":
         entrypoint = (
             "python - <<'PY'\n"

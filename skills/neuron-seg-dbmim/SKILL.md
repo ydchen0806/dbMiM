@@ -138,6 +138,16 @@ whether `pos_embed` interpolation was used.
   small edge scorer on RAG boundary features and compares against deterministic
   affinity-score baselines; judge it on held-out sample C before calling it a
   positive learned-postprocess result.
+- If the user's requirement is fast and robust learnable post-processing with
+  waterz-comparable quality, use the R27 philosophy: keep learnable parameters
+  tiny (`scale`/`bias` z-y-x affinity calibration), then benchmark deterministic
+  fast backends against waterz. Do not spend cards on large learned RAG/global
+  merge modules unless the tiny calibrator + graph/RAG path is already close
+  enough on held-out sample C and has a clear `postprocess_sec` advantage.
+- When a learned postprocess run includes waterz as a reference backend, make
+  sure the submitter treats the stage as `needs_waterz_eval`; otherwise the pod
+  can start but fail immediately because the bundle lacks `third_party/waterz`
+  and Boost headers.
 - A small pretrained-vs-scratch gain is not enough for a paper claim. Compare
   against `pretrain_public_em_plain_mae_r23` / `pretrain_em_full_plain_mae_r23`
   before attributing the gain to membrane weighting, structure loss, decision

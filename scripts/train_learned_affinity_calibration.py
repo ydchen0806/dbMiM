@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
 import time
@@ -20,7 +21,7 @@ if str(SCRIPTS) not in sys.path:
 
 from dbmim.datasets import labels_to_affinities
 from dbmim.metrics import binary_iou_from_logits, dice_from_logits
-from dbmim.postprocess import segmentation_metrics, waterz_agglomeration, watershed_fragments
+from dbmim.postprocess import segmentation_metrics
 from dbmim.utils import ensure_dir, load_config
 from evaluate_cremi_segmentation import (  # noqa: E402
     apply_cremi_boundary_ignore,
@@ -30,6 +31,7 @@ from evaluate_cremi_segmentation import (  # noqa: E402
     normalize_crop_size,
     predict_affinities,
     read_cremi_crop,
+    run_backend,
     sigmoid_np,
 )
 
@@ -54,7 +56,7 @@ def _mean_metric(rows: list[dict[str, float | int | str]], key: str) -> float:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Learn z/y/x affinity calibration, then evaluate waterz.")
+    parser = argparse.ArgumentParser(description="Learn z/y/x affinity calibration, then evaluate fast postprocess backends.")
     parser.add_argument("--config", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--data-dir", required=True)
@@ -74,15 +76,34 @@ def main() -> None:
     parser.add_argument("--positive-weight", type=float, default=1.0)
     parser.add_argument("--dice-weight", type=float, default=0.25)
     parser.add_argument("--identity-weight", type=float, default=0.01)
+    parser.add_argument(
+        "--backends",
+        nargs="+",
+        default=["waterz"],
+        choices=["graph_cc", "cupy_graph_cc", "seeded_rag", "mahotas_agglomeration", "waterz"],
+    )
     parser.add_argument("--thresholds", nargs="+", type=float, default=[0.05, 0.10, 0.20, 0.30, 0.50])
+    parser.add_argument("--z-thresholds", nargs="+", type=float, default=None)
+    parser.add_argument("--xy-thresholds", nargs="+", type=float, default=None)
+    parser.add_argument("--min-size", type=int, default=0)
     parser.add_argument("--boundary-threshold", type=float, default=0.5)
     parser.add_argument("--seed-distance", type=int, default=10)
+    parser.add_argument("--seed-method", default="maxima_distance", choices=["maxima_distance", "minima", "grid"])
+    parser.add_argument("--min-boundary", type=int, default=4)
+    parser.add_argument(
+        "--score-mode",
+        nargs="+",
+        default=["mean"],
+        choices=["mean", "max", "min", "median", "q10", "q25", "q50", "q75", "quantile"],
+    )
+    parser.add_argument("--rag-quantile", nargs="+", type=float, default=[0.25])
     parser.add_argument("--waterz-scoring", default="hist_quantile")
     parser.add_argument("--ignore-label", type=int, default=0)
     parser.add_argument("--cremi-boundary-ignore-distance-xy", type=int, default=1)
     parser.add_argument("--cremi-boundary-ignore-distance-z", type=int, default=0)
     parser.add_argument("--replicate-affinity-boundary", action="store_true")
     parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="skimage")
+    parser.add_argument("--fail-on-backend-error", action="store_true")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -205,68 +226,135 @@ def main() -> None:
                         "affinity_iou": float(binary_iou_from_logits(logits_t, target_t)),
                     }
                 )
-                t_frag = time.perf_counter()
-                fragments = watershed_fragments(
-                    variant_prob,
-                    backend="mahotas",
-                    seed_method="maxima_distance",
-                    seed_distance=int(args.seed_distance),
-                    boundary_threshold=float(args.boundary_threshold),
-                )
-                fragment_sec = time.perf_counter() - t_frag
-                for threshold in args.thresholds:
-                    t_pp = time.perf_counter()
-                    seg = waterz_agglomeration(
-                        variant_prob,
-                        threshold=float(threshold),
-                        fragments=fragments,
-                        scoring_function=str(args.waterz_scoring),
-                    )
-                    postprocess_sec = time.perf_counter() - t_pp + fragment_sec
-                    t_met = time.perf_counter()
-                    metrics = segmentation_metrics(
-                        seg,
-                        metric_label,
-                        ignore_label=int(args.ignore_label),
-                        backend=args.metric_backend,
-                    )
-                    metrics_sec = time.perf_counter() - t_met
-                    record = {
-                        "sample": path.name,
-                        "split": "calibration_train" if path.name in train_names else "calibration_holdout",
-                        "affinity_variant": variant_name,
-                        "backend": "waterz",
-                        "threshold": float(threshold),
-                        "boundary_threshold": float(args.boundary_threshold),
-                        "seed_distance": int(args.seed_distance),
-                        "waterz_scoring": str(args.waterz_scoring),
-                        "boundary_ignore_fraction": float(boundary_ignore_fraction),
-                        "inference_sec": float(item["infer_sec"]),
-                        "postprocess_sec": float(postprocess_sec),
-                        "metrics_sec": float(metrics_sec),
-                        "adapted_rand_error": metrics.adapted_rand_error,
-                        "rand_fscore": metrics.rand_fscore,
-                        "rand_precision": metrics.rand_precision,
-                        "rand_recall": metrics.rand_recall,
-                        "voi_split": metrics.voi_split,
-                        "voi_merge": metrics.voi_merge,
-                        "voi_sum": metrics.voi_split + metrics.voi_merge,
-                    }
-                    print(record, flush=True)
-                    records.append(record)
+                backend_cache: dict[str, tuple[np.ndarray, float]] = {}
+                for backend in args.backends:
+                    anisotropic = backend in {"graph_cc", "cupy_graph_cc", "seeded_rag", "mahotas_agglomeration"}
+                    threshold_values = [float(v) for v in args.thresholds]
+                    z_values: list[float | None] = [None]
+                    xy_values: list[float | None] = [None]
+                    if anisotropic and args.z_thresholds and args.xy_thresholds:
+                        threshold_values = [threshold_values[0]]
+                        z_values = [float(v) for v in args.z_thresholds]
+                        xy_values = [float(v) for v in args.xy_thresholds]
+                    score_modes = [str(v) for v in args.score_mode] if backend in {"seeded_rag", "mahotas_agglomeration"} else [str(args.score_mode[0])]
+                    rag_quantiles = [float(v) for v in args.rag_quantile] if backend in {"seeded_rag", "mahotas_agglomeration"} else [float(args.rag_quantile[0])]
+                    for threshold, z_threshold, xy_threshold, score_mode, rag_quantile in itertools.product(
+                        threshold_values,
+                        z_values,
+                        xy_values,
+                        score_modes,
+                        rag_quantiles,
+                    ):
+                        try:
+                            t_pp = time.perf_counter()
+                            seg = run_backend(
+                                variant_prob,
+                                backend=backend,
+                                threshold=float(threshold),
+                                min_size=int(args.min_size),
+                                seed_method=str(args.seed_method),
+                                seed_distance=int(args.seed_distance),
+                                boundary_threshold=float(args.boundary_threshold),
+                                min_boundary=int(args.min_boundary),
+                                score_mode=str(score_mode),
+                                rag_quantile=float(rag_quantile),
+                                z_threshold=None if z_threshold is None else float(z_threshold),
+                                xy_threshold=None if xy_threshold is None else float(xy_threshold),
+                                waterz_scoring=str(args.waterz_scoring),
+                                cache=backend_cache,
+                            )
+                            postprocess_sec = time.perf_counter() - t_pp
+                            t_met = time.perf_counter()
+                            metrics = segmentation_metrics(
+                                seg,
+                                metric_label,
+                                ignore_label=int(args.ignore_label),
+                                backend=args.metric_backend,
+                            )
+                            metrics_sec = time.perf_counter() - t_met
+                        except Exception as exc:
+                            failure = {
+                                "sample": path.name,
+                                "split": "calibration_train" if path.name in train_names else "calibration_holdout",
+                                "affinity_variant": variant_name,
+                                "backend": backend,
+                                "threshold": float(threshold),
+                                "z_threshold": "" if z_threshold is None else float(z_threshold),
+                                "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
+                                "score_mode": str(score_mode),
+                                "rag_quantile": float(rag_quantile),
+                                "error": repr(exc),
+                            }
+                            print(failure, flush=True)
+                            if args.fail_on_backend_error:
+                                raise
+                            records.append({**failure, "failed": 1})
+                            continue
+                        scale = calibrator.log_scale.detach().exp().cpu().view(-1).tolist()
+                        bias = calibrator.bias.detach().cpu().view(-1).tolist()
+                        record = {
+                            "sample": path.name,
+                            "split": "calibration_train" if path.name in train_names else "calibration_holdout",
+                            "affinity_variant": variant_name,
+                            "backend": backend,
+                            "threshold": float(threshold),
+                            "z_threshold": "" if z_threshold is None else float(z_threshold),
+                            "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
+                            "min_size": int(args.min_size),
+                            "boundary_threshold": float(args.boundary_threshold),
+                            "seed_distance": int(args.seed_distance),
+                            "min_boundary": int(args.min_boundary),
+                            "score_mode": str(score_mode),
+                            "rag_quantile": float(rag_quantile),
+                            "waterz_scoring": str(args.waterz_scoring),
+                            "calibrator_scale_z": float(scale[0]),
+                            "calibrator_scale_y": float(scale[1]),
+                            "calibrator_scale_x": float(scale[2]),
+                            "calibrator_bias_z": float(bias[0]),
+                            "calibrator_bias_y": float(bias[1]),
+                            "calibrator_bias_x": float(bias[2]),
+                            "boundary_ignore_fraction": float(boundary_ignore_fraction),
+                            "inference_sec": float(item["infer_sec"]),
+                            "postprocess_sec": float(postprocess_sec),
+                            "metrics_sec": float(metrics_sec),
+                            "failed": 0,
+                            "adapted_rand_error": metrics.adapted_rand_error,
+                            "rand_fscore": metrics.rand_fscore,
+                            "rand_precision": metrics.rand_precision,
+                            "rand_recall": metrics.rand_recall,
+                            "voi_split": metrics.voi_split,
+                            "voi_merge": metrics.voi_merge,
+                            "voi_sum": metrics.voi_split + metrics.voi_merge,
+                        }
+                        print(record, flush=True)
+                        records.append(record)
 
-    group_keys = ["affinity_variant", "backend", "threshold", "boundary_threshold", "seed_distance", "waterz_scoring"]
+    metric_records = [row for row in records if int(row.get("failed", 0)) == 0]
+    group_keys = [
+        "affinity_variant",
+        "backend",
+        "threshold",
+        "z_threshold",
+        "xy_threshold",
+        "min_size",
+        "boundary_threshold",
+        "seed_distance",
+        "min_boundary",
+        "score_mode",
+        "rag_quantile",
+        "waterz_scoring",
+    ]
     per_group = []
     grouped: dict[tuple[object, ...], list[dict[str, float | int | str]]] = {}
-    for record in records:
+    for record in metric_records:
         grouped.setdefault(tuple(record[key] for key in group_keys), []).append(record)
     for key_tuple, rows in sorted(grouped.items(), key=lambda item: tuple(str(v) for v in item[0])):
         row = dict(zip(group_keys, key_tuple))
         row["n"] = len(rows)
-        for key in ["adapted_rand_error", "voi_sum", "voi_split", "voi_merge", "postprocess_sec", "metrics_sec"]:
+        for key in ["adapted_rand_error", "voi_sum", "voi_split", "voi_merge", "postprocess_sec", "metrics_sec", "inference_sec"]:
             row[key] = _mean_metric(rows, key)
         per_group.append(row)
-    holdout_rows = [row for row in records if row["split"] == "calibration_holdout"]
+    holdout_rows = [row for row in metric_records if row["split"] == "calibration_holdout"]
     holdout_grouped: dict[tuple[object, ...], list[dict[str, float | int | str]]] = {}
     for record in holdout_rows:
         holdout_grouped.setdefault(tuple(record[key] for key in group_keys), []).append(record)
@@ -274,7 +362,7 @@ def main() -> None:
     for key_tuple, rows in sorted(holdout_grouped.items(), key=lambda item: tuple(str(v) for v in item[0])):
         row = dict(zip(group_keys, key_tuple))
         row["n"] = len(rows)
-        for key in ["adapted_rand_error", "voi_sum", "voi_split", "voi_merge", "postprocess_sec", "metrics_sec"]:
+        for key in ["adapted_rand_error", "voi_sum", "voi_split", "voi_merge", "postprocess_sec", "metrics_sec", "inference_sec"]:
             row[key] = _mean_metric(rows, key)
         holdout_per_group.append(row)
 
@@ -286,6 +374,9 @@ def main() -> None:
         "bias": calibrator.bias.detach().cpu().view(-1).tolist(),
         "history": history,
         "num_records": len(records),
+        "num_metric_records": len(metric_records),
+        "failures": [row for row in records if int(row.get("failed", 0)) != 0],
+        "backends": list(args.backends),
         "affinity_records": affinity_records,
         "per_backend_threshold": per_group,
         "holdout_per_backend_threshold": holdout_per_group,

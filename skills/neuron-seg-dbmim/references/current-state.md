@@ -1596,3 +1596,37 @@ R26 encoder-only full is evaluating and has only sample A/B partial rows so
 far. R26 encoder-only early3k is running as SiFlow UUID
 `992d7ef4-dcca-43d5-9a01-1ba7ca9477cd`. Active/queued dbMiM usage at this
 timestamp is 8 GPUs: R26 full 2, R26 early3k 2, and fullEM plain-MAE queue 4.
+
+Update at 2026-06-24 00:26 CST:
+
+The learnable post-processing goal was narrowed to "fast and robust, with
+waterz-comparable quality" rather than a standalone absolute-performance
+advance. R27 implements this as a tiny per-axis affinity logit calibrator
+followed by deterministic post-processing backends:
+
+- script: `scripts/train_learned_affinity_calibration.py`;
+- stage: `eval-cremi-fast-learned-postprocess-r17q`;
+- outputs:
+  `outputs/eval_cremi_fast_learned_postprocess_r17q/{publicem,scratch}`;
+- valid final SiFlow UUID: `b86d2af4-09ca-414e-a493-42e1d9c039e1`;
+- resources: 2 GPUs on `med-model`, one process for R17 publicEM and one for
+  R17 scratch;
+- setting: full CREMI A/B/C (`--crop-size 0 0 0`), stride `16 80 80`, train
+  calibrator on A/B affinity targets, evaluate A/B/C with `graph_cc`,
+  `cupy_graph_cc`, `seeded_rag`, and `waterz`, CREMI boundary ignore
+  `xy=1,z=0`, waterz `hist_quantile`.
+
+The R27 submitter deliberately does not use `--fail-on-backend-error`: optional
+fast backends may fail on a pod, but waterz and the remaining backends should
+still run and write failure rows. Two earlier short UUIDs are not method
+evidence: `a4c95d62-8434-4bcf-be8a-8750db6a92ab` omitted waterz packaging, and
+`e5d3341b-dedb-4e24-a6e8-f1b3efe607be` was stopped to remove fail-fast
+behavior. Poll R27 with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r27_fast_learned_postprocess --once --logs --siflow-fallback
+```
+
+After R27 submission, active/queued dbMiM usage is about 10 GPUs: R26 full 2,
+R26 early3k 2, R27 fast learned postprocess 2, and fullEM plain-MAE queue 4.
