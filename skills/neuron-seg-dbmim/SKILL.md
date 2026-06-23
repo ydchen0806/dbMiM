@@ -50,7 +50,8 @@ current watcher logs under `outputs/watchers/`.
 - Do not claim the dbMiM objective itself improves neuron segmentation from a
   pretrained-vs-scratch comparison alone. Require a matched plain-MAE
   pretraining control with the same data, steps, UNETR finetune recipe, and
-  official A/B/C waterz evaluation. R23 is the maintained plain-MAE baseline.
+  official A/B/C waterz evaluation. R23 is the maintained plain-MAE baseline;
+  R24 is the current dbMiM++ attempt that must beat it.
 
 ## Standard CREMI Workflow
 
@@ -141,3 +142,6 @@ whether `pos_embed` interpolation was used.
   against `pretrain_public_em_plain_mae_r23` / `pretrain_em_full_plain_mae_r23`
   before attributing the gain to membrane weighting, structure loss, decision
   masking, or decoder-aware dbMiM.
+- The current hard target is `dbMiM++ > plain MAE`, not just `pretrained >
+  scratch`. For publicEM, use `scripts/poll_dbmim_tos_results.py --group
+  r24_dbmim_vs_mae` and report the VOI/ARAND deltas of R24 vs R23 plain MAE.

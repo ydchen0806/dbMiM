@@ -995,6 +995,7 @@ class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
         affinity_weight: float = 0.35,
         affinity_temperature: float = 1.0,
         affinity_axis_weights: Sequence[float] | None = None,
+        affinity_membrane_weight: float = 0.0,
         dropout: float = 0.0,
         skip_indices: Sequence[int] | None = None,
         em_refine_depth: int = 2,
@@ -1028,6 +1029,7 @@ class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
         self.affinity_weight = float(affinity_weight)
         self.affinity_temperature = float(affinity_temperature)
         self.affinity_axis_weights = _normalize_axis_weights(affinity_axis_weights)
+        self.affinity_membrane_weight = float(affinity_membrane_weight)
         patch_dim = self.in_channels * math.prod(self.patch_size)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.reconstruction_decoder = nn.Sequential(
@@ -1155,7 +1157,18 @@ class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
         features = self._decode_features_from_tokens(x, encoded, hidden_by_index)
         affinity_logits = self.head(features)
         affinity_target = self._pseudo_affinity_target(x)
-        affinity_loss = F.mse_loss(torch.sigmoid(affinity_logits), affinity_target)
+        affinity_error = (torch.sigmoid(affinity_logits) - affinity_target).pow(2)
+        if self.affinity_membrane_weight > 0.0:
+            affinity_edge = membrane_edge_map_3d(
+                x,
+                axis_weights=self.membrane_axis_weights,
+                clip=self.membrane_clip,
+            )
+            affinity_edge_weight = 1.0 + self.affinity_membrane_weight * affinity_edge
+            denom = affinity_edge_weight.sum().clamp_min(1.0) * affinity_error.shape[1]
+            affinity_loss = (affinity_error * affinity_edge_weight).sum() / denom
+        else:
+            affinity_loss = affinity_error.mean()
         loss = pixel_loss + self.structure_weight * structure_loss + self.affinity_weight * affinity_loss
         return MAEOutput(
             loss=loss,

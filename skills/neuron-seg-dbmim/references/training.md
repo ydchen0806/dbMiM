@@ -434,6 +434,23 @@ Use R23 for the clean control:
 - matched downstream: `UNETR-aniso-EM + MSE + MAWS`, 12k finetune steps, same
   official A/B/C waterz sweep.
 
+R24 is the current dbMiM++ attempt designed specifically to beat that R23
+plain-MAE baseline under the same publicEM data and downstream recipe:
+
+- `configs/pretrain_public_em_decoderaware_r24.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q.yaml`
+- pretrain stage `pretrain-public-em-decoderaware-r24`
+- downstream stage
+  `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-decoderaware-r24q`
+
+R24 uses `DecoderAwareDBMIM3DMAE`: masked reconstruction plus anisotropic
+gradient structure loss, membrane-weighted reconstruction, membrane-weighted
+pseudo-affinity decoder/head loss, and decision masking. Its checkpoint should
+load many more downstream keys than encoder-only MAE/dbMiM, including
+UNETR-EM decoder/head keys. A local compatibility check loaded 214 keys into
+the downstream UNETR-aniso-EM model, including encoder blocks, decoder modules,
+and the affinity head.
+
 Plain MAE means:
 
 - encoder-only `DBMIM3DMAE`;
@@ -461,3 +478,10 @@ Only the following interpretation is defensible:
 
 Early 40k plain-MAE checkpoints are useful for debugging and trend checks, but
 the paper-facing comparison should use the 160k checkpoint to match R16/R22.
+
+For the publicEM paper-facing comparison, use:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r24_dbmim_vs_mae --once --logs --siflow-fallback
+```

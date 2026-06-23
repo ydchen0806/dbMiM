@@ -701,6 +701,17 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_plainmae_r23q",
         "pretrained_output": "pretrain_public_em_plain_mae_r23",
     },
+    "arch-explore-maws-mse-publicem-decoderaware-r24q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_maws_publicem_decoderaware_r24q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_maws_publicem_decoderaware_r24q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_maws_publicem_decoderaware_r24q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_publicem_decoderaware_r24q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_decoderaware_r24q",
+        "pretrained_output": "pretrain_public_em_decoderaware_dbmim_r24",
+    },
     "arch-explore-maws-mse-scratch-r17q": {
         "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q.yaml",
         "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q",
@@ -958,6 +969,7 @@ CREMI_STAGES = {
     "pretrain-em-full-decoderaware-r21",
     "pretrain-em-full-decoderaware-r22",
     "pretrain-public-em-membrane-r16",
+    "pretrain-public-em-decoderaware-r24",
     "pretrain-public-em-plain-mae-r23",
     "pretrain-em-full-plain-mae-r23",
     "finetune-cremi",
@@ -1053,6 +1065,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_em_full_decoderaware_dbmim_r22"
     if stage == "pretrain-public-em-membrane-r16":
         return "outputs/pretrain_public_em_membrane_dbmim_r16"
+    if stage == "pretrain-public-em-decoderaware-r24":
+        return "outputs/pretrain_public_em_decoderaware_dbmim_r24"
     if stage == "pretrain-public-em-plain-mae-r23":
         return "outputs/pretrain_public_em_plain_mae_r23"
     if stage == "pretrain-em-full-plain-mae-r23":
@@ -1187,6 +1201,18 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_public_plain_cfg["train"]["save_every"] = max(int(pre_public_plain_cfg["train"].get("save_every", 1)), 5)
         pre_public_plain_cfg["train"]["save_steps"] = max(int(pre_public_plain_cfg["train"].get("save_steps", 0)), 2000)
         _write_yaml(pretrain_public_plain_r23, pre_public_plain_cfg)
+
+    pretrain_public_decoder_r24 = bundle / "configs" / "pretrain_public_em_decoderaware_r24.yaml"
+    if pretrain_public_decoder_r24.exists():
+        pre_public_decoder_cfg = yaml.safe_load(pretrain_public_decoder_r24.read_text(encoding="utf-8"))
+        pre_public_decoder_cfg["output_dir"] = "outputs/pretrain_public_em_decoderaware_dbmim_r24"
+        pre_public_decoder_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/public_em"]
+        pre_public_decoder_cfg["train"]["epochs"] = max(int(pre_public_decoder_cfg["train"].get("epochs", 1)), 100000)
+        pre_public_decoder_cfg["train"]["save_every"] = max(int(pre_public_decoder_cfg["train"].get("save_every", 1)), 5)
+        pre_public_decoder_cfg["train"]["save_steps"] = max(
+            int(pre_public_decoder_cfg["train"].get("save_steps", 0)), 2000
+        )
+        _write_yaml(pretrain_public_decoder_r24, pre_public_decoder_cfg)
 
     pretrain_em_full_membrane_r20 = bundle / "configs" / "pretrain_em_full_membrane_r20.yaml"
     if pretrain_em_full_membrane_r20.exists():
@@ -1380,10 +1406,15 @@ def make_bundle(
         "pretrain-em-full-decoderaware-r21",
         "pretrain-em-full-decoderaware-r22",
         "pretrain-public-em-membrane-r16",
+        "pretrain-public-em-decoderaware-r24",
         "pretrain-public-em-plain-mae-r23",
         "pretrain-em-full-plain-mae-r23",
     }:
-        if stage in {"pretrain-public-em-membrane-r16", "pretrain-public-em-plain-mae-r23"}:
+        if stage in {
+            "pretrain-public-em-membrane-r16",
+            "pretrain-public-em-decoderaware-r24",
+            "pretrain-public-em-plain-mae-r23",
+        }:
             em_data_dir = "data/EM_pretrain_data/public_em"
         elif stage in {
             "pretrain-em-full-membrane-r20",
@@ -1394,7 +1425,11 @@ def make_bundle(
             em_data_dir = "/volume/med-train/users/dchen02/code/dbMiM_runtime/em_pretrain_data/full_r20/all"
         else:
             em_data_dir = "data/EM_pretrain_data/all"
-        if stage in {"pretrain-public-em-membrane-r16", "pretrain-public-em-plain-mae-r23"}:
+        if stage in {
+            "pretrain-public-em-membrane-r16",
+            "pretrain-public-em-decoderaware-r24",
+            "pretrain-public-em-plain-mae-r23",
+        }:
             em_tos_groups = ["public_em"]
         elif stage in {
             "pretrain-em-full-membrane-r20",
@@ -1407,6 +1442,8 @@ def make_bundle(
             em_tos_groups = ["all", "fafb", "fib25", "kasthuri", "mitoem", "mb_moc", "public_em"]
         if stage == "pretrain-public-em-membrane-r16":
             em_stage_cfgs = ["pretrain_public_em_membrane_r16.yaml"]
+        elif stage == "pretrain-public-em-decoderaware-r24":
+            em_stage_cfgs = ["pretrain_public_em_decoderaware_r24.yaml"]
         elif stage == "pretrain-public-em-plain-mae-r23":
             em_stage_cfgs = ["pretrain_public_em_plain_mae_r23.yaml"]
         elif stage == "pretrain-em-full-membrane-r20":
@@ -2153,6 +2190,7 @@ def main() -> None:
             "pretrain-em-full-decoderaware-r21",
             "pretrain-em-full-decoderaware-r22",
             "pretrain-public-em-membrane-r16",
+            "pretrain-public-em-decoderaware-r24",
             "pretrain-public-em-plain-mae-r23",
             "pretrain-em-full-plain-mae-r23",
             "finetune-cremi",
@@ -2248,6 +2286,9 @@ def main() -> None:
     elif args.stage == "pretrain-public-em-membrane-r16":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_membrane_r16.yaml"
         prefix = "dbmim-pretrain-public-em-membrane-r16"
+    elif args.stage == "pretrain-public-em-decoderaware-r24":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_decoderaware_r24.yaml"
+        prefix = "dbmim-pretrain-public-em-decoderaware-r24"
     elif args.stage == "pretrain-public-em-plain-mae-r23":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_plain_mae_r23.yaml"
         prefix = "dbmim-pretrain-public-em-plainmae-r23"

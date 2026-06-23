@@ -122,6 +122,7 @@ def main() -> None:
             affinity_weight=float(model_cfg.get("affinity_weight", 0.35)),
             affinity_temperature=float(model_cfg.get("affinity_temperature", 1.0)),
             affinity_axis_weights=model_cfg.get("affinity_axis_weights"),
+            affinity_membrane_weight=float(model_cfg.get("affinity_membrane_weight", 0.0)),
             dropout=float(model_cfg.get("dropout", 0.0)),
             skip_indices=model_cfg.get("skip_indices"),
             em_refine_depth=int(model_cfg.get("em_refine_depth", 2)),

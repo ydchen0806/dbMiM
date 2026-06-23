@@ -504,3 +504,39 @@ Poll command:
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r19q --once --logs --siflow-fallback
 ```
+
+## R24 PublicEM dbMiM++ Operations
+
+R24 is the current hard test of dbMiM-specific gain over plain MAE. Use the
+project submitter and watcher, not ad hoc SiFlow commands:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  /volume/med-train/users/dchen02/envs/siflow-sdk-20260523/bin/python \
+  scripts/submit_siflow_dbmim.py \
+  --stage pretrain-public-em-decoderaware-r24 \
+  --resource-pool med-model \
+  --gpus-per-pod 4 \
+  --submit
+```
+
+The submitted R24 pretrain UUID is
+`bd588c91-6328-455e-a1bc-fc1a3316bbdd`. A login-node watcher was started with:
+
+```bash
+nohup scripts/watch_and_submit_public_em_decoderaware_r24_finetune.sh \
+  > outputs/watchers/public_em_decoderaware_r24_watcher.log 2>&1 &
+```
+
+It waits for:
+
+- `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_decoderaware_dbmim_r24/checkpoint_step_00160000.pt`
+- `train_log.jsonl` max step at least 160000
+
+Then it submits the 2-GPU downstream stage
+`finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-decoderaware-r24q`
+with post-train official A/B/C waterz evaluation.
+
+Do not count the fullEM plain-MAE shared retry as productive running work while
+it reports `实例配额不足 | 需求:4, 实际可用(实例配额):0`. It is a queued future
+control, not a completed or running baseline.

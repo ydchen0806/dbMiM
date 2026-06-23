@@ -1277,13 +1277,14 @@ Configs and stages:
 | fullEM plain MAE pretrain | `configs/pretrain_em_full_plain_mae_r23.yaml` | `pretrain-em-full-plain-mae-r23` / `pretrain_em_full_plain_mae_r23` |
 | fullEM plain MAE finetune | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_plainmae_r23q.yaml` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-plainmae-r23q` |
 
-Submission state at launch:
+Submission state and updates:
 
 | purpose | UUID | GPUs | pool | state |
 |---|---|---:|---|---|
-| publicEM plain MAE pretrain | `7e2aa43b-48b8-40ad-bba7-b04b48fe2f60` | 4 | `med-model` | Running |
+| publicEM plain MAE pretrain | `7e2aa43b-48b8-40ad-bba7-b04b48fe2f60` | 4 | `med-model` | Succeeded; 160k checkpoint and `pretrained_latest.pt` uploaded |
+| publicEM plain MAE downstream | `2c848e2e-7e75-425c-8bd0-215f979f70c2` | 2 | `med-model` | Running at 2026-06-23 10:40 CST; `finetune_log.jsonl` and `finetuned_latest.pt` visible on TOS |
 | fullEM plain MAE pretrain, first try | `f428bd1e-83bf-4d7e-9038-5fe497eb5847` | 4 | `med-model` | Stopped; actual quota was 3/4 |
-| fullEM plain MAE pretrain, shared retry | `9658bbd2-cf61-4a54-a392-a014ee488114` | 4 | `cn-shanghai-changliu-skyinfer-reserved-shared` | Queueing; actual quota was 0/4 at launch |
+| fullEM plain MAE pretrain, shared retry | `9658bbd2-cf61-4a54-a392-a014ee488114` | 4 | `cn-shanghai-changliu-skyinfer-reserved-shared` | Queueing at 2026-06-23 10:40 CST; actual quota still 0/4 |
 
 The publicEM plain-MAE logs confirmed it is a true plain-MAE control:
 
@@ -1322,4 +1323,59 @@ Poll the fullEM plain-MAE comparison with:
 ```bash
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
+```
+
+## 2026-06-23 R24 dbMiM++ vs Plain MAE Target
+
+The user set the hard target: dbMiM must show a gain over ordinary MAE, not
+only over scratch. R24 is the current publicEM experiment for that exact
+claim.
+
+Method definition:
+
+- same publicEM+CREMI pretraining data as R23 plain MAE;
+- same crop `32x160x160`, mask ratio `0.75`, and 160k-step target;
+- `DecoderAwareDBMIM3DMAE`, so pretraining initializes encoder, UNETR-EM
+  decoder, and affinity head;
+- masked reconstruction + anisotropic gradient structure loss;
+- membrane-weighted reconstruction;
+- membrane-weighted pseudo-affinity decoder/head loss via
+  `affinity_membrane_weight`;
+- decision masking enabled and frozen after 40k steps.
+
+Configs and stages:
+
+| purpose | config | stage/output |
+|---|---|---|
+| R24 publicEM dbMiM++ pretrain | `configs/pretrain_public_em_decoderaware_r24.yaml` | `pretrain-public-em-decoderaware-r24` / `pretrain_public_em_decoderaware_dbmim_r24` |
+| R24 downstream | `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q.yaml` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-decoderaware-r24q` |
+
+Validation before submit:
+
+- `py_compile` passed for `dbmim/models.py`, `train_pretrain.py`,
+  `train_finetune.py`, `scripts/submit_siflow_dbmim.py`, and
+  `scripts/poll_dbmim_tos_results.py`;
+- local R24 forward on `1x1x32x160x160` produced finite pixel, structure, and
+  affinity losses;
+- simulated loading into downstream `UNETR-aniso-EM` loaded 214 compatible
+  keys, including encoder blocks, decoder modules, and head keys.
+
+Active state at 2026-06-23 10:40 CST:
+
+| purpose | UUID/process | GPUs | pool | state |
+|---|---|---:|---|---|
+| R24 publicEM dbMiM++ pretrain | `bd588c91-6328-455e-a1bc-fc1a3316bbdd` | 4 | `med-model` | Running |
+| R24 watcher | PID from `outputs/watchers/public_em_decoderaware_r24_watcher.pid` | 0 | login node | Waiting for `checkpoint_step_00160000.pt` and max step 160000 |
+
+Watcher log:
+
+```bash
+tail -n 50 outputs/watchers/public_em_decoderaware_r24_watcher.log
+```
+
+Final comparison:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r24_dbmim_vs_mae --once --logs --siflow-fallback
 ```
