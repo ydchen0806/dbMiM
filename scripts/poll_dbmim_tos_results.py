@@ -475,7 +475,13 @@ def _is_complete_summary(eval_name: str, summary: dict) -> bool:
             "sample_B_20160501.hdf",
             "sample_C_20160501.hdf",
         }
-        return expected.issubset(samples)
+        if not expected.issubset(samples):
+            return False
+        try:
+            num_records = int(summary.get("num_records") or 0)
+        except (TypeError, ValueError):
+            num_records = 0
+        return num_records >= 60
     return bool(samples)
 
 
