@@ -1460,3 +1460,36 @@ arms were running on `med-model`, total 10 GPUs. FullEM plain-MAE pretrain
 `9658bbd2-cf61-4a54-a392-a014ee488114` was still queueing in the shared pool
 with `实例配额不足 | 需求:4, 实际可用(实例配额):0`, so the active plus queued
 dbMiM work was within the user's 16-GPU cap.
+
+Update at 2026-06-23 23:25 CST:
+
+R24/R25 were still in CPU-bound official waterz post-processing on sample A;
+the complete A/B/C summaries had not appeared. To diagnose whether R24's
+decoder/head transfer is hurting downstream finetuning, R26 adds an
+encoder-only load path for the same R24 checkpoint:
+
+- code: `load_pretrained_backbone(..., include_prefixes=..., exclude_prefixes=...)`;
+- full config:
+  `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_encoderonly_r26q.yaml`;
+- early3k config:
+  `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_publicem_decoderaware_encoderonly_r26q.yaml`;
+- full stage:
+  `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-decoderaware-encoderonly-r26q`;
+- poll groups: `r26_encoderonly` and `r26_encoderonly_early3k`.
+
+The R26 configs load only `pos_embed`, `patch_embed`, `encoder_blocks`, and
+`norm` from `pretrain_public_em_decoderaware_dbmim_r24/pretrained_latest.pt`.
+They deliberately do not load decoder or affinity-head weights. This isolates
+the R24 dbMiM++ encoder representation from pseudo-affinity decoder/head
+initialization. A local smoke check with a synthetic checkpoint confirmed that
+`head.*` keys are skipped when the include-prefix filter is set.
+
+R26 full 12k was submitted on 2026-06-23 23:22 CST:
+
+| purpose | UUID | GPUs | pool | state at submit |
+|---|---|---:|---|---|
+| R26 encoder-only full | `faba607c-b53c-4e45-9de2-798eb8462612` | 2 | `med-model` | Pending |
+
+At that time unique dbMiM GPU accounting was 16 GPUs including this R26 task:
+R24 full 2, R25 early3k four arms 8, R26 full 2, and fullEM plain-MAE queue 4.
+Do not submit another GPU job until one of these completes or is stopped.

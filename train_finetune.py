@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from collections import Counter
 
 import torch
 import torch.distributed as dist
@@ -870,9 +871,23 @@ def main() -> None:
     pretrained = args.pretrained or cfg.get("pretrained", "")
     if pretrained:
         ckpt = load_checkpoint(pretrained, map_location="cpu")
-        loaded = load_pretrained_backbone(model, ckpt)
+        include_prefixes = cfg.get("pretrained_include_prefixes")
+        exclude_prefixes = cfg.get("pretrained_exclude_prefixes")
+        loaded = load_pretrained_backbone(
+            model,
+            ckpt,
+            include_prefixes=include_prefixes,
+            exclude_prefixes=exclude_prefixes,
+        )
         if is_main(rank):
             print(f"loaded_pretrained_keys={len(loaded)} from {pretrained}")
+            if include_prefixes or exclude_prefixes:
+                counts = Counter(name.split(".", 1)[0] for name in loaded)
+                print(
+                    "pretrained_key_filter="
+                    f"include={include_prefixes or []} exclude={exclude_prefixes or []} "
+                    f"prefix_counts={dict(sorted(counts.items()))}"
+                )
 
     frozen_params = apply_param_freeze(model, train_cfg)
     if distributed:

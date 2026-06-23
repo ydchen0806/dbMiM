@@ -1205,11 +1205,22 @@ def gradient_loss_3d(
     return loss / max(weight_sum, 1e-6)
 
 
-def load_pretrained_backbone(model: nn.Module, checkpoint: dict[str, Any]) -> list[str]:
+def load_pretrained_backbone(
+    model: nn.Module,
+    checkpoint: dict[str, Any],
+    include_prefixes: Sequence[str] | None = None,
+    exclude_prefixes: Sequence[str] | None = None,
+) -> list[str]:
     state = checkpoint.get("model", checkpoint)
     own = model.state_dict()
     loaded: dict[str, torch.Tensor] = {}
+    include = tuple(str(prefix) for prefix in include_prefixes or () if str(prefix))
+    exclude = tuple(str(prefix) for prefix in exclude_prefixes or () if str(prefix))
     for key, value in state.items():
+        if include and not key.startswith(include):
+            continue
+        if exclude and key.startswith(exclude):
+            continue
         if key in own and own[key].shape == value.shape:
             loaded[key] = value
         elif key == "pos_embed" and key in own:

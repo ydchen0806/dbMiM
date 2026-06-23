@@ -496,6 +496,26 @@ This is a positive dbMiM-over-MAE signal, but weak: `-0.0242` VOI and
 `-0.0004` best ARAND relative to plain MAE. R24 is the active attempt to make
 the gain stronger; do not claim it until its downstream eval finishes.
 
+R26 tests a specific R24 failure hypothesis. Because R24's decoder-aware
+checkpoint is shape-compatible with the downstream UNETR-EM decoder and
+affinity head, the default loader transfers about 214 keys, not just the MAE
+encoder. If full R24 or R24 early3k is weak, do not immediately conclude that
+the dbMiM++ encoder objective failed. First compare against R26:
+
+- same R24 pretrained checkpoint;
+- same downstream UNETR-aniso-EM + MSE+MAWS recipe;
+- `pretrained_include_prefixes: [pos_embed, patch_embed, encoder_blocks, norm]`;
+- decoder and affinity head initialized randomly as in R16/R23.
+
+Interpretation:
+
+| comparison | likely conclusion |
+|---|---|
+| R26 > R24 full-init | pseudo-affinity decoder/head transfer hurts downstream; keep encoder-only loading for paper comparisons |
+| R24 >= R26 | decoder-aware initialization is not the issue; focus on pretraining objective/data |
+| R26 <= R23 plain MAE | dbMiM++ objective still fails to beat plain MAE under this recipe |
+| R26 > R23 plain MAE and R16 | decoder-aware dbMiM improves the encoder but should not transfer its head |
+
 For the publicEM paper-facing comparison, use:
 
 ```bash
