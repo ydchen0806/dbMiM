@@ -1526,3 +1526,45 @@ harmful; the cleaner test is R26 encoder-only. If R26 A/B/C beats R23 plain MAE
 and R16 dbMiM, use encoder-only R24 as the method path. If R26 also fails, stay
 with R16 membrane dbMiM and focus on full-data pretraining or a better
 pretext-objective rather than transferring the decoder/head.
+
+Update at 2026-06-24 00:05 CST:
+
+R24 full-init completed and is a negative result:
+
+| arm | records | VOI | ARAND at best VOI | best ARAND |
+|---|---:|---:|---:|---:|
+| R24 dbMiM++ full-init | 60 | `1.482749` | `0.281327` | `0.275869` |
+| R23 plain MAE | 60 | `1.027073` | `0.192763` | `0.189247` |
+| R16 dbMiM | 60 | `1.002919` | `0.188832` | `0.188832` |
+| scratch | 60 | `1.095164` | `0.213401` | `0.210442` |
+
+This confirms that transferring the R24 pseudo-affinity decoder/head is harmful
+under the maintained UNETR-aniso-EM + MSE+MAWS downstream recipe.
+
+R25 early3k has completed the two main pretrained controls:
+
+| early3k arm | records | VOI | ARAND at best VOI | best ARAND |
+|---|---:|---:|---:|---:|
+| R23 plain MAE early3k | 60 | `1.566102` | `0.389115` | `0.374662` |
+| R16 dbMiM early3k | 60 | `1.550130` | `0.338732` | `0.338732` |
+
+This is a small VOI gain over plain MAE and a clearer ARAND gain, but the
+absolute 3k performance is still weak. R24 full-init early3k and scratch
+early3k were still partial at this timestamp; R24 full-init early3k was
+already clearly poor.
+
+R26 encoder-only full was still running/evaluating. Its sample-A-only fallback
+was strong (`VOI≈0.224`, `ARAND≈0.036` at 20 records), but only full A/B/C
+should be used for conclusions.
+
+Because active/queued dbMiM usage dropped to 10 GPUs, R26 encoder-only early3k
+was submitted to directly test whether the encoder-only R24 checkpoint gives a
+stronger label-efficient gain over plain MAE:
+
+| purpose | UUID | GPUs | pool |
+|---|---|---:|---|
+| R26 encoder-only early3k | `992d7ef4-dcca-43d5-9a01-1ba7ca9477cd` | 2 | `med-model` |
+
+After this submission, expected active/queued dbMiM usage is 12 GPUs: R26 full
+2, R26 early3k 2, R25 R24 full-init early3k 2, R25 scratch early3k 2, and
+fullEM plain-MAE queue 4.

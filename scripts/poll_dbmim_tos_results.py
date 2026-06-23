@@ -254,6 +254,7 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_plainmae_r23q": "d650fd4d-4447-44dc-b25e-64c3cb6b65d0",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_r17q": "2b6dda20-de13-4ca4-af18-05af44a9988f",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_scratch_r17q": "ffb9c6a4-935a-4dc4-aee9-87cf62d36c89",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_decoderaware_encoderonly_r26q": "992d7ef4-dcca-43d5-9a01-1ba7ca9477cd",
 }
 
 
