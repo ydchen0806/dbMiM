@@ -162,6 +162,9 @@ def main() -> None:
             entropy_coef=float(decision_cfg.get("entropy_coef", 0.01)),
             value_coef=float(decision_cfg.get("value_coef", 0.5)),
             ratio_coef=float(decision_cfg.get("ratio_coef", 0.25)),
+            policy_mode=str(decision_cfg.get("policy_mode", "patch")),
+            mask_ratio_bins=decision_cfg.get("mask_ratio_bins"),
+            edge_fraction_bins=decision_cfg.get("edge_fraction_bins"),
         ).to(device)
 
     if distributed:
@@ -206,6 +209,7 @@ def main() -> None:
     save_every = int(train_cfg.get("save_every", 1))
     save_steps = int(train_cfg.get("save_steps", 0))
     target_ratio = float(decision_cfg.get("target_mask_ratio", model_cfg.get("mask_ratio", 0.75)))
+    warmup_policy_steps = int(decision_cfg.get("warmup_steps", 0))
     freeze_policy_after = int(decision_cfg.get("freeze_after_steps", 0))
     use_frozen_policy_after_freeze = bool(decision_cfg.get("use_frozen_policy_after_freeze", False))
     deterministic_frozen_policy = bool(decision_cfg.get("deterministic_frozen_policy", True))
@@ -227,6 +231,7 @@ def main() -> None:
             update_policy = (
                 decision_module is not None
                 and policy_optimizer is not None
+                and global_step >= warmup_policy_steps
                 and (freeze_policy_after <= 0 or global_step < freeze_policy_after)
             )
             if decision_module is not None:
@@ -237,7 +242,12 @@ def main() -> None:
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
                 active_decision_module = (
                     decision_module
-                    if update_policy or (decision_module is not None and use_frozen_policy_after_freeze)
+                    if update_policy
+                    or (
+                        decision_module is not None
+                        and use_frozen_policy_after_freeze
+                        and global_step >= warmup_policy_steps
+                    )
                     else None
                 )
                 deterministic_policy = (
@@ -285,6 +295,12 @@ def main() -> None:
                     "membrane_weight_mean": float(out.membrane_weight_mean.detach().cpu()),
                     "policy_loss": float(policy_loss.detach().cpu()),
                     "mask_ratio": float(out.mask.float().mean().detach().cpu()),
+                    "sampled_mask_ratio": float(out.decision["sampled_mask_ratio"].mean().detach().cpu())
+                    if out.decision is not None and "sampled_mask_ratio" in out.decision
+                    else float(out.mask.float().mean().detach().cpu()),
+                    "edge_fraction": float(out.decision["edge_fraction"].mean().detach().cpu())
+                    if out.decision is not None and "edge_fraction" in out.decision
+                    else float(getattr(unwrap(model), "edge_mask_fraction", 0.0)),
                     "lr": optimizer.param_groups[0]["lr"],
                     "elapsed_sec": round(time.time() - t0, 2),
                 }

@@ -87,13 +87,21 @@ class DecisionModule(nn.Module):
         entropy_coef: float = 0.01,
         value_coef: float = 0.5,
         ratio_coef: float = 0.25,
+        policy_mode: str = "patch",
+        mask_ratio_bins: Sequence[float] | None = None,
+        edge_fraction_bins: Sequence[float] | None = None,
     ) -> None:
         super().__init__()
+        self.policy_mode = str(policy_mode).lower()
         self.min_mask_ratio = min_mask_ratio
         self.max_mask_ratio = max_mask_ratio
         self.entropy_coef = entropy_coef
         self.value_coef = value_coef
         self.ratio_coef = ratio_coef
+        ratio_bins = mask_ratio_bins if mask_ratio_bins is not None else (0.5, 0.625, 0.75, 0.875)
+        edge_bins = edge_fraction_bins if edge_fraction_bins is not None else (0.25, 0.5, 0.75)
+        self.register_buffer("mask_ratio_bins", torch.tensor([float(v) for v in ratio_bins]), persistent=False)
+        self.register_buffer("edge_fraction_bins", torch.tensor([float(v) for v in edge_bins]), persistent=False)
         self.feature = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.GELU(),
@@ -107,6 +115,10 @@ class DecisionModule(nn.Module):
         )
         self.actor = nn.Linear(hidden_dim, 2)
         self.critic = nn.Linear(hidden_dim, 1)
+        adaptive_dim = hidden_dim + 4
+        self.adaptive_ratio_actor = nn.Linear(adaptive_dim, int(self.mask_ratio_bins.numel()))
+        self.adaptive_edge_actor = nn.Linear(adaptive_dim, int(self.edge_fraction_bins.numel()))
+        self.adaptive_critic = nn.Linear(adaptive_dim, 1)
 
     def _enforce_ratio(self, actions: torch.Tensor, mask_prob: torch.Tensor) -> torch.Tensor:
         bsz, num_patches = actions.shape
@@ -134,10 +146,48 @@ class DecisionModule(nn.Module):
         patch_features: torch.Tensor,
         target_mask_ratio: float | None = None,
         deterministic: bool = False,
+        edge_scores: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         h = self.feature(patch_features)
         h = h + self.context(h.mean(dim=1, keepdim=True))
         h = torch.nan_to_num(h, nan=0.0, posinf=20.0, neginf=-20.0)
+        if self.policy_mode in {"adaptive_mixed", "adaptive_mix", "data_adaptive", "domain_adaptive"}:
+            if edge_scores is None:
+                edge_scores = patch_features.detach().norm(dim=-1)
+            edge_scores = torch.nan_to_num(edge_scores.detach().float(), nan=0.0, posinf=20.0, neginf=0.0)
+            edge_mean = edge_scores.mean(dim=1)
+            edge_std = edge_scores.std(dim=1, unbiased=False)
+            edge_max = edge_scores.max(dim=1).values
+            edge_min = edge_scores.min(dim=1).values
+            edge_stats = torch.stack([edge_mean, edge_std, edge_max, edge_min], dim=1).clamp(-20.0, 20.0)
+            context = torch.cat([h.mean(dim=1), edge_stats], dim=1)
+            ratio_logits = self.adaptive_ratio_actor(context).clamp(-20.0, 20.0)
+            edge_logits = self.adaptive_edge_actor(context).clamp(-20.0, 20.0)
+            value = self.adaptive_critic(context).squeeze(-1).clamp(-20.0, 20.0)
+            ratio_dist = torch.distributions.Categorical(logits=ratio_logits)
+            edge_dist = torch.distributions.Categorical(logits=edge_logits)
+            if deterministic:
+                ratio_idx = ratio_logits.argmax(dim=-1)
+                edge_idx = edge_logits.argmax(dim=-1)
+            else:
+                ratio_idx = ratio_dist.sample()
+                edge_idx = edge_dist.sample()
+            ratio = self.mask_ratio_bins.to(device=patch_features.device, dtype=patch_features.dtype)[ratio_idx]
+            edge_fraction = self.edge_fraction_bins.to(device=patch_features.device, dtype=patch_features.dtype)[edge_idx]
+            mask = self._mixed_edge_random_mask(edge_scores, ratio, edge_fraction)
+            mask_ratio = mask.float().mean(dim=1)
+            target = target_mask_ratio if target_mask_ratio is not None else float(mask_ratio.mean().item())
+            ratio_penalty = (mask_ratio - float(target)).abs()
+            return {
+                "mask": mask,
+                "log_prob": ratio_dist.log_prob(ratio_idx) + edge_dist.log_prob(edge_idx),
+                "entropy": ratio_dist.entropy() + edge_dist.entropy(),
+                "value": torch.nan_to_num(value, nan=0.0, posinf=20.0, neginf=-20.0),
+                "mask_ratio": mask_ratio,
+                "sampled_mask_ratio": ratio.detach(),
+                "edge_fraction": edge_fraction.detach(),
+                "ratio_penalty": ratio_penalty,
+            }
         logits = self.actor(h)
         value = self.critic(h).squeeze(-1).mean(dim=1)
         logits = torch.nan_to_num(logits, nan=0.0, posinf=20.0, neginf=-20.0).clamp(-20.0, 20.0)
@@ -163,6 +213,28 @@ class DecisionModule(nn.Module):
             "mask_ratio": mask_ratio,
             "ratio_penalty": ratio_penalty,
         }
+
+    def _mixed_edge_random_mask(
+        self,
+        edge_scores: torch.Tensor,
+        mask_ratio: torch.Tensor,
+        edge_fraction: torch.Tensor,
+    ) -> torch.Tensor:
+        bsz, num_patches = edge_scores.shape
+        mask = torch.zeros(bsz, num_patches, dtype=torch.bool, device=edge_scores.device)
+        for bidx in range(bsz):
+            num_mask = max(1, min(num_patches - 1, int(round(float(mask_ratio[bidx].item()) * num_patches))))
+            num_edge = max(0, min(num_mask, int(round(float(edge_fraction[bidx].item()) * num_mask))))
+            num_random = num_mask - num_edge
+            if num_edge > 0:
+                edge_ids = edge_scores[bidx].argsort(descending=True)
+                mask[bidx, edge_ids[:num_edge]] = True
+            if num_random > 0:
+                random_score = torch.rand(num_patches, device=edge_scores.device)
+                random_score = random_score.masked_fill(mask[bidx], -1.0)
+                random_ids = random_score.argsort(descending=True)
+                mask[bidx, random_ids[:num_random]] = True
+        return mask
 
     def policy_loss(
         self,
@@ -375,10 +447,24 @@ class DBMIM3DMAE(nn.Module):
             else:
                 mask = self.random_mask(x.shape[0], x.device)
         else:
+            edge_scores = None
+            if hasattr(decision_module, "policy_mode") and str(decision_module.policy_mode).lower() in {
+                "adaptive_mixed",
+                "adaptive_mix",
+                "data_adaptive",
+                "domain_adaptive",
+            }:
+                edge = membrane_edge_map_3d(
+                    x,
+                    axis_weights=self.membrane_axis_weights,
+                    clip=self.membrane_clip,
+                )
+                edge_scores = self.patchify(edge).mean(dim=-1).clamp_min(0.0)
             decision = decision_module(
                 raw_tokens.detach(),
                 target_mask_ratio=target_mask_ratio,
                 deterministic=deterministic_policy,
+                edge_scores=edge_scores,
             )
             mask = decision["mask"]
         encoded = torch.where(mask.unsqueeze(-1), self.mask_token + self.pos_embed, tokens)

@@ -1950,3 +1950,90 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u al
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
 ```
+
+Update at 2026-06-24 23:30 CST:
+
+The fixed edge-mask wave gave a useful but incomplete answer:
+
+| arm | official A/B/C VOI | ARAND at best VOI | conclusion |
+|---|---:|---:|---|
+| publicEM random-mask dbMiM R17 | `1.002919` | `0.188832` | still best publicEM VOI |
+| publicEM random-mask plain MAE R23 | `1.027073` | `0.192763` | dbMiM gain over MAE exists |
+| publicEM pure edge-mask dbMiM R29 | `1.033564` | `0.186827` | ARAND improves, VOI worse than R17 |
+| publicEM pure edge-mask plain MAE R30 | `1.077594` | `0.203182` | pure edge masking is a bad MAE baseline |
+| fullEM old dbMiM R20 | `1.085331` | `0.195722` | positive vs fullEM MAE but not best |
+| fullEM plain MAE R23 | `1.440684` | `0.281216` | very negative |
+| fullEM pure edge-mask dbMiM R31 | `1.055438` | `0.195125` | improves over R20/fullEM MAE, still below R17 |
+
+Interpretation: dbMiM beats the same-data MAE controls, but pure edge masking
+is too aggressive. It helps some ARAND/fullEM robustness but hurts the best
+publicEM VOI. The next method should not hard-code edge-only masks.
+
+R34/R35 implement a data-adaptive dbMiM masking policy:
+
+- `DecisionModule(policy_mode="adaptive_mixed")` chooses, per crop, both
+  `mask_ratio` and the edge/random mixture fraction.
+- The policy sees encoder patch context plus four membrane-edge statistics
+  (`mean/std/max/min`) computed with the anisotropic EM edge weights.
+- Discrete bins are used for stability:
+  `mask_ratio_bins=[0.625, 0.75, 0.875]` and
+  `edge_fraction_bins=[0.25, 0.5, 0.75]`.
+- Policy warmup is `10000` steps, so the first phase uses the stable fixed
+  `edge_random_mix` sampler instead of noisy policy gradients.
+- Policy freezes after `40000` steps and is then used deterministically, which
+  keeps the final encoder training stable and makes the learned mask policy
+  inspectable through `train_log.jsonl` fields `sampled_mask_ratio` and
+  `edge_fraction`.
+
+New files:
+
+- `configs/pretrain_public_em_adaptive_dbmim_r34.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_adaptive_r34q.yaml`
+- `scripts/watch_and_submit_public_em_adaptive_r34_finetune.sh`
+- `configs/pretrain_em_full_adaptive_dbmim_r35.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_adaptive_r35q.yaml`
+- `scripts/watch_and_submit_full_em_adaptive_r35_finetune.sh`
+
+Submission/status snapshot after checking SiFlow SDK with proxy variables
+unset:
+
+| purpose | UUID | GPUs | pool | status at 2026-06-24 23:26 CST |
+|---|---|---:|---|---|
+| publicEM mixed-mask dbMiM R32 pretrain | `15a0effe-e276-4647-b8b1-5b0539e77a23` | 4 | `med-model` | Succeeded, duration `43m0s` |
+| fullEM mixed-mask dbMiM R33 pretrain | `6b43c469-8921-4266-af15-8885cf5262a7` | 4 | `med-model` | Running, about `1h20m` |
+| publicEM mixed-mask R32 finetune/eval | `8b52bca9-f9c6-4198-8fc0-27553c601733` | 2 | `med-model` | Running |
+| publicEM adaptive dbMiM R34 pretrain | `b5e04d72-9f38-4532-a764-0e01d744b2df` | 4 | `med-model` | Running |
+| fullEM adaptive dbMiM R35 pretrain | `d9ada18a-3cf3-4885-a75d-ad5204851919` | 4 | `med-model` | Running |
+
+Current active GPU accounting is about 14 GPUs: R33 pretrain 4 + R32
+finetune/eval 2 + R34 pretrain 4 + R35 pretrain 4. This is below the user's
+16-GPU cap. Do not submit another GPU job until one of these finishes unless
+the user explicitly raises the cap.
+
+R34/R35 downstream watchers are running as detached `setsid` children. The
+wrapper PID files recorded the short parent shells, so use `ps -ef | grep
+watch_and_submit_full_em_finetune.sh` for the real long-lived PIDs:
+
+| watcher | real PID | log | waits for | downstream stage |
+|---|---:|---|---|---|
+| publicEM adaptive R34 | `2413706` | `outputs/watchers/public_em_adaptive_r34_watcher.log` | `pretrain_public_em_adaptive_dbmim_r34/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-adaptive-r34q` |
+| fullEM adaptive R35 | `2413790` | `outputs/watchers/full_em_adaptive_r35_watcher.log` | `pretrain_em_full_adaptive_dbmim_r35/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-adaptive-r35q` |
+
+Local verification before submission:
+
+- `python -m py_compile dbmim/models.py train_pretrain.py scripts/submit_siflow_dbmim.py scripts/poll_dbmim_tos_results.py`
+- adaptive forward smoke on a 2-sample crop produced a valid loss, exact
+  `mask_ratio=0.75`, and decision keys including `sampled_mask_ratio` and
+  `edge_fraction`.
+- dry-run bundle creation and TOS upload passed for both
+  `pretrain-public-em-adaptive-r34` and `pretrain-em-full-adaptive-r35`.
+
+Poll adaptive results later with the existing comparison groups:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r29_edgemask_vs_mae --once --logs --siflow-fallback
+
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
+```
