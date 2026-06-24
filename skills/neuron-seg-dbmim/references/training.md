@@ -550,3 +550,27 @@ Near-term submission priority:
    that improve the ViT encoder, then initialize the supervised UNETR decoder
    and affinity head randomly. Do not transfer pseudo-affinity decoder/head
    weights unless a small controlled eval proves they help.
+
+## R29 Edge-biased Masking
+
+R29 is the next encoder-only dbMiM attempt after the R24/R26 failure analysis.
+It does not transfer any pseudo-affinity decoder/head. The pretraining change
+is only in which patches are masked:
+
+- baseline R23: random 75% mask, plain reconstruction;
+- baseline R16: decision/membrane-weighted dbMiM with random or learned mask;
+- R29: fixed 75% mask biased toward membrane/gradient-rich patches, plus the
+  R16-style membrane-weighted reconstruction and gradient structure loss.
+
+Implementation:
+
+- `DBMIM3DMAE` supports `model.mask_strategy: edge_biased` with
+  `edge_mask_power` and `edge_mask_noise`.
+- Default behavior remains `random`, so existing configs are unchanged.
+- R29 config: `configs/pretrain_public_em_edgemask_dbmim_r29.yaml`.
+- Downstream config:
+  `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_r29q.yaml`.
+
+R29 should be judged only against matched publicEM R23 plain MAE, R16 dbMiM,
+and scratch under the same R17 MSE+MAWS 12k official A/B/C waterz protocol.
+Do not use pretrain loss alone as evidence.

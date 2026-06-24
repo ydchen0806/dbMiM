@@ -238,6 +238,9 @@ class DBMIM3DMAE(nn.Module):
         num_heads: int = 6,
         decoder_dim: int = 192,
         mask_ratio: float = 0.75,
+        mask_strategy: str = "random",
+        edge_mask_power: float = 1.0,
+        edge_mask_noise: float = 0.05,
         structure_weight: float = 0.1,
         structure_axis_weights: Sequence[float] | None = None,
         membrane_weight: float = 0.0,
@@ -249,6 +252,9 @@ class DBMIM3DMAE(nn.Module):
         self.volume_size = _triple(volume_size)
         self.patch_size = _triple(patch_size)
         self.mask_ratio = mask_ratio
+        self.mask_strategy = str(mask_strategy).lower()
+        self.edge_mask_power = float(edge_mask_power)
+        self.edge_mask_noise = float(edge_mask_noise)
         self.structure_weight = structure_weight
         self.structure_axis_weights = _normalize_axis_weights(structure_axis_weights)
         self.membrane_weight = float(membrane_weight)
@@ -308,6 +314,25 @@ class DBMIM3DMAE(nn.Module):
         mask.scatter_(1, ids[:, :num_mask], True)
         return mask
 
+    def edge_biased_mask(self, x: torch.Tensor) -> torch.Tensor:
+        """Mask membrane-rich patches first while keeping stochastic tie-breaks."""
+
+        num_mask = max(1, int(round(self.mask_ratio * self.num_patches)))
+        edge = membrane_edge_map_3d(
+            x,
+            axis_weights=self.membrane_axis_weights,
+            clip=self.membrane_clip,
+        )
+        score = self.patchify(edge).mean(dim=-1).clamp_min(0.0)
+        if self.edge_mask_power != 1.0:
+            score = score.pow(self.edge_mask_power)
+        if self.edge_mask_noise > 0.0:
+            score = score + self.edge_mask_noise * torch.rand_like(score)
+        ids = score.argsort(dim=1, descending=True)
+        mask = torch.zeros(x.shape[0], self.num_patches, dtype=torch.bool, device=x.device)
+        mask.scatter_(1, ids[:, :num_mask], True)
+        return mask
+
     def encode_tokens(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         tokens, grid = self.patch_embed(x)
         if grid != self.grid_size:
@@ -325,7 +350,10 @@ class DBMIM3DMAE(nn.Module):
         tokens, raw_tokens = self.encode_tokens(x)
         decision = None
         if decision_module is None:
-            mask = self.random_mask(x.shape[0], x.device)
+            if self.mask_strategy in {"edge", "edge_biased", "membrane", "membrane_biased"}:
+                mask = self.edge_biased_mask(x)
+            else:
+                mask = self.random_mask(x.shape[0], x.device)
         else:
             decision = decision_module(
                 raw_tokens.detach(),

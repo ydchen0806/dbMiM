@@ -1747,3 +1747,42 @@ Research directions worth submitting next, in priority order:
 4. For post-processing, only pursue blockwise/streaming waterz-style
    fragments plus sparse RAG edge scoring. The current learned-calibrator,
    dense learned-RAG, DPP, graph-CC, and seeded-RAG attempts are not positive.
+
+Update at 2026-06-24 12:58 CST:
+
+The R18 no-BCAR long-affinity re-evals completed A/B/C with 60 records each.
+This closes the earlier partial A/B uncertainty:
+
+| arm | records | VOI | ARAND at best VOI | best ARAND | conclusion |
+|---|---:|---:|---:|---:|---|
+| long-affinity no-BCAR publicEM | 60 | `1.185532` | `0.244963` | `0.244963` | negative |
+| long-affinity no-BCAR scratch | 60 | `1.033775` | `0.199609` | `0.188417` | scratch much better |
+| long-affinity + BCAR-rank publicEM | 60 | `1.035857` | `0.192867` | `0.187889` | publicEM gain over paired scratch but not best |
+| long-affinity + BCAR-rank scratch | 60 | `1.080162` | `0.204355` | `0.200926` | paired control |
+
+Interpretation:
+
+- The no-BCAR long-affinity branch should not be expanded. It does not show a
+  pretraining gain; publicEM is worse than scratch by a large margin.
+- Long-affinity + BCAR-rank has a modest publicEM-over-scratch gain but still
+  does not beat the R17 MSE+MAWS publicEM VOI `1.002919`.
+- Keep R17 MSE+MAWS as the downstream recipe for dbMiM-vs-MAE method tests.
+
+Because R24/R26 showed pseudo-affinity decoder/head transfer is harmful, R29
+adds a narrower encoder-only pretraining idea: edge-biased masking. It keeps
+the R16-style `DBMIM3DMAE` encoder pretraining but chooses masked patches from
+membrane/gradient-rich regions instead of random patches, then downstream loads
+only `pos_embed`, `patch_embed`, `encoder_blocks`, and `norm`.
+
+R29 files:
+
+- `configs/pretrain_public_em_edgemask_dbmim_r29.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_r29q.yaml`
+- `scripts/watch_and_submit_public_em_edgemask_r29_finetune.sh`
+
+Poll eventual R29 downstream with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r29_edgemask_vs_mae --once --logs --siflow-fallback
+```

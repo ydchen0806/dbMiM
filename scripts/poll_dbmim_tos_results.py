@@ -134,6 +134,12 @@ RUNS = {
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
     ],
+    "r29_edgemask_vs_mae": [
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_r29q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_edgemask_r29q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_plainmae_r23q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_plainmae_r23q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
+    ],
     "r25_early3k": [
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_publicem_decoderaware_r24q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_decoderaware_r24q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_early3k_publicem_plainmae_r23q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_plainmae_r23q"),

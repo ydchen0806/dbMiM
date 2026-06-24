@@ -701,6 +701,17 @@ ABLATION_RUNS = {
         "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_plainmae_r23q",
         "pretrained_output": "pretrain_public_em_plain_mae_r23",
     },
+    "arch-explore-maws-mse-publicem-edgemask-r29q": {
+        "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_r29q.yaml",
+        "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_r29q",
+        "eval": "eval_cremi_unetr_aniso_em_mse_maws_publicem_edgemask_r29q",
+        "large_eval": "eval_cremi_unetr_aniso_large_em_mse_maws_publicem_edgemask_r29q",
+        "superhuman_eval": "eval_cremi_unetr_aniso_superhuman_waterz_em_mse_maws_publicem_edgemask_r29q",
+        "calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_em_mse_maws_publicem_edgemask_r29q",
+        "official_calibration_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_em_mse_maws_publicem_edgemask_r29q",
+        "official_abc_eval": "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_edgemask_r29q",
+        "pretrained_output": "pretrain_public_em_edgemask_dbmim_r29",
+    },
     "arch-explore-maws-mse-publicem-decoderaware-r24q": {
         "config": "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q.yaml",
         "output": "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_decoderaware_r24q",
@@ -1039,6 +1050,7 @@ CREMI_STAGES = {
     "pretrain-public-em-decoderaware-r24",
     "pretrain-public-em-decoderaware-r24-resume74",
     "pretrain-public-em-plain-mae-r23",
+    "pretrain-public-em-edgemask-r29",
     "pretrain-em-full-plain-mae-r23",
     "finetune-cremi",
     "finetune-cremi-unetr-pretrained",
@@ -1143,6 +1155,8 @@ def _training_output_dir(stage: str) -> str | None:
         return "outputs/pretrain_public_em_decoderaware_dbmim_r24"
     if stage == "pretrain-public-em-plain-mae-r23":
         return "outputs/pretrain_public_em_plain_mae_r23"
+    if stage == "pretrain-public-em-edgemask-r29":
+        return "outputs/pretrain_public_em_edgemask_dbmim_r29"
     if stage == "pretrain-em-full-plain-mae-r23":
         return "outputs/pretrain_em_full_plain_mae_r23"
     if stage == "finetune-cremi":
@@ -1275,6 +1289,18 @@ def _patch_cremi_configs(bundle: Path) -> None:
         pre_public_plain_cfg["train"]["save_every"] = max(int(pre_public_plain_cfg["train"].get("save_every", 1)), 5)
         pre_public_plain_cfg["train"]["save_steps"] = max(int(pre_public_plain_cfg["train"].get("save_steps", 0)), 2000)
         _write_yaml(pretrain_public_plain_r23, pre_public_plain_cfg)
+
+    pretrain_public_edgemask_r29 = bundle / "configs" / "pretrain_public_em_edgemask_dbmim_r29.yaml"
+    if pretrain_public_edgemask_r29.exists():
+        pre_public_edgemask_cfg = yaml.safe_load(pretrain_public_edgemask_r29.read_text(encoding="utf-8"))
+        pre_public_edgemask_cfg["output_dir"] = "outputs/pretrain_public_em_edgemask_dbmim_r29"
+        pre_public_edgemask_cfg["data"]["train_paths"] = ["data/CREMI", "data/EM_pretrain_data/public_em"]
+        pre_public_edgemask_cfg["train"]["epochs"] = max(int(pre_public_edgemask_cfg["train"].get("epochs", 1)), 100000)
+        pre_public_edgemask_cfg["train"]["save_every"] = max(int(pre_public_edgemask_cfg["train"].get("save_every", 1)), 5)
+        pre_public_edgemask_cfg["train"]["save_steps"] = max(
+            int(pre_public_edgemask_cfg["train"].get("save_steps", 0)), 2000
+        )
+        _write_yaml(pretrain_public_edgemask_r29, pre_public_edgemask_cfg)
 
     pretrain_public_decoder_r24 = bundle / "configs" / "pretrain_public_em_decoderaware_r24.yaml"
     if pretrain_public_decoder_r24.exists():
@@ -1485,6 +1511,7 @@ def make_bundle(
         "pretrain-public-em-decoderaware-r24",
         "pretrain-public-em-decoderaware-r24-resume74",
         "pretrain-public-em-plain-mae-r23",
+        "pretrain-public-em-edgemask-r29",
         "pretrain-em-full-plain-mae-r23",
     }:
         if stage in {
@@ -1492,6 +1519,7 @@ def make_bundle(
             "pretrain-public-em-decoderaware-r24",
             "pretrain-public-em-decoderaware-r24-resume74",
             "pretrain-public-em-plain-mae-r23",
+            "pretrain-public-em-edgemask-r29",
         }:
             em_data_dir = "data/EM_pretrain_data/public_em"
         elif stage in {
@@ -1508,6 +1536,7 @@ def make_bundle(
             "pretrain-public-em-decoderaware-r24",
             "pretrain-public-em-decoderaware-r24-resume74",
             "pretrain-public-em-plain-mae-r23",
+            "pretrain-public-em-edgemask-r29",
         }:
             em_tos_groups = ["public_em"]
         elif stage in {
@@ -1525,6 +1554,8 @@ def make_bundle(
             em_stage_cfgs = ["pretrain_public_em_decoderaware_r24.yaml"]
         elif stage == "pretrain-public-em-plain-mae-r23":
             em_stage_cfgs = ["pretrain_public_em_plain_mae_r23.yaml"]
+        elif stage == "pretrain-public-em-edgemask-r29":
+            em_stage_cfgs = ["pretrain_public_em_edgemask_dbmim_r29.yaml"]
         elif stage == "pretrain-em-full-membrane-r20":
             em_stage_cfgs = ["pretrain_em_full_membrane_r20.yaml"]
         elif stage == "pretrain-em-full-decoderaware-r21":
@@ -2339,6 +2370,7 @@ def main() -> None:
             "pretrain-public-em-decoderaware-r24",
             "pretrain-public-em-decoderaware-r24-resume74",
             "pretrain-public-em-plain-mae-r23",
+            "pretrain-public-em-edgemask-r29",
             "pretrain-em-full-plain-mae-r23",
             "finetune-cremi",
             "finetune-cremi-unetr-pretrained",
@@ -2448,6 +2480,9 @@ def main() -> None:
     elif args.stage == "pretrain-public-em-plain-mae-r23":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_plain_mae_r23.yaml"
         prefix = "dbmim-pretrain-public-em-plainmae-r23"
+    elif args.stage == "pretrain-public-em-edgemask-r29":
+        entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_public_em_edgemask_dbmim_r29.yaml"
+        prefix = "dbmim-pretrain-public-em-edgemask-r29"
     elif args.stage == "pretrain-em-full-plain-mae-r23":
         entrypoint = f"python -m torch.distributed.run --nproc_per_node={nproc} train_pretrain.py --config configs/pretrain_em_full_plain_mae_r23.yaml"
         prefix = "dbmim-pretrain-fullem-plainmae-r23"
