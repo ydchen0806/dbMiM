@@ -1798,3 +1798,38 @@ Submission update at 2026-06-24 13:08 CST:
 
 Current unique GPU accounting is 8 GPUs planned: 4 running for fullEM plain
 MAE and 4 pending for R29. This stays below the user's 16-GPU cap.
+
+Update at 2026-06-24 13:16 CST:
+
+The two live pretrain jobs are both running on `med-model`; no extra
+downstream finetune has been submitted yet because both watchers require
+`checkpoint_step_00160000.pt` and `min_step=160000`.
+
+| purpose | UUID | GPUs | latest observed train_log state |
+|---|---|---:|---|
+| fullEM plain MAE R23 pretrain retry | `3578f4e0-4b8e-400e-8766-9f7cb60c788b` | 4 | step `7420`, loss `0.069290`, mask_ratio `0.75`, membrane_weight_mean `1.0` |
+| R29 edge-biased publicEM dbMiM pretrain | `c3c22322-fdd0-4465-9840-611af4ea06e5` | 4 | step `14580`, loss `0.083947`, pixel_loss `0.063397`, membrane_weight_mean `2.35` |
+
+Current unique GPU accounting is 8 active GPUs total: 4 for fullEM plain MAE
+and 4 for R29 edge-biased dbMiM. This is still below the user cap of 16 GPUs.
+
+Local downstream watchers are active but consume no GPUs:
+
+| watcher | PID | log | waits for | downstream stage |
+|---|---:|---|---|---|
+| fullEM plain MAE R23 | `2330637` | `outputs/watchers/full_em_plain_mae_r23_watcher.log` | `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_em_full_plain_mae_r23/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-plainmae-r23q` |
+| R29 edge-biased publicEM dbMiM | `2330636` | `outputs/watchers/public_em_edgemask_r29_watcher.log` | `tos://agi-data/users/dchen02/dbmim/outputs/pretrain_public_em_edgemask_dbmim_r29/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-edgemask-r29q` |
+
+Operational pitfall learned here: starting a watcher via plain
+`nohup script.sh &` from a Codex tool command can leave it in the tool process
+group and it may disappear after the first poll. Start long-running local
+watchers as independent sessions instead:
+
+```bash
+setsid bash -c 'cd /volume/med-train/users/dchen02/code/dbMiM && exec scripts/watch_and_submit_public_em_edgemask_r29_finetune.sh >> outputs/watchers/public_em_edgemask_r29_watcher.log 2>&1' </dev/null &
+setsid bash -c 'cd /volume/med-train/users/dchen02/code/dbMiM && exec scripts/watch_and_submit_full_em_plain_mae_r23_finetune.sh >> outputs/watchers/full_em_plain_mae_r23_watcher.log 2>&1' </dev/null &
+```
+
+After starting, verify `PPID` becomes `1` and `SID` equals `PID` with
+`ps -p <pid> -o pid,ppid,sid,stat,etime,cmd`. Only then treat the watcher as
+really backgrounded.
