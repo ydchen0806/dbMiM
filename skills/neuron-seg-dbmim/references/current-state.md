@@ -1682,3 +1682,68 @@ R28 replaces R27 with a narrow screen:
 Use R28 only as a fast go/no-go for learnable postprocessing. If it cannot get
 close to waterz on holdout C with lower `postprocess_sec`, do not spend more
 full-volume GPU time on this direction.
+
+Update at 2026-06-24 10:40 CST:
+
+R28 completed and is a negative fast-postprocess result. The canonical TOS
+outputs were downloaded locally under
+`outputs/downloaded_r28_fast_postprocess/eval_cremi_fast_learned_postprocess_r28q/`
+for inspection.
+
+Held-out sample C best rows:
+
+| arm | best backend/variant | VOI | ARAND at best VOI | postprocess_sec |
+|---|---|---:|---:|---:|
+| R17 publicEM | waterz / raw pred | `1.274807` | `0.267032` | `1.7108` |
+| R17 scratch | waterz / raw pred | `1.287874` | `0.266518` | `1.7130` |
+
+Learned calibration did not beat raw predicted affinities through waterz on
+held-out C. The non-waterz fast backends were not waterz-comparable: the best
+`graph_cc`/`seeded_rag` rows were around VOI `5.11-5.12` with ARAND around
+`0.875-0.877`, and their measured `postprocess_sec` was about `2.0s`, not
+faster than waterz on this crop. Therefore do not spend more GPU on the current
+tiny-calibrator + graph/RAG fast-postprocess path. If post-processing is
+revisited, focus on scale engineering around stable waterz-style fragments
+and sparse RAG edge scoring, not dense learned RAG or graph connected
+components as a replacement for agglomeration.
+
+Current active/queued tasks after the R28 readout:
+
+| purpose | UUID | GPUs | pool | status at submission/check |
+|---|---|---:|---|---|
+| R18 no-BCAR long-affinity publicEM official A/B/C re-eval | `d35064aa-e7d7-4819-95b2-777e53c94c50` | 1 | `med-model` | Pending at 2026-06-24 10:28 CST |
+| R18 no-BCAR long-affinity scratch official A/B/C re-eval | `b1d1d975-409d-4204-85d2-03fb47f7068c` | 1 | `med-model` | Running at 2026-06-24 10:28 CST |
+| fullEM plain MAE R23 pretrain | `9658bbd2-cf61-4a54-a392-a014ee488114` | 4 | saved JSON says `cn-shanghai-changliu-skyinfer-reserved-shared` | Queueing, `实际可用(实例配额):0` |
+
+R18 re-eval rationale: the original no-BCAR long-affinity publicEM/scratch
+waterz-only jobs were stopped with only partial A/B evidence. Those partial
+rows looked unusually strong but were not comparable to official A/B/C. The
+new 1-GPU jobs complete exactly that missing A/B/C waterz evaluation without
+retraining. Poll with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r18q --once --logs --siflow-fallback
+```
+
+The fullEM plain-MAE baseline remains the most important missing comparison
+for the full-data story. Do not call R20 fullEM dbMiM positive or negative
+relative to MAE until `pretrain-em-full-plain-mae-r23` finishes and its matched
+downstream `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-plainmae-r23q`
+has the same official A/B/C waterz summary.
+
+Research directions worth submitting next, in priority order:
+
+1. Finish fullEM plain MAE R23. This is the cleanest missing baseline for
+   `dbMiM > MAE`; do not change GPU count/global batch unless explicitly
+   recording it as a new ablation.
+2. Complete R18 no-BCAR long-affinity A/B/C. If it beats R17 VOI or ARAND, it
+   is the only current architecture/loss branch worth expanding. If it fails,
+   stop long-affinity work and keep R17 MSE+MAWS as the downstream recipe.
+3. New dbMiM objective should be encoder-only at downstream load time. R24/R26
+   already showed decoder/head transfer is harmful; the next objective should
+   improve the encoder representation while leaving the supervised decoder and
+   affinity head randomly initialized.
+4. For post-processing, only pursue blockwise/streaming waterz-style
+   fragments plus sparse RAG edge scoring. The current learned-calibrator,
+   dense learned-RAG, DPP, graph-CC, and seeded-RAG attempts are not positive.

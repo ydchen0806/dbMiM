@@ -522,3 +522,31 @@ For the publicEM paper-facing comparison, use:
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r24_dbmim_vs_mae --once --logs --siflow-fallback
 ```
+
+Update after R24/R26 completion:
+
+- R24 full decoder/head transfer is a negative result. Full 12k official A/B/C
+  VOI is `1.482749`, much worse than R23 plain MAE `1.027073`, R16 dbMiM
+  `1.002919`, and scratch `1.095164`.
+- R26 encoder-only loading fixes most of the R24 damage (`VOI=1.050369`) but
+  still does not beat R23 plain MAE or R16 dbMiM at 12k. This means the
+  pseudo-affinity decoder/head transfer was harmful, but the R24 encoder
+  objective is not strong enough for a `dbMiM++ > MAE` claim.
+- R26 early3k has a small label-efficiency signal over R23 plain MAE
+  (`1.553875` vs `1.566102` VOI, and `0.332548` vs `0.374662` best ARAND), but
+  it is essentially tied with R16 dbMiM and scratch is still strong by ARAND.
+  Do not build the paper claim on early3k alone.
+
+Near-term submission priority:
+
+1. Let fullEM plain MAE R23 finish as a matched baseline for R20/R22 full-data
+   dbMiM. This is the highest-value missing comparison because it directly
+   answers whether full-data dbMiM beats generic MAE.
+2. Complete R18 no-BCAR long-affinity official A/B/C waterz eval. The stopped
+   partial A/B evidence was not valid, but the question is cheap to close with
+   1-GPU eval jobs.
+3. The next dbMiM method attempt should be encoder-only at downstream load
+   time. Design pretraining losses around membrane/affinity/boundary structure
+   that improve the ViT encoder, then initialize the supervised UNETR decoder
+   and affinity head randomly. Do not transfer pseudo-affinity decoder/head
+   weights unless a small controlled eval proves they help.

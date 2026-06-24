@@ -255,8 +255,8 @@ SIFLOW_UUIDS = {
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q": "1d218802-03e8-4121-8101-09637a775089",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_publicem_r17q": "8f9e4a5e-729f-42b5-8516-d0c0784fb8cb",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_bcar_rank_scratch_r17q": "d208dea6-9b2c-4dc3-ae94-a5104ad38d39",
-    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q": "353e6a63-4071-473e-9a67-e8aa1485be2d",
-    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q": "acc136c7-b5d6-4e51-b500-d0f391247daa",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_publicem_r18q": "d35064aa-e7d7-4819-95b2-777e53c94c50",
+    "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_scratch_r18q": "b1d1d975-409d-4204-85d2-03fb47f7068c",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_publicem_r18q": "deac4066-3261-4739-8887-f3d3c4629aae",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_longaff_bcar_rank_scratch_r18q": "dffb90bf-1526-4a8a-8a65-ee7d36065824",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q_fine": "4503d96c-9b52-4974-8e5e-7ee08bc21362",
@@ -510,6 +510,16 @@ def _is_complete_summary(eval_name: str, summary: dict) -> bool:
     return bool(samples)
 
 
+def _is_stale_summary(eval_name: str, summary: dict) -> bool:
+    """Detect local stdout-fallback summaries from superseded SiFlow UUIDs."""
+
+    if summary.get("source") != "siflow_stdout_fallback":
+        return False
+    expected_uuid = SIFLOW_UUIDS.get(eval_name)
+    actual_uuid = summary.get("uuid")
+    return bool(expected_uuid and actual_uuid and expected_uuid != actual_uuid)
+
+
 def summarize(group: str) -> int:
     root = ROOT / "outputs" / "tos_fetch" / group
     done = 0
@@ -536,14 +546,17 @@ def summarize(group: str) -> int:
                 summary = json.loads(summary_path.read_text())
                 by_voi = summary.get("best_by_voi_sum", {})
                 by_rand = summary.get("best_by_adapted_rand", {})
-                complete = _is_complete_summary(eval_name, summary)
+                stale = _is_stale_summary(eval_name, summary)
+                complete = (not stale) and _is_complete_summary(eval_name, summary)
                 if complete:
                     done += 1
                 print(
-                    "SUMMARY" if complete else "PARTIAL",
+                    "SUMMARY" if complete else ("STALE" if stale else "PARTIAL"),
                     eval_name,
                     "source",
                     summary.get("source", "tos"),
+                    "uuid",
+                    summary.get("uuid", ""),
                     "records",
                     summary.get("num_records", "?"),
                     "samples",

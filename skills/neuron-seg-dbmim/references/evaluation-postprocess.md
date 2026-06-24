@@ -479,3 +479,37 @@ objective changes. The more promising learnable-postprocess direction is a
 sparse fragment-edge scorer that replaces the RAG merge score while keeping
 waterz/fragment generation stable, and it must be judged against deterministic
 sparse edge scores on held-out C before being called a method improvement.
+
+## 2026-06-24 R28 Fast Screen Result
+
+R28 is the decisive go/no-go result for the tiny learned-calibrator plus fast
+backend idea. It ran on `64x512x512` crops, trained calibration on sample A,
+and evaluated A plus held-out C with `graph_cc`, `seeded_rag`, and `waterz`.
+
+Held-out C conclusions:
+
+- R17 publicEM best waterz/raw-pred row: `VOI_sum=1.2748065888653213`,
+  `adapted_rand_error=0.26703247911455563`, `postprocess_sec=1.710808`.
+- R17 publicEM learned-calibrated waterz did not improve it; the best
+  learned-calibrated VOI row was worse (`VOI_sum=1.2895888875266759` at
+  threshold `0.1`).
+- R17 scratch best waterz/raw-pred row: `VOI_sum=1.2878735554737848`,
+  `adapted_rand_error=0.266518414850905`, `postprocess_sec=1.712985`.
+- R17 scratch learned-calibrated waterz did not improve it; best learned row
+  was `VOI_sum=1.3009975828292233`.
+- The best non-waterz fast rows were around VOI `5.11-5.12` with ARAND about
+  `0.875-0.877`. They were not faster on this crop (`postprocess_sec` about
+  `2.0s`) and are far from waterz-comparable.
+
+Treat R28 as a negative result. Do not relaunch broader full-volume graph/RAG
+fast screens unless a new algorithm first reaches waterz-comparable quality on
+held-out C in this narrow protocol.
+
+Practical direction after R28:
+
+- Keep waterz/mahotas-style fragment generation as the quality anchor.
+- Optimize for scale by blockwise inference, chunk-local fragments, sparse RAG
+  edge extraction, and parallel/blockwise agglomeration/stitching.
+- If making the postprocess learnable, learn sparse boundary/RAG edge scores
+  that plug into a stable agglomeration pipeline; do not replace the pipeline
+  with global connected components or dense pairwise merging.
