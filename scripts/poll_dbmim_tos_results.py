@@ -136,6 +136,7 @@ RUNS = {
     ],
     "r29_edgemask_vs_mae": [
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_r29q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_edgemask_r29q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_plainmae_r30q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_edgemask_plainmae_r30q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_plainmae_r23q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_plainmae_r23q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_r17q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
@@ -163,6 +164,7 @@ RUNS = {
     "r23_plainmae_full": [
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_r20q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fullem_r20q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_plainmae_r23q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fullem_plainmae_r23q"),
+        ("finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_edgemask_r31q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_fullem_edgemask_r31q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r17q"),
     ],
     "r20q_dpp": [

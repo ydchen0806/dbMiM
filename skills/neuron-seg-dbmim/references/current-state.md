@@ -1833,3 +1833,63 @@ setsid bash -c 'cd /volume/med-train/users/dchen02/code/dbMiM && exec scripts/wa
 After starting, verify `PPID` becomes `1` and `SID` equals `PID` with
 `ps -p <pid> -o pid,ppid,sid,stat,etime,cmd`. Only then treat the watcher as
 really backgrounded.
+
+Update at 2026-06-24 13:24 CST:
+
+Two extra controls were submitted to make the next comparison scientifically
+cleaner without exceeding the 16-GPU cap.
+
+| purpose | UUID | GPUs | pool | status | latest observed evidence |
+|---|---|---:|---|---|---|
+| fullEM plain MAE R23 pretrain | `3578f4e0-4b8e-400e-8766-9f7cb60c788b` | 4 | `med-model` | Running | step `23340`, loss `0.081958`, membrane_weight_mean `1.0` |
+| publicEM edge-biased dbMiM R29 pretrain | `c3c22322-fdd0-4465-9840-611af4ea06e5` | 4 | `med-model` | Running | step `53700`, loss `0.070069`, membrane_weight_mean `2.35` |
+| publicEM edge-biased plain MAE R30 pretrain | `7bddc047-63cd-4710-9d40-a91befbb41ff` | 4 | `med-model` | Running | step `14540`, loss `0.052389`, membrane_weight_mean `1.0` |
+| fullEM edge-biased dbMiM R31 pretrain | `f0d702ae-2dd4-4a54-961f-e34441e73754` | 4 | `med-model` | Running | pod started; stdout shows TOS staging started, no TOS `train_log.jsonl` observed yet |
+
+Total active planned GPU usage is now exactly 16 GPUs. Do not submit more GPU
+experiments until one of these finishes or is stopped.
+
+R30 is the key mask-strategy control for R29:
+
+- R29: publicEM+CREMI, edge-biased masking, dbMiM structure loss and membrane
+  weighting.
+- R30: same data, seed, edge-biased masking, crop, batch, schedule, and
+  downstream recipe, but `structure_weight=0` and `membrane_weight=0`
+  (`plain_mae` objective).
+
+Interpret R29 only against R30 and the older random-mask publicEM plain MAE
+R23. If R29 only beats R23 but not R30, the gain is likely from edge-biased
+mask sampling rather than the dbMiM objective. If R29 beats both R30 and R23,
+that is the cleanest current publicEM evidence for `dbMiM++ > MAE`.
+
+R31 is the fullEM version of R29 and should be compared against fullEM
+plain-MAE R23 and the older R20 fullEM dbMiM. R31 deliberately disables the old
+R20 decision policy and uses 160k steps to align with the fullEM MAE baseline.
+
+New files for this wave:
+
+- `configs/pretrain_public_em_edgemask_plain_mae_r30.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_edgemask_plainmae_r30q.yaml`
+- `scripts/watch_and_submit_public_em_edgemask_plainmae_r30_finetune.sh`
+- `configs/pretrain_em_full_edgemask_dbmim_r31.yaml`
+- `configs/finetune_cremi_real_unetr_aniso_em_mse_maws_fullem_edgemask_r31q.yaml`
+- `scripts/watch_and_submit_full_em_edgemask_r31_finetune.sh`
+
+Watcher PIDs after detached `setsid` startup:
+
+| watcher | PID | waits for | downstream stage |
+|---|---:|---|---|
+| publicEM R29 edge dbMiM | `2330636` | `pretrain_public_em_edgemask_dbmim_r29/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-edgemask-r29q` |
+| fullEM R23 plain MAE | `2330637` | `pretrain_em_full_plain_mae_r23/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-plainmae-r23q` |
+| publicEM R30 edge plain MAE | `2340284` | `pretrain_public_em_edgemask_plain_mae_r30/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-edgemask-plainmae-r30q` |
+| fullEM R31 edge dbMiM | `2345029` | `pretrain_em_full_edgemask_dbmim_r31/checkpoint_step_00160000.pt` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-edgemask-r31q` |
+
+Poll later with:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r29_edgemask_vs_mae --once --logs --siflow-fallback
+
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+  python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
+```
