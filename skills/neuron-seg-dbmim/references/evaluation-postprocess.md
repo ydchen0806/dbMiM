@@ -175,6 +175,18 @@ Negative or fragile controls:
   `e5d3341b-dedb-4e24-a6e8-f1b3efe607be`: the first omitted waterz packaging,
   and the second was stopped to remove fail-fast behavior so optional backend
   failures cannot kill the waterz reference.
+- The final R27 full A/B/C sweep was also stopped: UUID
+  `b86d2af4-09ca-414e-a493-42e1d9c039e1` ran for about 8.6 hours without a
+  summary. It was too broad for a fast postprocess screen. Do not relaunch
+  full A/B/C x publicEM/scratch x graph/seeded-rag/waterz x large threshold
+  grid until a narrow screen proves waterz-comparable quality.
+- R28 is the maintained fast screen for this direction:
+  `eval-cremi-fast-learned-postprocess-r28q`, UUID
+  `a957727f-8dc3-4b4c-a66a-975957e03ed6`. It uses crop `64x512x512`, trains the
+  tiny calibrator on sample A, evaluates A and holdout C, and compares only
+  `graph_cc`, `seeded_rag`, and `waterz` with a small threshold grid. Treat R28
+  as a go/no-go test: continue only if holdout C is close to waterz and faster
+  by `postprocess_sec`.
 - In the R15/R16 full-volume architecture benchmarks, simple graph-CC with the
   early threshold grid again produced VOI around `7.9` on sample A. Do not use
   those early rows as a method conclusion; wait for waterz or run a standalone

@@ -177,6 +177,16 @@ RUNS = {
             "eval_cremi_fast_learned_postprocess_r17q/scratch",
         ),
     ],
+    "r28_fast_learned_postprocess_screen": [
+        (
+            "finetune_cremi_real_unetr_aniso_em_mse_maws_publicem_r17q",
+            "eval_cremi_fast_learned_postprocess_r28q/publicem",
+        ),
+        (
+            "finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r17q",
+            "eval_cremi_fast_learned_postprocess_r28q/scratch",
+        ),
+    ],
     "r21q": [
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_scratch_r21q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_scratch_r21q"),
         ("finetune_cremi_real_unetr_aniso_em_mse_maws_decoderaware_r21q", "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_decoderaware_r21q"),
@@ -260,6 +270,8 @@ SIFLOW_UUIDS = {
     "eval_cremi_learned_affinity_calibration_r20q": "db054938-053d-4d25-9849-d616d66ff57e",
     "eval_cremi_fast_learned_postprocess_r17q/publicem": "b86d2af4-09ca-414e-a493-42e1d9c039e1",
     "eval_cremi_fast_learned_postprocess_r17q/scratch": "b86d2af4-09ca-414e-a493-42e1d9c039e1",
+    "eval_cremi_fast_learned_postprocess_r28q/publicem": "a957727f-8dc3-4b4c-a66a-975957e03ed6",
+    "eval_cremi_fast_learned_postprocess_r28q/scratch": "a957727f-8dc3-4b4c-a66a-975957e03ed6",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_decoderaware_r24q": "628faa9d-4e5a-4b19-98bd-555bef604302",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_publicem_decoderaware_encoderonly_r26q": "faba607c-b53c-4e45-9de2-798eb8462612",
     "eval_cremi_unetr_aniso_superhuman_calibration_official_abc_em_mse_maws_early3k_publicem_decoderaware_r24q": "191db4dd-9949-4e08-8b79-838b34c19755",

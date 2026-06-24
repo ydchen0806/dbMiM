@@ -1630,3 +1630,55 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u al
 
 After R27 submission, active/queued dbMiM usage is about 10 GPUs: R26 full 2,
 R26 early3k 2, R27 fast learned postprocess 2, and fullEM plain-MAE queue 4.
+
+Update at 2026-06-24 09:08 CST:
+
+R26 encoder-only completed both full 12k and early3k A/B/C official evals.
+The conclusion is negative for the R24 decoder-aware dbMiM++ path:
+
+| arm | records | VOI | ARAND at best VOI | best ARAND |
+|---|---:|---:|---:|---:|
+| R26 encoder-only full | 60 | `1.050369` | `0.194521` | `0.189692` |
+| R24 full-init | 60 | `1.482749` | `0.281327` | `0.275869` |
+| R23 plain MAE | 60 | `1.027073` | `0.192763` | `0.189247` |
+| R16 dbMiM | 60 | `1.002919` | `0.188832` | `0.188832` |
+| scratch | 60 | `1.095164` | `0.213401` | `0.210442` |
+
+R26 encoder-only is much better than R24 full-init, confirming that the R24
+pseudo-affinity decoder/head transfer is harmful. But R26 still does not beat
+R23 plain MAE or the older R16 membrane dbMiM, so it is not a positive
+dbMiM++-over-MAE result.
+
+Early3k gives the same direction:
+
+| early3k arm | records | VOI | ARAND at best VOI | best ARAND |
+|---|---:|---:|---:|---:|
+| R26 encoder-only early3k | 60 | `1.553875` | `0.337422` | `0.332548` |
+| R24 full-init early3k | 60 | `2.913022` | `0.574107` | `0.565924` |
+| R23 plain MAE early3k | 60 | `1.566102` | `0.389115` | `0.374662` |
+| R16 dbMiM early3k | 60 | `1.550130` | `0.338732` | `0.338732` |
+| scratch early3k | 60 | `1.563107` | `0.309977` | `0.309226` |
+
+R26 encoder-only early3k slightly improves VOI/ARAND over plain MAE, but it is
+essentially tied with R16 dbMiM and scratch remains stronger by ARAND. Treat it
+as evidence that encoder-only loading avoids the R24 failure mode, not as a
+paper-quality method gain.
+
+R27 fast learned postprocess full A/B/C sweep was stopped after about 8.6 hours
+with zero summaries. It was too broad for the user's stated "比较快" requirement
+(`full A/B/C x publicEM/scratch x graph_cc/cupy_graph_cc/seeded_rag/waterz x
+large threshold grid`). Do not relaunch that full sweep.
+
+R28 replaces R27 with a narrow screen:
+
+- stage: `eval-cremi-fast-learned-postprocess-r28q`;
+- UUID: `a957727f-8dc3-4b4c-a66a-975957e03ed6`;
+- resources: 2 GPUs on `med-model`;
+- setting: crop `64x512x512`, stride `16x80x80`, train calibrator on sample A,
+  evaluate sample A and holdout sample C, backends `graph_cc`, `seeded_rag`,
+  `waterz`, thresholds `0.10/0.20/0.30/0.50`, anisotropic z/xy grid
+  `0.10/0.20/0.30`, CREMI boundary ignore `xy=1,z=0`.
+
+Use R28 only as a fast go/no-go for learnable postprocessing. If it cannot get
+close to waterz on holdout C with lower `postprocess_sec`, do not spend more
+full-volume GPU time on this direction.
