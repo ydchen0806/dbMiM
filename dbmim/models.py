@@ -239,6 +239,7 @@ class DBMIM3DMAE(nn.Module):
         decoder_dim: int = 192,
         mask_ratio: float = 0.75,
         mask_strategy: str = "random",
+        edge_mask_fraction: float = 1.0,
         edge_mask_power: float = 1.0,
         edge_mask_noise: float = 0.05,
         structure_weight: float = 0.1,
@@ -253,6 +254,7 @@ class DBMIM3DMAE(nn.Module):
         self.patch_size = _triple(patch_size)
         self.mask_ratio = mask_ratio
         self.mask_strategy = str(mask_strategy).lower()
+        self.edge_mask_fraction = float(edge_mask_fraction)
         self.edge_mask_power = float(edge_mask_power)
         self.edge_mask_noise = float(edge_mask_noise)
         self.structure_weight = structure_weight
@@ -315,9 +317,12 @@ class DBMIM3DMAE(nn.Module):
         return mask
 
     def edge_biased_mask(self, x: torch.Tensor) -> torch.Tensor:
-        """Mask membrane-rich patches first while keeping stochastic tie-breaks."""
+        """Mask membrane-rich patches plus optional random context patches."""
 
         num_mask = max(1, int(round(self.mask_ratio * self.num_patches)))
+        num_edge = int(round(num_mask * self.edge_mask_fraction))
+        num_edge = max(0, min(num_mask, num_edge))
+        num_random = num_mask - num_edge
         edge = membrane_edge_map_3d(
             x,
             axis_weights=self.membrane_axis_weights,
@@ -328,9 +333,15 @@ class DBMIM3DMAE(nn.Module):
             score = score.pow(self.edge_mask_power)
         if self.edge_mask_noise > 0.0:
             score = score + self.edge_mask_noise * torch.rand_like(score)
-        ids = score.argsort(dim=1, descending=True)
         mask = torch.zeros(x.shape[0], self.num_patches, dtype=torch.bool, device=x.device)
-        mask.scatter_(1, ids[:, :num_mask], True)
+        if num_edge > 0:
+            ids = score.argsort(dim=1, descending=True)
+            mask.scatter_(1, ids[:, :num_edge], True)
+        if num_random > 0:
+            random_score = torch.rand(x.shape[0], self.num_patches, device=x.device)
+            random_score = random_score.masked_fill(mask, -1.0)
+            random_ids = random_score.argsort(dim=1, descending=True)
+            mask.scatter_(1, random_ids[:, :num_random], True)
         return mask
 
     def encode_tokens(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -350,7 +361,16 @@ class DBMIM3DMAE(nn.Module):
         tokens, raw_tokens = self.encode_tokens(x)
         decision = None
         if decision_module is None:
-            if self.mask_strategy in {"edge", "edge_biased", "membrane", "membrane_biased"}:
+            if self.mask_strategy in {
+                "edge",
+                "edge_biased",
+                "membrane",
+                "membrane_biased",
+                "edge_random_mix",
+                "edge_mixed",
+                "mixed_edge",
+                "hybrid_edge",
+            }:
                 mask = self.edge_biased_mask(x)
             else:
                 mask = self.random_mask(x.shape[0], x.device)

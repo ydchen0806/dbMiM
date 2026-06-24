@@ -141,6 +141,7 @@ def main() -> None:
             decoder_dim=int(model_cfg.get("decoder_dim", model_cfg.get("embed_dim", 192))),
             mask_ratio=float(model_cfg.get("mask_ratio", 0.75)),
             mask_strategy=str(model_cfg.get("mask_strategy", "random")),
+            edge_mask_fraction=float(model_cfg.get("edge_mask_fraction", 1.0)),
             edge_mask_power=float(model_cfg.get("edge_mask_power", 1.0)),
             edge_mask_noise=float(model_cfg.get("edge_mask_noise", 0.05)),
             structure_weight=float(model_cfg.get("structure_weight", 0.1)),

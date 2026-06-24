@@ -1325,6 +1325,63 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u al
   python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
 ```
 
+Update at 2026-06-24 22:08 CST:
+
+The R29/R30/R31 wave completed. New official A/B/C waterz summaries are
+available and give a useful method conclusion:
+
+| arm | records | VOI | ARAND at best VOI | best ARAND | interpretation |
+|---|---:|---:|---:|---:|---|
+| R17 publicEM random-mask dbMiM baseline | 60 | `1.002919` | `0.188832` | `0.188832` | still best publicEM VOI |
+| R23 publicEM random-mask plain MAE | 60 | `1.027073` | `0.192763` | `0.189247` | strong MAE baseline |
+| R29 publicEM pure edge-mask dbMiM | 60 | `1.033564` | `0.186827` | `0.186827` | beats R30 plain-MAE control but not R17/R23 VOI |
+| R30 publicEM pure edge-mask plain MAE | 60 | `1.077594` | `0.203182` | `0.198562` | negative; pure edge mask hurts MAE |
+| R20 fullEM old dbMiM | 60 | `1.085331` | `0.195722` | `0.195722` | older full-data dbMiM |
+| R23 fullEM plain MAE | 60 | `1.440684` | `0.281216` | `0.281216` | very negative full-data MAE |
+| R31 fullEM pure edge-mask dbMiM | 60 | `1.055438` | `0.195125` | `0.195125` | strong fullEM improvement over R20 and fullEM MAE, but not R17 publicEM |
+
+Main conclusion:
+
+- `dbMiM++ > same-mask MAE` is supported by R29 vs R30 and R31 vs fullEM R23.
+- Pure edge-biased masking is not the final answer: it improves the dbMiM
+  objective relative to edge-mask MAE, but publicEM VOI is still worse than
+  random-mask R17/R23. This suggests the edge mask is too aggressive and loses
+  global/contextual reconstruction signal.
+- The next promising direction is mixed masking: keep random masking for
+  global context and reserve only part of the masked patches for membrane-rich
+  patches.
+
+Implemented follow-up:
+
+- `DBMIM3DMAE` now accepts `edge_mask_fraction`. For strategies
+  `edge_random_mix`/`edge_mixed`/`mixed_edge`/`hybrid_edge`, it masks
+  `edge_mask_fraction * num_mask` membrane-rich patches and fills the remaining
+  mask budget randomly. Existing pure edge-mask configs keep the previous
+  behavior by using the default `edge_mask_fraction=1.0`.
+- R32 publicEM mixed-mask dbMiM uses `edge_mask_fraction=0.5`,
+  `edge_mask_power=1.25`, and the same downstream MSE+MAWS encoder-only load.
+- R33 fullEM mixed-mask dbMiM uses the same mixed-mask recipe on fullEM data.
+
+New jobs:
+
+| purpose | UUID | GPUs | pool | status at submission/check |
+|---|---|---:|---|---|
+| R32 publicEM mixed-mask dbMiM pretrain | `15a0effe-e276-4647-b8b1-5b0539e77a23` | 4 | `med-model` | Pending/created at 2026-06-24 22:06 CST |
+| R33 fullEM mixed-mask dbMiM pretrain | `6b43c469-8921-4266-af15-8885cf5262a7` | 4 | `med-model` | Running at 2026-06-24 22:06 CST |
+
+Watchers:
+
+| watcher | PID | downstream stage |
+|---|---:|---|
+| R32 publicEM mixed-mask | `2394420` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-publicem-mixedmask-r32q` |
+| R33 fullEM mixed-mask | `2393725` | `finetune-cremi-unetr-aniso-arch-explore-maws-mse-fullem-mixedmask-r33q` |
+
+Operational pitfall from this wave: SiFlow can reject long task prefixes after
+internal truncation if the truncated name ends in `-`. The original R32 prefix
+`dbmim-pretrain-public-em-mixedmask-r32` was rejected as
+`dbmim-pretrain-public-em-mixedmask-`. Use a shorter prefix such as
+`dbmim-pretrain-pubem-mixmask-r32`.
+
 ## 2026-06-23 R24 dbMiM++ vs Plain MAE Target
 
 The user set the hard target: dbMiM must show a gain over ordinary MAE, not
