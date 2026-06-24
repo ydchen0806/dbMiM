@@ -1786,3 +1786,15 @@ Poll eventual R29 downstream with:
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r29_edgemask_vs_mae --once --logs --siflow-fallback
 ```
+
+Submission update at 2026-06-24 13:08 CST:
+
+| purpose | UUID | GPUs | pool | status at check |
+|---|---|---:|---|---|
+| fullEM plain MAE R23 pretrain retry | `3578f4e0-4b8e-400e-8766-9f7cb60c788b` | 4 | `med-model` | Running |
+| old fullEM plain MAE shared queue | `9658bbd2-cf61-4a54-a392-a014ee488114` | 4 | `cn-shanghai-changliu-skyinfer-reserved-shared` | Stopped after med-model retry submitted |
+| R29 edge-biased publicEM pretrain | `c3c22322-fdd0-4465-9840-611af4ea06e5` | 4 | `med-model` | Pending/created |
+| R29 downstream watcher | local PID `2325560` | 0 | login node | waiting for `checkpoint_step_00160000.pt` |
+
+Current unique GPU accounting is 8 GPUs planned: 4 running for fullEM plain
+MAE and 4 pending for R29. This stays below the user's 16-GPU cap.
