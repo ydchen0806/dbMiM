@@ -1,7 +1,7 @@
 # dbMiM Neuron Segmentation
 
 [![Chinese README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-blue)](README_zh.md)
-[![Hugging Face Weights](https://img.shields.io/badge/HuggingFace-weights-yellow)](https://huggingface.co/che111/dbmim-neuron-segmentation)
+[![Hugging Face Weights](https://img.shields.io/badge/HuggingFace-weights-yellow)](https://huggingface.co/cyd0806/dbmim-neuron-segmentation)
 
 This repository is the cleaned implementation used for our current dbMiM
 neuron-segmentation experiments on CREMI. The maintained path is:
@@ -40,11 +40,17 @@ EM data (R33)** improves over scratch, old fullEM dbMiM, pure edge masking, and
 fullEM plain MAE. The best absolute VOI is still the smaller publicEM dbMiM
 model (R17), so the README reports both.
 
+The recommended R33 line does **not** use a reinforcement-learning masking
+policy. It uses fixed mixed edge/random masking. RL-style decision modules are
+retained only as ablations: R16 used the older decision module in the publicEM
+pretraining line, while R34/R35 tested adaptive mixed masking and were negative
+under the current CREMI A/B/C protocol.
+
 ## Model Zoo
 
 Weights are hosted at:
 
-**https://huggingface.co/che111/dbmim-neuron-segmentation**
+**https://huggingface.co/cyd0806/dbmim-neuron-segmentation**
 
 | Model | HF path | Intended use |
 |---|---|---|
@@ -275,7 +281,7 @@ Download weights from Hugging Face with `huggingface_hub`:
 from huggingface_hub import snapshot_download
 
 snapshot_download(
-    repo_id="che111/dbmim-neuron-segmentation",
+    repo_id="cyd0806/dbmim-neuron-segmentation",
     local_dir="outputs/hf_weights",
     allow_patterns=["weights/**", "configs/**"],
 )

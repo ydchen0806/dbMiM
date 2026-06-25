@@ -1,7 +1,7 @@
 # dbMiM 神经元分割
 
 [![English README](https://img.shields.io/badge/README-English-blue)](README.md)
-[![Hugging Face 权重](https://img.shields.io/badge/HuggingFace-weights-yellow)](https://huggingface.co/che111/dbmim-neuron-segmentation)
+[![Hugging Face 权重](https://img.shields.io/badge/HuggingFace-weights-yellow)](https://huggingface.co/cyd0806/dbmim-neuron-segmentation)
 
 这个仓库是当前 dbMiM 神经元分割实验的清理版代码，主要面向 CREMI
 复现、预训练收益验证、UNETR 结构改进和 VOI/ARAND 评测。当前维护的主线是：
@@ -36,11 +36,16 @@
 但当前全局最低 VOI 仍然来自更小 publicEM 数据上的 R17，所以文档同时报告
 R17 和 R33。
 
+当前推荐的 R33 主线**没有使用强化学习 mask policy**，而是固定的 mixed
+edge/random masking。RL-style decision module 只作为消融保留：R16 publicEM
+预训练线用了旧 decision module，R34/R35 测试 adaptive mixed masking，但在当前
+CREMI A/B/C 口径下是负结果。
+
 ## 权重
 
 训练好的预训练权重和微调权重已经上传到：
 
-**https://huggingface.co/che111/dbmim-neuron-segmentation**
+**https://huggingface.co/cyd0806/dbmim-neuron-segmentation**
 
 | 模型 | HF 路径 | 用途 |
 |---|---|---|
@@ -256,7 +261,7 @@ python -m py_compile \
 from huggingface_hub import snapshot_download
 
 snapshot_download(
-    repo_id="che111/dbmim-neuron-segmentation",
+    repo_id="cyd0806/dbmim-neuron-segmentation",
     local_dir="outputs/hf_weights",
     allow_patterns=["weights/**", "configs/**"],
 )
