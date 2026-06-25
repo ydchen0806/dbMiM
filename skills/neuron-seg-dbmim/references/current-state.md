@@ -2037,3 +2037,75 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u al
 env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
   python scripts/poll_dbmim_tos_results.py --group r23_plainmae_full --once --logs --siflow-fallback
 ```
+Update at 2026-06-25 13:35 CST:
+
+R32/R33/R34/R35 have all completed through finetune and official A/B/C waterz
+evaluation. The latest adaptive policy idea is negative; the useful positive
+result from this wave is fixed mixed-mask fullEM dbMiM.
+
+PublicEM A/B/C summary:
+
+| arm | VOI | ARAND at best VOI | best ARAND | conclusion |
+|---|---:|---:|---:|---|
+| R17 publicEM random-mask dbMiM | `1.002919` | `0.188832` | `0.188832` | best publicEM VOI; keep as publicEM headline |
+| R23 publicEM random-mask plain MAE | `1.027073` | `0.192763` | `0.189247` | MAE baseline; R17 dbMiM beats it |
+| R29 publicEM pure edge-mask dbMiM | `1.033564` | `0.186827` | `0.186827` | best publicEM ARAND, worse VOI |
+| R32 publicEM fixed mixed-mask dbMiM | `1.046538` | `0.206256` | `0.193183` | negative vs R17/R23 |
+| R34 publicEM adaptive mixed dbMiM | `1.067471` | `0.205437` | `0.200604` | negative; do not expand current adaptive form |
+| R30 publicEM pure edge-mask plain MAE | `1.077594` | `0.203182` | `0.198562` | negative control |
+| R17 scratch | `1.095164` | `0.213401` | `0.210442` | scratch control |
+
+FullEM A/B/C summary:
+
+| arm | VOI | ARAND at best VOI | best ARAND | conclusion |
+|---|---:|---:|---:|---|
+| R33 fullEM fixed mixed-mask dbMiM | `1.039372` | `0.191216` | `0.190932` | best fullEM result; positive vs scratch, R20, R31, fullEM MAE |
+| R31 fullEM pure edge-mask dbMiM | `1.055438` | `0.195125` | `0.195125` | positive but weaker than R33 |
+| R20 fullEM old dbMiM | `1.085331` | `0.195722` | `0.195722` | older fullEM baseline |
+| R35 fullEM adaptive mixed dbMiM | `1.089639` | `0.205551` | `0.205551` | negative vs R33/R31/R20; only slightly better than scratch |
+| R17 scratch | `1.095164` | `0.213401` | `0.210442` | scratch control |
+| R23 fullEM plain MAE | `1.440684` | `0.281216` | `0.281216` | very negative fullEM MAE baseline |
+
+Important deltas:
+
+- R17 publicEM dbMiM beats publicEM plain MAE R23 by about `-0.0242` VOI and
+  `-0.0004` best ARAND. This is a small but clean `dbMiM > MAE` publicEM
+  signal.
+- R29 edge-mask dbMiM beats same-mask plain MAE R30 by about `-0.0440` VOI and
+  `-0.0117` best ARAND, but does not beat R17/R23 VOI.
+- R33 fullEM mixed-mask dbMiM beats fullEM plain MAE R23 by about `-0.4013`
+  VOI and `-0.0903` best ARAND, beats old fullEM R20 by about `-0.0460` VOI,
+  and beats scratch by about `-0.0558` VOI / `-0.0195` best ARAND.
+- R33 is still slightly worse than the best publicEM R17 by VOI
+  (`1.039372` vs `1.002919`) and best ARAND (`0.190932` vs `0.188832`), so do
+  not claim the all-data recipe is globally best yet.
+- R34/R35 adaptive policy did not improve over fixed policies. In the
+  pretrain logs after step 40k, both adaptive runs collapsed to
+  `sampled_mask_ratio=0.75` for every logged step. R34 chose mean
+  `edge_fraction=0.4456`; R35 chose mean `edge_fraction=0.3322`. The current
+  REINFORCE-style crop policy mostly learned to reduce edge emphasis, but did
+  not translate to better downstream segmentation.
+
+Operational status at this checkpoint:
+
+- All R32/R33/R34/R35 pretrain and finetune/eval tasks are `Succeeded`.
+- No dbMiM SiFlow GPU tasks from this wave are still running, pending, or
+  queueing on `med-model`; the only observed running med-model job is unrelated
+  orgchem work.
+- The untracked local `outputs/tmp_policy_logs/` directory only contains
+  downloaded policy-log scratch files for analysis; do not commit it.
+
+Recommended next decision:
+
+- Treat fixed fullEM mixed-mask dbMiM R33 as the strongest new method result
+  from this wave.
+- Do not keep spending GPUs on the current adaptive policy implementation.
+  If revisiting learnable masking, it needs a different objective/constraint
+  such as supervised policy distillation from successful fixed policies, a
+  constrained low-edge-fraction fixed sweep, or a validation-driven controller
+  rather than per-crop reconstruction reward alone.
+- For a paper claim, frame the robust evidence as: anisotropic UNETR +
+  MSE/MAWS supervised finetune; dbMiM pretraining can beat matched MAE controls;
+  fixed mixed edge/random masking is beneficial on fullEM, while pure adaptive
+  mask selection is not yet a positive component.
+
