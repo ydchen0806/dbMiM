@@ -1,7 +1,0 @@
-interface:
-  display_name: "dbMiM Neuron Seg"
-  short_description: "CREMI UNETR training and VOI/ARAND workflow"
-  default_prompt: "Use $neuron-seg-dbmim to continue the dbMiM CREMI neuron segmentation experiments."
-
-policy:
-  allow_implicit_invocation: true

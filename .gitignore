@@ -5,10 +5,20 @@ __pycache__/
 
 data/
 outputs/
+reports/
+skills/
+logs/
+wandb/
+.cache/
+huggingface/
+hf_release/
 third_party/
 *.pt
 *.pth
 *.ckpt
+*.h5
+*.hdf
+*.hdf5
 
 .env
 *.token
