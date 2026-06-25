@@ -70,6 +70,18 @@ class TransformerBlock(nn.Module):
         return x + self.mlp(self.norm2(x))
 
 
+ADAPTIVE_MIXED_POLICY_MODES = {
+    "adaptive_mixed",
+    "adaptive_mix",
+    "data_adaptive",
+    "domain_adaptive",
+    "constrained_adaptive_mixed",
+    "constrained_mixed",
+    "rl_mixed",
+    "segmentation_proxy",
+}
+
+
 class DecisionModule(nn.Module):
     """Shared actor-critic mask policy used by patch agents.
 
@@ -90,6 +102,17 @@ class DecisionModule(nn.Module):
         policy_mode: str = "patch",
         mask_ratio_bins: Sequence[float] | None = None,
         edge_fraction_bins: Sequence[float] | None = None,
+        reward_mode: str = "reconstruction",
+        edge_reward_coef: float = 0.0,
+        edge_fraction_target: float | None = None,
+        edge_fraction_coef: float = 0.0,
+        advantage_normalize: bool = False,
+        reward_clip: float = 0.0,
+        initial_mask_ratio: float | None = None,
+        initial_edge_fraction: float | None = None,
+        init_logit_margin: float = 0.0,
+        prior_kl_coef: float = 0.0,
+        prior_logit_margin: float | None = None,
     ) -> None:
         super().__init__()
         self.policy_mode = str(policy_mode).lower()
@@ -98,10 +121,28 @@ class DecisionModule(nn.Module):
         self.entropy_coef = entropy_coef
         self.value_coef = value_coef
         self.ratio_coef = ratio_coef
+        self.reward_mode = str(reward_mode).lower()
+        self.edge_reward_coef = float(edge_reward_coef)
+        self.edge_fraction_target = edge_fraction_target
+        self.edge_fraction_coef = float(edge_fraction_coef)
+        self.advantage_normalize = bool(advantage_normalize)
+        self.reward_clip = float(reward_clip)
+        self.prior_kl_coef = float(prior_kl_coef)
         ratio_bins = mask_ratio_bins if mask_ratio_bins is not None else (0.5, 0.625, 0.75, 0.875)
         edge_bins = edge_fraction_bins if edge_fraction_bins is not None else (0.25, 0.5, 0.75)
         self.register_buffer("mask_ratio_bins", torch.tensor([float(v) for v in ratio_bins]), persistent=False)
         self.register_buffer("edge_fraction_bins", torch.tensor([float(v) for v in edge_bins]), persistent=False)
+        prior_margin = init_logit_margin if prior_logit_margin is None else float(prior_logit_margin)
+        self.register_buffer(
+            "mask_ratio_prior_log_probs",
+            self._make_prior_log_probs(self.mask_ratio_bins, initial_mask_ratio, prior_margin),
+            persistent=False,
+        )
+        self.register_buffer(
+            "edge_fraction_prior_log_probs",
+            self._make_prior_log_probs(self.edge_fraction_bins, initial_edge_fraction, prior_margin),
+            persistent=False,
+        )
         self.feature = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.GELU(),
@@ -119,6 +160,37 @@ class DecisionModule(nn.Module):
         self.adaptive_ratio_actor = nn.Linear(adaptive_dim, int(self.mask_ratio_bins.numel()))
         self.adaptive_edge_actor = nn.Linear(adaptive_dim, int(self.edge_fraction_bins.numel()))
         self.adaptive_critic = nn.Linear(adaptive_dim, 1)
+        self._init_adaptive_priors(initial_mask_ratio, initial_edge_fraction, init_logit_margin)
+
+    def _init_adaptive_priors(
+        self,
+        initial_mask_ratio: float | None,
+        initial_edge_fraction: float | None,
+        init_logit_margin: float,
+    ) -> None:
+        if init_logit_margin <= 0:
+            return
+        with torch.no_grad():
+            if initial_mask_ratio is not None and self.adaptive_ratio_actor.bias is not None:
+                idx = int(torch.argmin((self.mask_ratio_bins.float() - float(initial_mask_ratio)).abs()).item())
+                self.adaptive_ratio_actor.bias.zero_()
+                self.adaptive_ratio_actor.bias[idx] = float(init_logit_margin)
+            if initial_edge_fraction is not None and self.adaptive_edge_actor.bias is not None:
+                idx = int(torch.argmin((self.edge_fraction_bins.float() - float(initial_edge_fraction)).abs()).item())
+                self.adaptive_edge_actor.bias.zero_()
+                self.adaptive_edge_actor.bias[idx] = float(init_logit_margin)
+
+    @staticmethod
+    def _make_prior_log_probs(
+        bins: torch.Tensor,
+        initial_value: float | None,
+        logit_margin: float,
+    ) -> torch.Tensor:
+        logits = torch.zeros_like(bins.float())
+        if initial_value is not None and logit_margin > 0:
+            idx = int(torch.argmin((bins.float() - float(initial_value)).abs()).item())
+            logits[idx] = float(logit_margin)
+        return F.log_softmax(logits, dim=0)
 
     def _enforce_ratio(self, actions: torch.Tensor, mask_prob: torch.Tensor) -> torch.Tensor:
         bsz, num_patches = actions.shape
@@ -151,7 +223,7 @@ class DecisionModule(nn.Module):
         h = self.feature(patch_features)
         h = h + self.context(h.mean(dim=1, keepdim=True))
         h = torch.nan_to_num(h, nan=0.0, posinf=20.0, neginf=-20.0)
-        if self.policy_mode in {"adaptive_mixed", "adaptive_mix", "data_adaptive", "domain_adaptive"}:
+        if self.policy_mode in ADAPTIVE_MIXED_POLICY_MODES:
             if edge_scores is None:
                 edge_scores = patch_features.detach().norm(dim=-1)
             edge_scores = torch.nan_to_num(edge_scores.detach().float(), nan=0.0, posinf=20.0, neginf=0.0)
@@ -178,6 +250,17 @@ class DecisionModule(nn.Module):
             mask_ratio = mask.float().mean(dim=1)
             target = target_mask_ratio if target_mask_ratio is not None else float(mask_ratio.mean().item())
             ratio_penalty = (mask_ratio - float(target)).abs()
+            edge_norm = self._normalize_edge_scores(edge_scores).to(dtype=patch_features.dtype)
+            masked = mask.float()
+            edge_coverage = (edge_norm * masked).sum(dim=1) / masked.sum(dim=1).clamp_min(1.0)
+            edge_baseline = edge_norm.mean(dim=1)
+            edge_coverage_gain = edge_coverage - edge_baseline
+            edge_target = (
+                float(self.edge_fraction_target)
+                if self.edge_fraction_target is not None
+                else float(edge_fraction.detach().mean().item())
+            )
+            edge_fraction_penalty = (edge_fraction - edge_target).abs()
             return {
                 "mask": mask,
                 "log_prob": ratio_dist.log_prob(ratio_idx) + edge_dist.log_prob(edge_idx),
@@ -186,7 +269,12 @@ class DecisionModule(nn.Module):
                 "mask_ratio": mask_ratio,
                 "sampled_mask_ratio": ratio.detach(),
                 "edge_fraction": edge_fraction.detach(),
+                "ratio_logits": ratio_logits,
+                "edge_logits": edge_logits,
                 "ratio_penalty": ratio_penalty,
+                "edge_coverage": edge_coverage.detach(),
+                "edge_coverage_gain": edge_coverage_gain.detach(),
+                "edge_fraction_penalty": edge_fraction_penalty.detach(),
             }
         logits = self.actor(h)
         value = self.critic(h).squeeze(-1).mean(dim=1)
@@ -236,17 +324,55 @@ class DecisionModule(nn.Module):
                 mask[bidx, random_ids[:num_random]] = True
         return mask
 
+    @staticmethod
+    def _normalize_edge_scores(edge_scores: torch.Tensor) -> torch.Tensor:
+        edge_min = edge_scores.min(dim=1, keepdim=True).values
+        edge_max = edge_scores.max(dim=1, keepdim=True).values
+        return (edge_scores - edge_min) / (edge_max - edge_min).clamp_min(1e-6)
+
     def policy_loss(
         self,
         decision: dict[str, torch.Tensor],
         reconstruction_loss: torch.Tensor,
     ) -> torch.Tensor:
-        reward = -reconstruction_loss.detach() - self.ratio_coef * decision["ratio_penalty"].detach()
+        recon = reconstruction_loss.detach()
+        if self.reward_mode in {"hard", "hard_edge", "hard_edge_proxy"}:
+            reward = recon
+        else:
+            reward = -recon
+        if self.reward_mode in {
+            "edge",
+            "edge_proxy",
+            "edge_constrained",
+            "segmentation_proxy",
+            "hard_edge",
+            "hard_edge_proxy",
+        }:
+            edge_reward = decision.get("edge_coverage_gain", decision.get("edge_coverage"))
+            if edge_reward is not None:
+                reward = reward + self.edge_reward_coef * edge_reward.detach()
+            if "edge_fraction_penalty" in decision:
+                reward = reward - self.edge_fraction_coef * decision["edge_fraction_penalty"].detach()
+        reward = reward - self.ratio_coef * decision["ratio_penalty"].detach()
+        if self.reward_clip > 0:
+            reward = reward.clamp(-self.reward_clip, self.reward_clip)
         advantage = reward - decision["value"]
+        if self.advantage_normalize and advantage.numel() > 1:
+            advantage = (advantage - advantage.mean()) / advantage.std(unbiased=False).clamp_min(1e-6)
         actor = -(decision["log_prob"] * advantage.detach()).mean()
         critic = F.mse_loss(decision["value"], reward)
         entropy = -decision["entropy"].mean()
-        return actor + self.value_coef * critic + self.entropy_coef * entropy
+        prior_kl = reward.new_tensor(0.0)
+        if self.prior_kl_coef > 0 and "ratio_logits" in decision and "edge_logits" in decision:
+            ratio_log_probs = F.log_softmax(decision["ratio_logits"], dim=-1)
+            edge_log_probs = F.log_softmax(decision["edge_logits"], dim=-1)
+            ratio_prior = self.mask_ratio_prior_log_probs.to(device=ratio_log_probs.device, dtype=ratio_log_probs.dtype)
+            edge_prior = self.edge_fraction_prior_log_probs.to(device=edge_log_probs.device, dtype=edge_log_probs.dtype)
+            prior_kl = (
+                (ratio_log_probs.exp() * (ratio_log_probs - ratio_prior)).sum(dim=-1).mean()
+                + (edge_log_probs.exp() * (edge_log_probs - edge_prior)).sum(dim=-1).mean()
+            )
+        return actor + self.value_coef * critic + self.entropy_coef * entropy + self.prior_kl_coef * prior_kl
 
 
 @dataclass
@@ -448,12 +574,10 @@ class DBMIM3DMAE(nn.Module):
                 mask = self.random_mask(x.shape[0], x.device)
         else:
             edge_scores = None
-            if hasattr(decision_module, "policy_mode") and str(decision_module.policy_mode).lower() in {
-                "adaptive_mixed",
-                "adaptive_mix",
-                "data_adaptive",
-                "domain_adaptive",
-            }:
+            if (
+                hasattr(decision_module, "policy_mode")
+                and str(decision_module.policy_mode).lower() in ADAPTIVE_MIXED_POLICY_MODES
+            ):
                 edge = membrane_edge_map_3d(
                     x,
                     axis_weights=self.membrane_axis_weights,
@@ -1269,10 +1393,22 @@ class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
         if decision_module is None:
             mask = self.random_mask(x.shape[0], x.device)
         else:
+            edge_scores = None
+            if (
+                hasattr(decision_module, "policy_mode")
+                and str(decision_module.policy_mode).lower() in ADAPTIVE_MIXED_POLICY_MODES
+            ):
+                edge = membrane_edge_map_3d(
+                    x,
+                    axis_weights=self.membrane_axis_weights,
+                    clip=self.membrane_clip,
+                )
+                edge_scores = self.patchify(edge).mean(dim=-1).clamp_min(0.0)
             decision = decision_module(
                 raw_tokens.detach(),
                 target_mask_ratio=target_mask_ratio,
                 deterministic=deterministic_policy,
+                edge_scores=edge_scores,
             )
             mask = decision["mask"]
         encoded, hidden_by_index = self._encode_with_mask(x, mask)

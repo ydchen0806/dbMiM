@@ -165,6 +165,17 @@ def main() -> None:
             policy_mode=str(decision_cfg.get("policy_mode", "patch")),
             mask_ratio_bins=decision_cfg.get("mask_ratio_bins"),
             edge_fraction_bins=decision_cfg.get("edge_fraction_bins"),
+            reward_mode=str(decision_cfg.get("reward_mode", "reconstruction")),
+            edge_reward_coef=float(decision_cfg.get("edge_reward_coef", 0.0)),
+            edge_fraction_target=decision_cfg.get("edge_fraction_target"),
+            edge_fraction_coef=float(decision_cfg.get("edge_fraction_coef", 0.0)),
+            advantage_normalize=bool(decision_cfg.get("advantage_normalize", False)),
+            reward_clip=float(decision_cfg.get("reward_clip", 0.0)),
+            initial_mask_ratio=decision_cfg.get("initial_mask_ratio"),
+            initial_edge_fraction=decision_cfg.get("initial_edge_fraction"),
+            init_logit_margin=float(decision_cfg.get("init_logit_margin", 0.0)),
+            prior_kl_coef=float(decision_cfg.get("prior_kl_coef", 0.0)),
+            prior_logit_margin=decision_cfg.get("prior_logit_margin"),
         ).to(device)
 
     if distributed:
@@ -301,6 +312,15 @@ def main() -> None:
                     "edge_fraction": float(out.decision["edge_fraction"].mean().detach().cpu())
                     if out.decision is not None and "edge_fraction" in out.decision
                     else float(getattr(unwrap(model), "edge_mask_fraction", 0.0)),
+                    "edge_coverage": float(out.decision["edge_coverage"].mean().detach().cpu())
+                    if out.decision is not None and "edge_coverage" in out.decision
+                    else 0.0,
+                    "edge_coverage_gain": float(out.decision["edge_coverage_gain"].mean().detach().cpu())
+                    if out.decision is not None and "edge_coverage_gain" in out.decision
+                    else 0.0,
+                    "edge_fraction_penalty": float(out.decision["edge_fraction_penalty"].mean().detach().cpu())
+                    if out.decision is not None and "edge_fraction_penalty" in out.decision
+                    else 0.0,
                     "lr": optimizer.param_groups[0]["lr"],
                     "elapsed_sec": round(time.time() - t0, 2),
                 }
