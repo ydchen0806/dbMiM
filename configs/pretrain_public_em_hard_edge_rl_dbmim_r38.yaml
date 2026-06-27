@@ -1,0 +1,104 @@
+seed: 303
+device: cuda
+output_dir: /volume/med-train/users/dchen02/code/dbMiM/outputs/pretrain_public_em_hard_edge_rl_dbmim_r38
+data:
+  synthetic: false
+  train_paths:
+  - /volume/med-train/users/dchen02/code/dbMiM/data/CREMI
+  - /volume/med-train/users/dchen02/code/dbMiM/data/EM_pretrain_data/public_em
+  image_keys:
+  - volumes/raw
+  - raw
+  - main
+  - data
+  volume_size:
+  - 32
+  - 160
+  - 160
+  length_multiplier: 8192
+  augment: true
+  augment_rotate_xy: true
+  augment_gamma: true
+  augment_gamma_range:
+  - 0.7
+  - 1.5
+  augment_noise_std: 0.025
+model:
+  architecture: dbmim
+  in_channels: 1
+  volume_size:
+  - 32
+  - 160
+  - 160
+  patch_size:
+  - 4
+  - 16
+  - 16
+  embed_dim: 192
+  depth: 6
+  num_heads: 6
+  decoder_dim: 192
+  mask_ratio: 0.75
+  mask_strategy: edge_random_mix
+  edge_mask_fraction: 0.5
+  edge_mask_power: 1.25
+  edge_mask_noise: 0.05
+  structure_weight: 0.2
+  structure_axis_weights:
+  - 0.5
+  - 1.0
+  - 1.0
+  membrane_weight: 1.35
+  membrane_axis_weights:
+  - 0.25
+  - 1.0
+  - 1.0
+  membrane_clip: 5.0
+decision:
+  enabled: true
+  policy_mode: constrained_adaptive_mixed
+  reward_mode: hard_edge
+  hidden_dim: 256
+  warmup_steps: 8000
+  target_mask_ratio: 0.75
+  initial_mask_ratio: 0.75
+  initial_edge_fraction: 0.625
+  init_logit_margin: 1.25
+  mask_ratio_bins:
+  - 0.7
+  - 0.75
+  - 0.8
+  edge_fraction_bins:
+  - 0.5
+  - 0.625
+  - 0.75
+  min_mask_ratio: 0.68
+  max_mask_ratio: 0.82
+  lr: 0.00015
+  weight_decay: 0.0001
+  policy_weight: 0.02
+  entropy_coef: 0.01
+  value_coef: 0.25
+  ratio_coef: 0.75
+  edge_reward_coef: 0.35
+  edge_fraction_target: 0.625
+  edge_fraction_coef: 0.2
+  advantage_normalize: true
+  reward_clip: 2.0
+  prior_kl_coef: 0.03
+  prior_logit_margin: 1.25
+  freeze_after_steps: 50000
+  use_frozen_policy_after_freeze: true
+  deterministic_frozen_policy: true
+train:
+  batch_size: 2
+  epochs: 200
+  max_steps: 160000
+  num_workers: 8
+  lr: 0.00015
+  weight_decay: 0.05
+  amp: true
+  log_every: 20
+  save_every: 5
+  save_steps: 2000
+  clip_grad: 1.0
