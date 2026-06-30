@@ -82,6 +82,22 @@ ADAPTIVE_MIXED_POLICY_MODES = {
 }
 
 
+EDGE_AWARE_REWARD_MODES = {
+    "edge",
+    "edge_proxy",
+    "edge_constrained",
+    "segmentation_proxy",
+    "hard_edge",
+    "hard_edge_proxy",
+}
+
+
+def _decision_needs_edge_scores(decision_module: nn.Module) -> bool:
+    policy_mode = str(getattr(decision_module, "policy_mode", "")).lower()
+    reward_mode = str(getattr(decision_module, "reward_mode", "")).lower()
+    return policy_mode in ADAPTIVE_MIXED_POLICY_MODES or reward_mode in EDGE_AWARE_REWARD_MODES
+
+
 class DecisionModule(nn.Module):
     """Shared actor-critic mask policy used by patch agents.
 
@@ -293,7 +309,7 @@ class DecisionModule(nn.Module):
         mask_ratio = mask.float().mean(dim=1)
         target = target_mask_ratio if target_mask_ratio is not None else float(mask_ratio.mean().item())
         ratio_penalty = (mask_ratio - target).abs()
-        return {
+        result = {
             "mask": mask,
             "log_prob": log_prob,
             "entropy": entropy,
@@ -301,6 +317,15 @@ class DecisionModule(nn.Module):
             "mask_ratio": mask_ratio,
             "ratio_penalty": ratio_penalty,
         }
+        if edge_scores is not None:
+            edge_scores = torch.nan_to_num(edge_scores.detach().float(), nan=0.0, posinf=20.0, neginf=0.0)
+            edge_norm = self._normalize_edge_scores(edge_scores).to(dtype=patch_features.dtype)
+            masked = mask.float()
+            edge_coverage = (edge_norm * masked).sum(dim=1) / masked.sum(dim=1).clamp_min(1.0)
+            edge_baseline = edge_norm.mean(dim=1)
+            result["edge_coverage"] = edge_coverage.detach()
+            result["edge_coverage_gain"] = (edge_coverage - edge_baseline).detach()
+        return result
 
     def _mixed_edge_random_mask(
         self,
@@ -340,14 +365,7 @@ class DecisionModule(nn.Module):
             reward = recon
         else:
             reward = -recon
-        if self.reward_mode in {
-            "edge",
-            "edge_proxy",
-            "edge_constrained",
-            "segmentation_proxy",
-            "hard_edge",
-            "hard_edge_proxy",
-        }:
+        if self.reward_mode in EDGE_AWARE_REWARD_MODES:
             edge_reward = decision.get("edge_coverage_gain", decision.get("edge_coverage"))
             if edge_reward is not None:
                 reward = reward + self.edge_reward_coef * edge_reward.detach()
@@ -574,10 +592,7 @@ class DBMIM3DMAE(nn.Module):
                 mask = self.random_mask(x.shape[0], x.device)
         else:
             edge_scores = None
-            if (
-                hasattr(decision_module, "policy_mode")
-                and str(decision_module.policy_mode).lower() in ADAPTIVE_MIXED_POLICY_MODES
-            ):
+            if _decision_needs_edge_scores(decision_module):
                 edge = membrane_edge_map_3d(
                     x,
                     axis_weights=self.membrane_axis_weights,
@@ -1394,10 +1409,7 @@ class DecoderAwareDBMIM3DMAE(UNETREMAffinityNet):
             mask = self.random_mask(x.shape[0], x.device)
         else:
             edge_scores = None
-            if (
-                hasattr(decision_module, "policy_mode")
-                and str(decision_module.policy_mode).lower() in ADAPTIVE_MIXED_POLICY_MODES
-            ):
+            if _decision_needs_edge_scores(decision_module):
                 edge = membrane_edge_map_3d(
                     x,
                     axis_weights=self.membrane_axis_weights,
