@@ -93,8 +93,9 @@ EDGE_AWARE_REWARD_MODES = {
 
 
 def _decision_needs_edge_scores(decision_module: nn.Module) -> bool:
-    policy_mode = str(getattr(decision_module, "policy_mode", "")).lower()
-    reward_mode = str(getattr(decision_module, "reward_mode", "")).lower()
+    module = decision_module.module if hasattr(decision_module, "module") else decision_module
+    policy_mode = str(getattr(module, "policy_mode", "")).lower()
+    reward_mode = str(getattr(module, "reward_mode", "")).lower()
     return policy_mode in ADAPTIVE_MIXED_POLICY_MODES or reward_mode in EDGE_AWARE_REWARD_MODES
 
 
