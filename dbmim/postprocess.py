@@ -720,17 +720,7 @@ def cupy_affinity_graph_connected_components(
     return labels
 
 
-def waterz_agglomeration(
-    affinities: np.ndarray,
-    threshold: float = 0.5,
-    fragments: np.ndarray | None = None,
-    scoring_function: str = "hist_quantile",
-) -> np.ndarray:
-    import waterz  # type: ignore
-
-    if fragments is None:
-        fragments = watershed_fragments(affinities, backend="mahotas", seed_method="maxima_distance")
-    waterz_fragments = np.asarray(fragments, dtype=np.uint64).copy(order="C")
+def _waterz_scoring_function(scoring_function: str) -> str:
     scoring_aliases = {
         "hist_quantile": "OneMinus<HistogramQuantileAffinity<RegionGraphType, 50, ScoreValue, 256>>",
         "hist_quantile_false": (
@@ -741,16 +731,53 @@ def waterz_agglomeration(
     }
     if scoring_function == "mean":
         raise ValueError("waterz v0.8 does not provide MeanAffinityProvider; use hist_quantile, min, or max")
-    scoring = scoring_aliases.get(scoring_function, scoring_function)
+    return scoring_aliases.get(scoring_function, scoring_function)
+
+
+def waterz_agglomerations(
+    affinities: np.ndarray,
+    thresholds: Sequence[float],
+    fragments: np.ndarray | None = None,
+    scoring_function: str = "hist_quantile",
+) -> list[np.ndarray]:
+    """Run waterz once for a threshold sweep.
+
+    ``waterz.agglomerate`` accepts a list of thresholds and reuses the same
+    hierarchy internally. The old eval path called it once per threshold, which
+    is exact but wastes most of the CPU time during sweeps.
+    """
+
+    import waterz  # type: ignore
+
+    if fragments is None:
+        fragments = watershed_fragments(affinities, backend="mahotas", seed_method="maxima_distance")
+    waterz_fragments = np.asarray(fragments, dtype=np.uint64).copy(order="C")
+    scoring = _waterz_scoring_function(scoring_function)
+    threshold_values = [float(v) for v in thresholds]
+    return [
+        np.asarray(seg)
+        for seg in waterz.agglomerate(
+            affinities,
+            threshold_values,
+            fragments=waterz_fragments,
+            scoring_function=scoring,
+            discretize_queue=256,
+        )
+    ]
+
+
+def waterz_agglomeration(
+    affinities: np.ndarray,
+    threshold: float = 0.5,
+    fragments: np.ndarray | None = None,
+    scoring_function: str = "hist_quantile",
+) -> np.ndarray:
     return np.asarray(
-        list(
-            waterz.agglomerate(
-                affinities,
-                [float(threshold)],
-                fragments=waterz_fragments,
-                scoring_function=scoring,
-                discretize_queue=256,
-            )
+        waterz_agglomerations(
+            affinities,
+            [float(threshold)],
+            fragments=fragments,
+            scoring_function=scoring_function,
         )[0]
     )
 

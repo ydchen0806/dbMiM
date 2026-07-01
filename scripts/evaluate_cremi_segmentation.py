@@ -27,6 +27,7 @@ from dbmim.postprocess import (
     cupy_mean_affinity_components,
     segmentation_metrics,
     waterz_agglomeration,
+    waterz_agglomerations,
     watershed_fragments,
 )
 from train_finetune import _loss_cfg, build_affinity_model
@@ -416,6 +417,40 @@ def run_backend(
     raise ValueError(f"unknown backend: {backend}")
 
 
+def run_waterz_threshold_sweep(
+    affinities: np.ndarray,
+    thresholds: list[float],
+    *,
+    seed_method: str,
+    seed_distance: int,
+    boundary_threshold: float,
+    waterz_scoring: str,
+    cache: dict[str, tuple[np.ndarray, float]] | None = None,
+) -> tuple[list[np.ndarray], float]:
+    key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+    t0 = time.perf_counter()
+    fragments = None
+    if cache is not None and key in cache:
+        fragments = cache[key][0]
+    if fragments is None:
+        fragments = watershed_fragments(
+            affinities,
+            backend="mahotas",
+            seed_method=seed_method,
+            seed_distance=seed_distance,
+            boundary_threshold=boundary_threshold,
+        )
+        if cache is not None:
+            cache[key] = (fragments, 0.0)
+    segmentations = waterz_agglomerations(
+        affinities,
+        thresholds=thresholds,
+        fragments=fragments,
+        scoring_function=waterz_scoring,
+    )
+    return segmentations, time.perf_counter() - t0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate CREMI neuron segmentation from dbMiM affinities")
     parser.add_argument("--config", required=True)
@@ -490,6 +525,11 @@ def main() -> None:
         nargs="+",
         default="hist_quantile",
         help="waterz scoring alias: hist_quantile, hist_quantile_false, mean, or a full waterz scoring string",
+    )
+    parser.add_argument(
+        "--batched-waterz",
+        action="store_true",
+        help="Run all waterz thresholds for each affinity variant in one waterz.agglomerate call.",
     )
     parser.add_argument("--fail-on-backend-error", action="store_true")
     args = parser.parse_args()
@@ -605,6 +645,101 @@ def main() -> None:
             affinity_records.append(aff_record)
             backend_cache: dict[str, tuple[np.ndarray, float]] = {}
             for backend in args.backends:
+                if (
+                    backend == "waterz"
+                    and args.batched_waterz
+                    and len(args.thresholds) > 1
+                    and len(args.seed_distance) == 1
+                    and len(args.boundary_threshold) == 1
+                ):
+                    for waterz_scoring in waterz_scorings:
+                        try:
+                            segs, postprocess_sec_total = run_waterz_threshold_sweep(
+                                variant_aff,
+                                [float(v) for v in args.thresholds],
+                                seed_method=args.seed_method,
+                                seed_distance=int(args.seed_distance[0]),
+                                boundary_threshold=float(args.boundary_threshold[0]),
+                                waterz_scoring=str(waterz_scoring),
+                                cache=backend_cache,
+                            )
+                        except Exception as exc:
+                            for threshold in args.thresholds:
+                                failure = {
+                                    "sample": path.name,
+                                    "affinity_variant": variant_name,
+                                    "calibration_bias_z": float(calibration_bias[0]),
+                                    "calibration_bias_y": float(calibration_bias[1]),
+                                    "calibration_bias_x": float(calibration_bias[2]),
+                                    "calibration_temperature": float(calibration_temperature),
+                                    "backend": backend,
+                                    "threshold": float(threshold),
+                                    "seed_distance": int(args.seed_distance[0]),
+                                    "boundary_threshold": float(args.boundary_threshold[0]),
+                                    "min_boundary": int(args.min_boundary[0]),
+                                    "score_mode": str(args.score_mode[0]),
+                                    "rag_quantile": float(args.rag_quantile[0]),
+                                    "waterz_scoring": str(waterz_scoring),
+                                    "z_threshold": "",
+                                    "xy_threshold": "",
+                                    "error": repr(exc),
+                                }
+                                print(failure, flush=True)
+                                failures.append(failure)
+                            if args.fail_on_backend_error:
+                                raise
+                            continue
+                        per_threshold_sec = float(postprocess_sec_total / max(1, len(segs)))
+                        for threshold, seg in zip(args.thresholds, segs):
+                            t2 = time.perf_counter()
+                            metrics = segmentation_metrics(
+                                seg,
+                                metric_label,
+                                ignore_label=args.ignore_label,
+                                backend=args.metric_backend,
+                            )
+                            metrics_sec = time.perf_counter() - t2
+                            record: dict[str, float | int | str] = {
+                                "sample": path.name,
+                                "affinity_variant": variant_name,
+                                "calibration_bias_z": float(calibration_bias[0]),
+                                "calibration_bias_y": float(calibration_bias[1]),
+                                "calibration_bias_x": float(calibration_bias[2]),
+                                "calibration_temperature": float(calibration_temperature),
+                                "backend": backend,
+                                "threshold": float(threshold),
+                                "seed_distance": int(args.seed_distance[0]),
+                                "boundary_threshold": float(args.boundary_threshold[0]),
+                                "min_boundary": int(args.min_boundary[0]),
+                                "score_mode": str(args.score_mode[0]),
+                                "rag_quantile": float(args.rag_quantile[0]),
+                                "waterz_scoring": str(waterz_scoring),
+                                "z_threshold": "",
+                                "xy_threshold": "",
+                                "affinity_dice": float(aff_dice),
+                                "affinity_iou": float(aff_iou),
+                                "inference_sec": float(infer_sec),
+                                "postprocess_sec": per_threshold_sec,
+                                "metrics_sec": float(metrics_sec),
+                                **metric_dict(metrics),
+                            }
+                            print(record, flush=True)
+                            records.append(record)
+                            if args.save_seg:
+                                safe_variant = "".join(
+                                    ch if ch.isalnum() or ch in "._-" else "_" for ch in variant_name
+                                )
+                                out_npz = output_dir / (
+                                    f"{path.stem}_{safe_variant}_{backend}_thr{float(threshold):.2f}_"
+                                    f"sd{int(args.seed_distance[0])}_bt{float(args.boundary_threshold[0]):.2f}_"
+                                    f"mb{int(args.min_boundary[0])}_{args.score_mode[0]}_znone_xynone_seg.npz"
+                                )
+                                np.savez_compressed(
+                                    out_npz,
+                                    segmentation=seg.astype(np.uint64),
+                                    crop=np.array([[sl.start, sl.stop] for sl in crop]),
+                                )
+                    continue
                 threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
                 if backend in anisotropic_graph_backends and args.z_thresholds and args.xy_thresholds:
                     threshold_values = [args.thresholds[0]]
