@@ -50,7 +50,9 @@ The recommended fullEM R33 line does **not** use a reinforcement-learning
 masking policy. It uses fixed mixed edge/random masking. RL-style decision
 modules are retained as ablations and are being stabilized in the R51/R52 line:
 R51 was an unhealthy policy-collapse run, while R52 uses constrained adaptive
-prior sampling and is under downstream finetune evaluation.
+prior sampling. Its downstream R52/R53 finetunes finished successfully but were
+negative, so the current main line stays with R48-style publicEM dbMiM
+pretraining plus longer MSE+MAWS finetuning.
 
 ## Model Zoo
 
@@ -180,9 +182,10 @@ The newer R51/R52 line changes the policy stabilization instead of simply
 increasing reward strength. R51 still collapsed to an uninformative policy.
 R52 constrains mask-ratio and edge-fraction bins, uses a small edge-proxy reward
 with KL-to-prior regularization, clips and normalizes advantages, and freezes
-the policy after warmup. Its pretraining diagnostics are healthier, but its
-downstream R52/R53 finetunes must finish before it can be claimed as an
-improvement.
+the policy after warmup. Its pretraining diagnostics were healthier than R51,
+but downstream finetuning was negative: R52 reached `VOI=1.056275`,
+`ARAND=0.194687`; R53 with `membrane_weight=1.0` reached `VOI=1.080240`,
+`ARAND=0.209107`. These are worse than R48 and are kept as negative ablations.
 
 ## Training Strategy
 

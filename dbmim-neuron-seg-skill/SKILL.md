@@ -19,6 +19,7 @@ description: Use when reproducing, monitoring, improving, or reporting dbMiM neu
 - Same-seed plain MAE control: R47, `VOI=1.043065`, `ARAND=0.190743`.
 - Older publicEM MAE/dbMiM comparison: R17 dbMiM `VOI=1.002919`, R23 plain MAE `VOI=1.027073`.
 - FullEM best: R33 fixed mixed edge/random dbMiM, `VOI=1.039372`, better than fullEM plain MAE and scratch but not better than R48.
+- R52/R53 constrained adaptive prior policy finetunes are negative: R52 `VOI=1.056275`, `ARAND=0.194687`; R53 `VOI=1.080240`, `ARAND=0.209107`.
 
 ## Model And Loss Recipe
 
@@ -31,7 +32,7 @@ description: Use when reproducing, monitoring, improving, or reporting dbMiM neu
 
 - Do not equate "more edge reward" with better dbMiM. R38/R39 and strong hard-edge rewards were negative downstream.
 - R51 was unhealthy: mask ratio stuck around 0.55, edge fraction 1.0, edge coverage 0.0, policy loss frozen to zero. Treat it as a negative control.
-- R52 is the healthier RL-style policy design: constrained mask-ratio bins, constrained edge-fraction bins, small edge-proxy reward, KL-to-prior regularization, clipped/normalized advantages, and policy freeze after warmup. Do not claim it as an improvement until R52/R53 finetunes finish.
+- R52 is healthier than R51 as an RL-style policy diagnostic, but downstream R52/R53 finetunes are negative. Do not continue that branch without a materially new reward or policy objective.
 - Stable dbMiM gains currently come from the combination of EM-aware masking, membrane weighting, anisotropic UNETR, and enough finetune steps; the policy module must be validated through downstream VOI/ARAND, not pretraining loss alone.
 
 ## Post-processing Rules
