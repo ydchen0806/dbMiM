@@ -755,7 +755,7 @@ def waterz_agglomerations(
     scoring = _waterz_scoring_function(scoring_function)
     threshold_values = [float(v) for v in thresholds]
     return [
-        np.asarray(seg)
+        np.asarray(seg).copy()
         for seg in waterz.agglomerate(
             affinities,
             threshold_values,
