@@ -35,16 +35,22 @@ the following changes that were stable in ablations:
    evaluated with `ignore_label=0`, CREMI-style XY boundary ignore distance `1`,
    z boundary ignore `0`, logit calibration biases, and a waterz threshold sweep.
 
-The most useful new finding is that **fixed mixed edge/random masking on full
-EM data (R33)** improves over scratch, old fullEM dbMiM, pure edge masking, and
-fullEM plain MAE. The best absolute VOI is still the smaller publicEM dbMiM
-model (R17), so the README reports both.
+The current best controlled result is **R48**, which uses the publicEM dbMiM
+pretrained encoder from the R16 line, seed-isolated finetuning (`seed=309`),
+and a longer 20k-step MSE+MAWS finetune. On the full CREMI A/B/C validation
+protocol it reaches `VOI=0.962154` and `ARAND=0.178252`, improving over both
+the same-seed plain MAE control and the earlier 12k finetune.
 
-The recommended R33 line does **not** use a reinforcement-learning masking
-policy. It uses fixed mixed edge/random masking. RL-style decision modules are
-retained only as ablations: R16 used the older decision module in the publicEM
-pretraining line, while R34/R35 tested adaptive mixed masking and were negative
-under the current CREMI A/B/C protocol.
+The most useful full-data finding is that **fixed mixed edge/random masking on
+full EM data (R33)** improves over scratch, old fullEM dbMiM, pure edge masking,
+and fullEM plain MAE. It remains the best fullEM recipe, while R48 is the best
+absolute checkpoint so far.
+
+The recommended fullEM R33 line does **not** use a reinforcement-learning
+masking policy. It uses fixed mixed edge/random masking. RL-style decision
+modules are retained as ablations and are being stabilized in the R51/R52 line:
+R51 was an unhealthy policy-collapse run, while R52 uses constrained adaptive
+prior sampling and is under downstream finetune evaluation.
 
 ## Model Zoo
 
@@ -54,8 +60,9 @@ Weights are hosted at:
 
 | Model | HF path | Intended use |
 |---|---|---|
+| PublicEM dbMiM R48 finetune | `weights/publicem_dbmim_r48_seed309_long20k/finetuned_latest.pt` | Best current segmentation checkpoint; pending HF sync after TOS artifact retrieval |
 | PublicEM dbMiM R17 pretrain | `weights/publicem_dbmim_r17/pretrained_latest.pt` | ViT/dbMiM encoder checkpoint for UNETR initialization |
-| PublicEM dbMiM R17 finetune | `weights/publicem_dbmim_r17/finetuned_latest.pt` | Best current publicEM segmentation checkpoint |
+| PublicEM dbMiM R17 finetune | `weights/publicem_dbmim_r17/finetuned_latest.pt` | Earlier publicEM segmentation checkpoint |
 | FullEM mixed-mask dbMiM R33 pretrain | `weights/fullem_mixedmask_dbmim_r33/pretrained_latest.pt` | Recommended full-data dbMiM pretraining checkpoint |
 | FullEM mixed-mask dbMiM R33 finetune | `weights/fullem_mixedmask_dbmim_r33/finetuned_latest.pt` | Recommended full-data segmentation checkpoint |
 
@@ -118,8 +125,11 @@ post-processing thresholds.
 
 | Arm | VOI | ARAND at best VOI | Best ARAND | Conclusion |
 |---|---:|---:|---:|---|
-| R17 publicEM random-mask dbMiM | **1.002919** | **0.188832** | 0.188832 | Best publicEM VOI |
+| R48 publicEM dbMiM, seed309, 20k finetune | **0.962154** | **0.178252** | **0.178252** | Best current global result |
+| R45 publicEM dbMiM, seed309, 12k finetune | 0.986481 | 0.186187 | 0.186187 | Strong same-seed dbMiM result |
+| R17 publicEM random-mask dbMiM | 1.002919 | 0.188832 | 0.188832 | Earlier publicEM dbMiM result |
 | R23 publicEM random-mask plain MAE | 1.027073 | 0.192763 | 0.189247 | Matched MAE baseline |
+| R47 publicEM plain MAE, seed309 | 1.043065 | 0.190743 | 0.190743 | Same-seed MAE control for R45/R48 |
 | R29 publicEM pure edge-mask dbMiM | 1.033564 | 0.186827 | **0.186827** | Best publicEM ARAND, worse VOI |
 | R32 publicEM fixed mixed-mask dbMiM | 1.046538 | 0.206256 | 0.193183 | Negative vs R17/R23 |
 | R34 publicEM adaptive mixed dbMiM | 1.067471 | 0.205437 | 0.200604 | Negative adaptive result |
@@ -128,8 +138,12 @@ post-processing thresholds.
 
 Key deltas:
 
+- R48 dbMiM beats same-seed publicEM plain MAE R47 by `-0.0809` VOI and
+  `-0.0125` ARAND.
+- Extending the seed309 R16 finetune from the R45 12k schedule to the R48 20k
+  schedule improves VOI by `-0.0243` and ARAND by `-0.0079`.
 - R17 dbMiM beats matched publicEM plain MAE R23 by `-0.0242` VOI and about
-  `-0.0004` best ARAND.
+  `-0.0004` best ARAND under the older comparison.
 - R29 edge-mask dbMiM beats same-mask plain MAE R30 by `-0.0440` VOI and
   `-0.0117` best ARAND, but its VOI is worse than R17/R23.
 
@@ -161,6 +175,14 @@ edge fraction per crop. It did not improve downstream segmentation. After step
 40k, the policy collapsed to sampled mask ratio `0.75`; the mean learned edge
 fraction was `0.4456` for R34 and `0.3322` for R35. The current adaptive policy
 is therefore kept as a negative ablation rather than the recommended method.
+
+The newer R51/R52 line changes the policy stabilization instead of simply
+increasing reward strength. R51 still collapsed to an uninformative policy.
+R52 constrains mask-ratio and edge-fraction bins, uses a small edge-proxy reward
+with KL-to-prior regularization, clips and normalizes advantages, and freezes
+the policy after warmup. Its pretraining diagnostics are healthier, but its
+downstream R52/R53 finetunes must finish before it can be claimed as an
+improvement.
 
 ## Training Strategy
 
@@ -209,7 +231,7 @@ Main settings:
 | Loss | MSE + MAWS, no BCE/Dice in the current winning recipe |
 | Label handling | synchronized image/label augmentation, 2D border widening radius 1 |
 | Batch size | 2 per GPU |
-| Schedule | 12k optimizer steps, lr `8e-5`, encoder lr `1e-5`, weight decay `0.01`, AMP |
+| Schedule | 12k optimizer steps for standard ablations; R48 uses 20k steps. lr `8e-5`, encoder lr `1e-5`, weight decay `0.01`, AMP |
 | Pretrained prefixes | `pos_embed`, `patch_embed`, `encoder_blocks`, `norm` |
 
 ### Evaluation

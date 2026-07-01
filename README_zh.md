@@ -31,15 +31,20 @@
    `ignore_label=0`，CREMI 风格 XY boundary ignore distance `1`，z 方向为 `0`，
    并做 logit calibration bias 与 waterz threshold sweep。
 
-最新有价值的正结果是：**fullEM 数据上的固定 mixed edge/random masking (R33)**
-相比 scratch、旧 fullEM dbMiM、纯 edge mask 和 fullEM plain MAE 都有提升。
-但当前全局最低 VOI 仍然来自更小 publicEM 数据上的 R17，所以文档同时报告
-R17 和 R33。
+当前最好的受控结果是 **R48**：它使用 R16 线的 publicEM dbMiM 预训练
+encoder，固定微调 seed 为 `309`，并把 MSE+MAWS 微调延长到 20k step。在
+CREMI A/B/C 全体积评测口径下，R48 达到 `VOI=0.962154`、
+`ARAND=0.178252`，优于同 seed 的 plain MAE 控制组，也优于早期 12k 微调。
 
-当前推荐的 R33 主线**没有使用强化学习 mask policy**，而是固定的 mixed
-edge/random masking。RL-style decision module 只作为消融保留：R16 publicEM
-预训练线用了旧 decision module，R34/R35 测试 adaptive mixed masking，但在当前
-CREMI A/B/C 口径下是负结果。
+full-data 方向最新有价值的正结果是：**fullEM 数据上的固定 mixed
+edge/random masking (R33)** 相比 scratch、旧 fullEM dbMiM、纯 edge mask 和
+fullEM plain MAE 都有提升。R33 仍是当前最好的 fullEM recipe，而 R48 是当前
+全局最好 checkpoint。
+
+当前推荐的 fullEM R33 主线**没有使用强化学习 mask policy**，而是固定的
+mixed edge/random masking。RL-style decision module 作为消融继续保留，并在
+R51/R52 线做稳定化：R51 是不健康的 policy collapse，R52 改成 constrained
+adaptive prior sampling，目前正在做下游微调验证。
 
 ## 权重
 
@@ -49,8 +54,9 @@ CREMI A/B/C 口径下是负结果。
 
 | 模型 | HF 路径 | 用途 |
 |---|---|---|
+| PublicEM dbMiM R48 微调 | `weights/publicem_dbmim_r48_seed309_long20k/finetuned_latest.pt` | 当前最好分割权重；等 TOS artifact 可拉回后同步到 HF |
 | PublicEM dbMiM R17 预训练 | `weights/publicem_dbmim_r17/pretrained_latest.pt` | ViT/dbMiM encoder 初始化权重 |
-| PublicEM dbMiM R17 微调 | `weights/publicem_dbmim_r17/finetuned_latest.pt` | 当前 publicEM 最好分割权重 |
+| PublicEM dbMiM R17 微调 | `weights/publicem_dbmim_r17/finetuned_latest.pt` | 较早 publicEM 分割权重 |
 | FullEM mixed-mask dbMiM R33 预训练 | `weights/fullem_mixedmask_dbmim_r33/pretrained_latest.pt` | 推荐的 full-data dbMiM 预训练权重 |
 | FullEM mixed-mask dbMiM R33 微调 | `weights/fullem_mixedmask_dbmim_r33/finetuned_latest.pt` | 推荐的 full-data 分割权重 |
 
@@ -105,8 +111,11 @@ ARAND；`Best ARAND` 是单独按 ARAND 选出的最优阈值，因为 VOI 和 A
 
 | 实验 | VOI | ARAND at best VOI | Best ARAND | 结论 |
 |---|---:|---:|---:|---|
-| R17 publicEM random-mask dbMiM | **1.002919** | **0.188832** | 0.188832 | publicEM 最好 VOI |
+| R48 publicEM dbMiM, seed309, 20k finetune | **0.962154** | **0.178252** | **0.178252** | 当前全局最好结果 |
+| R45 publicEM dbMiM, seed309, 12k finetune | 0.986481 | 0.186187 | 0.186187 | 强 same-seed dbMiM 结果 |
+| R17 publicEM random-mask dbMiM | 1.002919 | 0.188832 | 0.188832 | 较早 publicEM dbMiM 结果 |
 | R23 publicEM random-mask plain MAE | 1.027073 | 0.192763 | 0.189247 | matched MAE baseline |
+| R47 publicEM plain MAE, seed309 | 1.043065 | 0.190743 | 0.190743 | R45/R48 的 same-seed MAE 控制组 |
 | R29 publicEM pure edge-mask dbMiM | 1.033564 | 0.186827 | **0.186827** | publicEM 最好 ARAND，但 VOI 较差 |
 | R32 publicEM fixed mixed-mask dbMiM | 1.046538 | 0.206256 | 0.193183 | 相比 R17/R23 为负 |
 | R34 publicEM adaptive mixed dbMiM | 1.067471 | 0.205437 | 0.200604 | adaptive 为负 |
@@ -115,6 +124,9 @@ ARAND；`Best ARAND` 是单独按 ARAND 选出的最优阈值，因为 VOI 和 A
 
 关键差值：
 
+- R48 dbMiM 相比 same-seed publicEM plain MAE R47：VOI 降低 `0.0809`，ARAND 降低 `0.0125`。
+- R16 seed309 线从 R45 的 12k 微调延长到 R48 的 20k 微调后，VOI 降低
+  `0.0243`，ARAND 降低 `0.0079`。
 - R17 dbMiM 相比 matched publicEM plain MAE R23：VOI 降低 `0.0242`，best ARAND 约降低 `0.0004`。
 - R29 edge-mask dbMiM 相比同 mask 的 plain MAE R30：VOI 降低 `0.0440`，best ARAND 降低 `0.0117`，但 VOI 不如 R17/R23。
 
@@ -142,6 +154,11 @@ R34/R35 测试了每个 crop 自适应选择 mask ratio 和 edge fraction 的 mi
 policy。这个方向目前没有带来提升。40k step 之后，policy 基本收敛到
 `sampled_mask_ratio=0.75`；R34 平均 `edge_fraction=0.4456`，R35 平均
 `edge_fraction=0.3322`。因此当前 adaptive policy 作为负消融保留，不作为推荐方法。
+
+新的 R51/R52 线没有简单加大 reward，而是改 policy 稳定性。R51 仍然 collapse
+到无信息策略；R52 限制 mask-ratio / edge-fraction bins，使用较小 edge-proxy
+reward、KL-to-prior 正则、advantage clip/normalize，并在 warmup 后冻结 policy。
+R52 的预训练诊断更健康，但必须等待 R52/R53 下游微调结束后才能声称涨点。
 
 ## 训练策略
 
@@ -189,7 +206,7 @@ python train_finetune.py \
 | Loss | MSE + MAWS，当前获胜 recipe 不用 BCE/Dice |
 | Label 处理 | 图像/label 几何增强同步，2D border widening radius 1 |
 | Batch size | 每张 GPU 2 |
-| Schedule | 12k optimizer steps, lr `8e-5`, encoder lr `1e-5`, weight decay `0.01`, AMP |
+| Schedule | 标准消融为 12k optimizer steps；R48 使用 20k steps。lr `8e-5`, encoder lr `1e-5`, weight decay `0.01`, AMP |
 | 预训练加载前缀 | `pos_embed`, `patch_embed`, `encoder_blocks`, `norm` |
 
 ### 评测
