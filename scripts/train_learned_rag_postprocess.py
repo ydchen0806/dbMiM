@@ -486,6 +486,37 @@ def signed_veto_score_variant(
     return adjusted.astype(np.float32, copy=False), float(np.mean(weak_boundary)) if weak_boundary.size else 0.0
 
 
+def signed_reweight_score_variant(
+    edge_scores: np.ndarray,
+    features: np.ndarray,
+    *,
+    mode: str,
+    alpha: float,
+    gamma: float,
+) -> tuple[np.ndarray, float]:
+    """Continuously reweight merge scores with the signed boundary cue.
+
+    The earlier veto variant only touched edges below a fixed boundary-mean
+    threshold. This variant changes every candidate edge score, so it can alter
+    the agglomeration order even when the weak-boundary veto set is sparse.
+    """
+
+    edge_scores = np.asarray(edge_scores, dtype=np.float32)
+    boundary_mean = np.clip(boundary_mean_from_features(features), 0.0, 1.0).astype(np.float32, copy=False)
+    if mode == "subtract":
+        adjusted = edge_scores - float(alpha) * (1.0 - boundary_mean)
+    elif mode == "multiply":
+        adjusted = edge_scores * np.power(np.maximum(boundary_mean, 1e-6), float(gamma)).astype(
+            np.float32, copy=False
+        )
+    elif mode == "blend":
+        adjusted = (1.0 - float(alpha)) * edge_scores + float(alpha) * boundary_mean
+    else:
+        raise ValueError(f"unknown signed reweight mode: {mode}")
+    changed_fraction = float(np.mean(np.abs(adjusted - edge_scores) > 1e-6)) if edge_scores.size else 0.0
+    return adjusted.astype(np.float32, copy=False), changed_fraction
+
+
 def _mean(rows: list[dict[str, float | int | str]], key: str) -> float:
     return float(np.mean([float(row[key]) for row in rows])) if rows else float("nan")
 
@@ -526,6 +557,9 @@ def main() -> None:
     parser.add_argument("--signed-veto-mean-thresholds", nargs="+", type=float, default=[])
     parser.add_argument("--signed-veto-count-log-mins", nargs="+", type=float, default=[0.0])
     parser.add_argument("--signed-veto-penalties", nargs="+", type=float, default=[1.0])
+    parser.add_argument("--signed-reweight-modes", nargs="+", choices=["subtract", "multiply", "blend"], default=[])
+    parser.add_argument("--signed-reweight-alphas", nargs="+", type=float, default=[])
+    parser.add_argument("--signed-reweight-gammas", nargs="+", type=float, default=[1.0])
     parser.add_argument("--baseline-z-thresholds", nargs="+", type=float, default=[0.20, 0.30])
     parser.add_argument("--baseline-xy-thresholds", nargs="+", type=float, default=[0.20, 0.30])
     parser.add_argument("--skip-baseline", action="store_true")
@@ -685,6 +719,10 @@ def main() -> None:
                 "veto_count_log_min": "",
                 "veto_penalty": "",
                 "veto_fraction": "",
+                "reweight_mode": "",
+                "reweight_alpha": "",
+                "reweight_gamma": "",
+                "reweight_changed_fraction": "",
                 "backend_suffix": "",
             }
         ]
@@ -710,9 +748,41 @@ def main() -> None:
                                     "veto_count_log_min": float(veto_count_log_min),
                                     "veto_penalty": float(veto_penalty) if veto_mode == "penalty" else "",
                                     "veto_fraction": float(veto_fraction),
+                                    "reweight_mode": "",
+                                    "reweight_alpha": "",
+                                    "reweight_gamma": "",
+                                    "reweight_changed_fraction": "",
                                     "backend_suffix": "_signed_veto",
                                 }
                             )
+        if args.signed_reweight_modes:
+            for reweight_mode in args.signed_reweight_modes:
+                alphas = args.signed_reweight_alphas if reweight_mode in {"subtract", "blend"} else [0.0]
+                gammas = args.signed_reweight_gammas if reweight_mode == "multiply" else [1.0]
+                for reweight_alpha in alphas:
+                    for reweight_gamma in gammas:
+                        adjusted_scores, changed_fraction = signed_reweight_score_variant(
+                            edge_scores,
+                            sample.features,
+                            mode=str(reweight_mode),
+                            alpha=float(reweight_alpha),
+                            gamma=float(reweight_gamma),
+                        )
+                        score_variants.append(
+                            {
+                                "scores": adjusted_scores,
+                                "veto_mode": "",
+                                "veto_mean_threshold": "",
+                                "veto_count_log_min": "",
+                                "veto_penalty": "",
+                                "veto_fraction": "",
+                                "reweight_mode": str(reweight_mode),
+                                "reweight_alpha": float(reweight_alpha) if reweight_mode in {"subtract", "blend"} else "",
+                                "reweight_gamma": float(reweight_gamma) if reweight_mode == "multiply" else "",
+                                "reweight_changed_fraction": float(changed_fraction),
+                                "backend_suffix": "_signed_reweight",
+                            }
+                        )
         for merge_backend in args.merge_backends:
             for variant in score_variants:
                 variant_scores = np.asarray(variant["scores"], dtype=np.float32)
@@ -747,6 +817,10 @@ def main() -> None:
                             "veto_count_log_min": variant["veto_count_log_min"],
                             "veto_penalty": variant["veto_penalty"],
                             "veto_fraction": variant["veto_fraction"],
+                            "reweight_mode": variant["reweight_mode"],
+                            "reweight_alpha": variant["reweight_alpha"],
+                            "reweight_gamma": variant["reweight_gamma"],
+                            "reweight_changed_fraction": variant["reweight_changed_fraction"],
                             "postprocess_sec": float(time.perf_counter() - t0),
                             "metrics_sec": 0.0,
                             "error": repr(exc),
@@ -779,6 +853,10 @@ def main() -> None:
                         "veto_count_log_min": variant["veto_count_log_min"],
                         "veto_penalty": variant["veto_penalty"],
                         "veto_fraction": variant["veto_fraction"],
+                        "reweight_mode": variant["reweight_mode"],
+                        "reweight_alpha": variant["reweight_alpha"],
+                        "reweight_gamma": variant["reweight_gamma"],
+                        "reweight_changed_fraction": variant["reweight_changed_fraction"],
                         "postprocess_sec": float(postprocess_sec),
                         "metrics_sec": float(metrics_sec),
                         **metric_dict(metrics),
@@ -823,6 +901,10 @@ def main() -> None:
                             "veto_count_log_min": "",
                             "veto_penalty": "",
                             "veto_fraction": "",
+                            "reweight_mode": "",
+                            "reweight_alpha": "",
+                            "reweight_gamma": "",
+                            "reweight_changed_fraction": "",
                             "postprocess_sec": float(postprocess_sec),
                             "metrics_sec": float(metrics_sec),
                             **metric_dict(metrics),
@@ -847,6 +929,9 @@ def main() -> None:
         "veto_mean_threshold",
         "veto_count_log_min",
         "veto_penalty",
+        "reweight_mode",
+        "reweight_alpha",
+        "reweight_gamma",
     ]
     records_for_summary = [row for row in records if "error" not in row]
     metric_keys = ["adapted_rand_error", "rand_fscore", "voi_split", "voi_merge", "voi_sum", "postprocess_sec"]
@@ -885,6 +970,9 @@ def main() -> None:
         "signed_veto_mean_thresholds": [float(v) for v in args.signed_veto_mean_thresholds],
         "signed_veto_count_log_mins": [float(v) for v in args.signed_veto_count_log_mins],
         "signed_veto_penalties": [float(v) for v in args.signed_veto_penalties],
+        "signed_reweight_modes": list(args.signed_reweight_modes),
+        "signed_reweight_alphas": [float(v) for v in args.signed_reweight_alphas],
+        "signed_reweight_gammas": [float(v) for v in args.signed_reweight_gammas],
         "failures": [row for row in records if "error" in row],
         "per_group": per_group,
     }
