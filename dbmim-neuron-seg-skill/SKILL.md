@@ -41,6 +41,14 @@ description: Use when reproducing, monitoring, improving, or reporting dbMiM neu
 - Keep threshold/calibration sweeps small on GPU pods to avoid wasting expensive H200 time on CPU-only agglomeration. For broad sweeps, use separate CPU jobs or sparse candidate points from previous best rows.
 - A fast learned or differentiable post-process is useful only if it is robust and comparable to waterz under the same ABC grouping. Graph connected components and simple thresholding are speed baselines, not waterz replacements.
 - Calibration biases around `(z=-0.25,y=-0.5,x=-0.5)` and `(z=-0.5,y=-1.0,x=-1.0)` are recurring useful regions. Always verify per run.
+- 2026-07-02 R48 full-volume post-process comparison:
+  - Deployable single-setting waterz: fine sweep `VOI=0.9772`, `ARAND=0.1857`, merge `17.36s/volume`; broad sweep `VOI=0.9858`, `ARAND=0.1835`, merge `15.89s/volume`.
+  - Oracle-by-sample waterz upper bound: broad sweep `VOI=0.9384`, `ARAND=0.1755`, merge `15.69s/volume`.
+  - Learned GPU RAG with GT edge labels: single threshold `0.98` gives `VOI=1.3001`, `ARAND=0.3104`, merge `9.36s/volume`; oracle-by-sample gives `VOI=1.2512`, `ARAND=0.3101`, merge `9.37s/volume`. Per-sample best is A `0.3253`, B `1.5772`, C `1.8511`.
+  - Waterz-decision binary distillation from teacher threshold `0.20` is a negative or at best marginal result: single threshold `0.98` gives `VOI=1.2885`, `ARAND=0.3084`, merge `9.20s/volume`, but oracle-by-sample is still `1.2885` and worse than GT-edge learned RAG. Teacher positive fractions were high (A about `0.60`, B about `0.64` on full-volume eval target generation), causing over-merge at lower thresholds and no reliable B/C gain.
+  - Pure CuPy graph connected components is not usable despite speed: full A around `VOI=7.91`, `ARAND=0.99`.
+- For learned post-processing, report merge time separately from fragment/RAG feature time. On full CREMI volumes the final GPU merge is about `9-10s`, but watershed fragments plus RAG feature construction is about `90s/volume`, so the next speed bottleneck is blockwise/GPU RAG feature generation, not connected components itself.
+- Do not spend more jobs on low-threshold waterz binary teacher labels without changing the target. Better next directions: conservative teacher threshold/ranking distillation, merge-order/hierarchy loss, edge calibration with global fragment-size/context features, and blockwise GPU feature construction.
 
 ## SiFlow/TOS Habits
 
