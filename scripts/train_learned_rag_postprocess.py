@@ -445,6 +445,47 @@ def score_edges(
     return np.concatenate(scores) if scores else np.empty((0,), dtype=np.float32)
 
 
+def boundary_mean_from_features(features: np.ndarray) -> np.ndarray:
+    features = np.asarray(features, dtype=np.float32)
+    if features.ndim != 2 or features.shape[1] < 13:
+        raise ValueError(f"expected RAG features with at least 13 columns, got {features.shape}")
+    axis_ratio = np.clip(features[:, 9:12], 0.0, 1.0)
+    denom = np.maximum(axis_ratio.sum(axis=1), 1e-6)
+    return (features[:, 0:3] * axis_ratio).sum(axis=1) / denom
+
+
+def signed_veto_score_variant(
+    edge_scores: np.ndarray,
+    features: np.ndarray,
+    *,
+    mode: str,
+    mean_threshold: float,
+    count_log_min: float,
+    penalty: float,
+) -> tuple[np.ndarray, float]:
+    """Apply a simple signed-graph repulsive cue to learned merge scores.
+
+    Low affinity across a sufficiently large fragment boundary is treated as a
+    cannot-link cue. ``hard`` mode removes those edges; ``penalty`` mode lowers
+    their scores so lower merge thresholds can still be explored.
+    """
+
+    edge_scores = np.asarray(edge_scores, dtype=np.float32)
+    boundary_mean = boundary_mean_from_features(features)
+    boundary_count_log = np.asarray(features[:, 12], dtype=np.float32)
+    weak_boundary = (boundary_mean < float(mean_threshold)) & (boundary_count_log >= float(count_log_min))
+    if mode == "hard":
+        adjusted = edge_scores.copy()
+        adjusted[weak_boundary] = -np.inf
+    elif mode == "penalty":
+        count_conf = np.clip(boundary_count_log / max(float(count_log_min), 1e-6), 0.0, 2.0)
+        strength = np.clip(float(mean_threshold) - boundary_mean, 0.0, 1.0) * count_conf
+        adjusted = edge_scores - float(penalty) * strength.astype(np.float32, copy=False)
+    else:
+        raise ValueError(f"unknown signed veto mode: {mode}")
+    return adjusted.astype(np.float32, copy=False), float(np.mean(weak_boundary)) if weak_boundary.size else 0.0
+
+
 def _mean(rows: list[dict[str, float | int | str]], key: str) -> float:
     return float(np.mean([float(row[key]) for row in rows])) if rows else float("nan")
 
@@ -481,6 +522,10 @@ def main() -> None:
     parser.add_argument("--append-context-features", action="store_true")
     parser.add_argument("--merge-backends", nargs="+", choices=["cpu", "gpu"], default=["cpu"])
     parser.add_argument("--merge-thresholds", nargs="+", type=float, default=[0.30, 0.40, 0.50, 0.60, 0.70])
+    parser.add_argument("--signed-veto-modes", nargs="+", choices=["hard", "penalty"], default=[])
+    parser.add_argument("--signed-veto-mean-thresholds", nargs="+", type=float, default=[])
+    parser.add_argument("--signed-veto-count-log-mins", nargs="+", type=float, default=[0.0])
+    parser.add_argument("--signed-veto-penalties", nargs="+", type=float, default=[1.0])
     parser.add_argument("--baseline-z-thresholds", nargs="+", type=float, default=[0.20, 0.30])
     parser.add_argument("--baseline-xy-thresholds", nargs="+", type=float, default=[0.20, 0.30])
     parser.add_argument("--skip-baseline", action="store_true")
@@ -632,66 +677,114 @@ def main() -> None:
             batch_size=int(args.batch_size),
         )
         score_sec = time.perf_counter() - t_score
+        score_variants: list[dict[str, object]] = [
+            {
+                "scores": edge_scores,
+                "veto_mode": "",
+                "veto_mean_threshold": "",
+                "veto_count_log_min": "",
+                "veto_penalty": "",
+                "veto_fraction": "",
+                "backend_suffix": "",
+            }
+        ]
+        if args.signed_veto_modes and args.signed_veto_mean_thresholds:
+            for veto_mode in args.signed_veto_modes:
+                for veto_mean_threshold in args.signed_veto_mean_thresholds:
+                    for veto_count_log_min in args.signed_veto_count_log_mins:
+                        penalties = args.signed_veto_penalties if veto_mode == "penalty" else [0.0]
+                        for veto_penalty in penalties:
+                            adjusted_scores, veto_fraction = signed_veto_score_variant(
+                                edge_scores,
+                                sample.features,
+                                mode=str(veto_mode),
+                                mean_threshold=float(veto_mean_threshold),
+                                count_log_min=float(veto_count_log_min),
+                                penalty=float(veto_penalty),
+                            )
+                            score_variants.append(
+                                {
+                                    "scores": adjusted_scores,
+                                    "veto_mode": str(veto_mode),
+                                    "veto_mean_threshold": float(veto_mean_threshold),
+                                    "veto_count_log_min": float(veto_count_log_min),
+                                    "veto_penalty": float(veto_penalty) if veto_mode == "penalty" else "",
+                                    "veto_fraction": float(veto_fraction),
+                                    "backend_suffix": "_signed_veto",
+                                }
+                            )
         for merge_backend in args.merge_backends:
-            for threshold in args.merge_thresholds:
-                t0 = time.perf_counter()
-                try:
-                    if merge_backend == "gpu":
-                        seg = cupy_agglomerate_fragments_by_scores(
-                            sample.fragments,
-                            sample.packed_pairs,
-                            edge_scores,
-                            threshold=float(threshold),
-                        )
-                    else:
-                        seg = agglomerate_fragments_by_scores(
-                            sample.fragments,
-                            sample.packed_pairs,
-                            edge_scores,
-                            threshold=float(threshold),
-                        )
-                except Exception as exc:
+            for variant in score_variants:
+                variant_scores = np.asarray(variant["scores"], dtype=np.float32)
+                for threshold in args.merge_thresholds:
+                    t0 = time.perf_counter()
+                    try:
+                        if merge_backend == "gpu":
+                            seg = cupy_agglomerate_fragments_by_scores(
+                                sample.fragments,
+                                sample.packed_pairs,
+                                variant_scores,
+                                threshold=float(threshold),
+                            )
+                        else:
+                            seg = agglomerate_fragments_by_scores(
+                                sample.fragments,
+                                sample.packed_pairs,
+                                variant_scores,
+                                threshold=float(threshold),
+                            )
+                    except Exception as exc:
+                        row = {
+                            "sample": sample.sample,
+                            "backend": f"learned_rag_{merge_backend}{variant['backend_suffix']}",
+                            "threshold": float(threshold),
+                            "z_threshold": "",
+                            "xy_threshold": "",
+                            "score_mode": "mlp",
+                            "rag_quantile": "",
+                            "veto_mode": variant["veto_mode"],
+                            "veto_mean_threshold": variant["veto_mean_threshold"],
+                            "veto_count_log_min": variant["veto_count_log_min"],
+                            "veto_penalty": variant["veto_penalty"],
+                            "veto_fraction": variant["veto_fraction"],
+                            "postprocess_sec": float(time.perf_counter() - t0),
+                            "metrics_sec": 0.0,
+                            "error": repr(exc),
+                        }
+                        print(row, flush=True)
+                        records.append(row)
+                        continue
+                    postprocess_sec = time.perf_counter() - t0 + score_sec / max(
+                        1,
+                        len(args.merge_thresholds) * len(args.merge_backends) * len(score_variants),
+                    )
+                    t1 = time.perf_counter()
+                    metrics = segmentation_metrics(
+                        seg,
+                        sample.metric_labels,
+                        ignore_label=int(args.ignore_label),
+                        backend=str(args.metric_backend),
+                    )
+                    metrics_sec = time.perf_counter() - t1
                     row = {
                         "sample": sample.sample,
-                        "backend": f"learned_rag_{merge_backend}",
+                        "backend": f"learned_rag_{merge_backend}{variant['backend_suffix']}",
                         "threshold": float(threshold),
                         "z_threshold": "",
                         "xy_threshold": "",
                         "score_mode": "mlp",
                         "rag_quantile": "",
-                        "postprocess_sec": float(time.perf_counter() - t0),
-                        "metrics_sec": 0.0,
-                        "error": repr(exc),
+                        "veto_mode": variant["veto_mode"],
+                        "veto_mean_threshold": variant["veto_mean_threshold"],
+                        "veto_count_log_min": variant["veto_count_log_min"],
+                        "veto_penalty": variant["veto_penalty"],
+                        "veto_fraction": variant["veto_fraction"],
+                        "postprocess_sec": float(postprocess_sec),
+                        "metrics_sec": float(metrics_sec),
+                        **metric_dict(metrics),
                     }
                     print(row, flush=True)
                     records.append(row)
-                    continue
-                postprocess_sec = time.perf_counter() - t0 + score_sec / max(
-                    1,
-                    len(args.merge_thresholds) * len(args.merge_backends),
-                )
-                t1 = time.perf_counter()
-                metrics = segmentation_metrics(
-                    seg,
-                    sample.metric_labels,
-                    ignore_label=int(args.ignore_label),
-                    backend=str(args.metric_backend),
-                )
-                metrics_sec = time.perf_counter() - t1
-                row = {
-                    "sample": sample.sample,
-                    "backend": f"learned_rag_{merge_backend}",
-                    "threshold": float(threshold),
-                    "z_threshold": "",
-                    "xy_threshold": "",
-                    "score_mode": "mlp",
-                    "rag_quantile": "",
-                    "postprocess_sec": float(postprocess_sec),
-                    "metrics_sec": float(metrics_sec),
-                    **metric_dict(metrics),
-                }
-                print(row, flush=True)
-                records.append(row)
 
         if not bool(args.skip_baseline):
             for z_threshold in args.baseline_z_thresholds:
@@ -725,6 +818,11 @@ def main() -> None:
                             "xy_threshold": float(xy_threshold),
                             "score_mode": str(score_mode),
                             "rag_quantile": float(args.rag_quantile),
+                            "veto_mode": "",
+                            "veto_mean_threshold": "",
+                            "veto_count_log_min": "",
+                            "veto_penalty": "",
+                            "veto_fraction": "",
                             "postprocess_sec": float(postprocess_sec),
                             "metrics_sec": float(metrics_sec),
                             **metric_dict(metrics),
@@ -738,7 +836,18 @@ def main() -> None:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(records)
-    group_keys = ["backend", "threshold", "z_threshold", "xy_threshold", "score_mode", "rag_quantile"]
+    group_keys = [
+        "backend",
+        "threshold",
+        "z_threshold",
+        "xy_threshold",
+        "score_mode",
+        "rag_quantile",
+        "veto_mode",
+        "veto_mean_threshold",
+        "veto_count_log_min",
+        "veto_penalty",
+    ]
     records_for_summary = [row for row in records if "error" not in row]
     metric_keys = ["adapted_rand_error", "rand_fscore", "voi_split", "voi_merge", "voi_sum", "postprocess_sec"]
     grouped: dict[tuple[object, ...], list[dict[str, float | int | str]]] = {}
@@ -772,6 +881,10 @@ def main() -> None:
         "num_records": len(records),
         "append_context_features": bool(args.append_context_features),
         "merge_backends": list(args.merge_backends),
+        "signed_veto_modes": list(args.signed_veto_modes),
+        "signed_veto_mean_thresholds": [float(v) for v in args.signed_veto_mean_thresholds],
+        "signed_veto_count_log_mins": [float(v) for v in args.signed_veto_count_log_mins],
+        "signed_veto_penalties": [float(v) for v in args.signed_veto_penalties],
         "failures": [row for row in records if "error" in row],
         "per_group": per_group,
     }
