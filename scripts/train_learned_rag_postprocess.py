@@ -28,6 +28,7 @@ from dbmim.postprocess import (
     rag_boundary_features,
     rag_pair_labels_from_ground_truth,
     segmentation_metrics,
+    waterz_agglomeration,
     watershed_fragments,
 )
 from dbmim.utils import ensure_dir, load_config
@@ -112,6 +113,56 @@ def append_fragment_context_features(fragments: np.ndarray, packed_pairs: np.nda
     return np.concatenate([features, size_context], axis=1)
 
 
+def rag_pair_labels_from_teacher_segmentation(
+    packed_pairs: np.ndarray,
+    fragments: np.ndarray,
+    teacher: np.ndarray,
+    *,
+    ignore_label: int | None = 0,
+    positive_fraction: float = 0.5,
+) -> np.ndarray:
+    packed_pairs = np.asarray(packed_pairs, dtype=np.int64)
+    fragments = np.asarray(fragments, dtype=np.uint64)
+    teacher = np.asarray(teacher)
+    if fragments.shape != teacher.shape:
+        raise ValueError(f"fragment/teacher shape mismatch: {fragments.shape} vs {teacher.shape}")
+    max_id = int(fragments.max(initial=0))
+    base = max_id + 1
+    flat_frag = fragments.reshape(-1).astype(np.int64, copy=False)
+    flat_teacher = teacher.reshape(-1).astype(np.int64, copy=False)
+    keep = (flat_frag > 0) & (flat_frag <= max_id) & (flat_teacher > 0)
+    if ignore_label is not None:
+        keep &= flat_teacher != int(ignore_label)
+    major = np.zeros(max_id + 1, dtype=np.int64)
+    confidence = np.zeros(max_id + 1, dtype=np.float32)
+    if np.any(keep):
+        kept_frag = flat_frag[keep]
+        kept_teacher = flat_teacher[keep]
+        teacher_base = int(kept_teacher.max(initial=0)) + 1
+        packed = kept_frag * teacher_base + kept_teacher
+        unique, counts = np.unique(packed, return_counts=True)
+        frag_ids = unique // teacher_base
+        teacher_ids = unique % teacher_base
+        totals = np.bincount(kept_frag, minlength=max_id + 1).astype(np.float32, copy=False)
+        order = np.lexsort((-counts, frag_ids))
+        sorted_frag = frag_ids[order]
+        first = np.r_[True, sorted_frag[1:] != sorted_frag[:-1]]
+        best = order[first]
+        best_frag = frag_ids[best].astype(np.int64, copy=False)
+        best_teacher = teacher_ids[best].astype(np.int64, copy=False)
+        major[best_frag] = best_teacher
+        confidence[best_frag] = counts[best].astype(np.float32, copy=False) / np.maximum(totals[best_frag], 1.0)
+    out = np.zeros(packed_pairs.shape, dtype=np.float32)
+    for idx, packed in enumerate(packed_pairs):
+        left = int(packed // base)
+        right = int(packed % base)
+        if left <= 0 or right <= 0 or left > max_id or right > max_id:
+            continue
+        if major[left] > 0 and major[left] == major[right]:
+            out[idx] = 1.0 if min(confidence[left], confidence[right]) >= float(positive_fraction) else 0.0
+    return out
+
+
 @torch.no_grad()
 def build_rag_sample(
     path: Path,
@@ -133,6 +184,9 @@ def build_rag_sample(
     cremi_boundary_ignore_distance_z: int,
     positive_fraction: float,
     append_context_features: bool,
+    target_mode: str,
+    teacher_waterz_threshold: float,
+    teacher_waterz_scoring: str,
     with_targets: bool,
 ) -> RagSample:
     data_cfg = cfg.get("data", {})
@@ -193,17 +247,34 @@ def build_rag_sample(
     edge_targets = None
     if with_targets:
         t3 = time.perf_counter()
-        edge_targets = rag_pair_labels_from_ground_truth(
-            packed_pairs,
-            fragments,
-            label,
-            ignore_label=int(ignore_label),
-            positive_fraction=float(positive_fraction),
-        )
+        if target_mode == "waterz":
+            teacher_seg = waterz_agglomeration(
+                affinities,
+                threshold=float(teacher_waterz_threshold),
+                fragments=fragments,
+                scoring_function=str(teacher_waterz_scoring),
+            )
+            edge_targets = rag_pair_labels_from_teacher_segmentation(
+                packed_pairs,
+                fragments,
+                teacher_seg,
+                ignore_label=int(ignore_label),
+                positive_fraction=float(positive_fraction),
+            )
+        else:
+            edge_targets = rag_pair_labels_from_ground_truth(
+                packed_pairs,
+                fragments,
+                label,
+                ignore_label=int(ignore_label),
+                positive_fraction=float(positive_fraction),
+            )
         timings["edge_label_sec"] = time.perf_counter() - t3
         print(
             {
                 "sample": path.name,
+                "target_mode": str(target_mode),
+                "teacher_waterz_threshold": float(teacher_waterz_threshold) if target_mode == "waterz" else "",
                 "edge_positive_fraction": float(np.mean(edge_targets)) if edge_targets.size else 0.0,
                 "edge_label_sec": timings["edge_label_sec"],
             },
@@ -365,6 +436,9 @@ def main() -> None:
     parser.add_argument("--boundary-threshold", type=float, default=0.5)
     parser.add_argument("--min-boundary", type=int, default=4)
     parser.add_argument("--positive-fraction", type=float, default=0.5)
+    parser.add_argument("--target-mode", choices=["gt", "waterz"], default="gt")
+    parser.add_argument("--teacher-waterz-threshold", type=float, default=0.20)
+    parser.add_argument("--teacher-waterz-scoring", default="hist_quantile")
     parser.add_argument("--max-train-edges", type=int, default=600000)
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--batch-size", type=int, default=65536)
@@ -430,6 +504,9 @@ def main() -> None:
             cremi_boundary_ignore_distance_z=int(args.cremi_boundary_ignore_distance_z),
             positive_fraction=float(args.positive_fraction),
             append_context_features=bool(args.append_context_features),
+            target_mode=str(args.target_mode),
+            teacher_waterz_threshold=float(args.teacher_waterz_threshold),
+            teacher_waterz_scoring=str(args.teacher_waterz_scoring),
             with_targets=True,
         )
         if sample.edge_targets is not None and sample.features.size:
@@ -496,6 +573,9 @@ def main() -> None:
             cremi_boundary_ignore_distance_z=int(args.cremi_boundary_ignore_distance_z),
             positive_fraction=float(args.positive_fraction),
             append_context_features=bool(args.append_context_features),
+            target_mode=str(args.target_mode),
+            teacher_waterz_threshold=float(args.teacher_waterz_threshold),
+            teacher_waterz_scoring=str(args.teacher_waterz_scoring),
             with_targets=path.name in {p.name for p in train_files},
         )
         sample_summaries.append(
@@ -648,6 +728,9 @@ def main() -> None:
         "train_samples": [p.name for p in train_files],
         "eval_samples": [p.name for p in eval_files],
         "train_stats": train_stats,
+        "target_mode": str(args.target_mode),
+        "teacher_waterz_threshold": float(args.teacher_waterz_threshold),
+        "teacher_waterz_scoring": str(args.teacher_waterz_scoring),
         "sample_summaries": sample_summaries,
         "num_records": len(records),
         "append_context_features": bool(args.append_context_features),
