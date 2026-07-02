@@ -24,6 +24,7 @@ from dbmim.models import LearnedRAGMergeScorer
 from dbmim.postprocess import (
     agglomerate_fragments_by_affinity,
     agglomerate_fragments_by_scores,
+    cupy_agglomerate_fragments_by_scores,
     rag_boundary_features,
     rag_pair_labels_from_ground_truth,
     segmentation_metrics,
@@ -81,6 +82,36 @@ def calibrated_affinities(logits: np.ndarray, bias: tuple[float, float, float], 
     return sigmoid_np((logits + bias_arr) / max(float(temperature), 1e-6)).astype(np.float32, copy=False)
 
 
+def append_fragment_context_features(fragments: np.ndarray, packed_pairs: np.ndarray, features: np.ndarray) -> np.ndarray:
+    fragments = np.asarray(fragments, dtype=np.uint64)
+    packed_pairs = np.asarray(packed_pairs, dtype=np.int64)
+    features = np.asarray(features, dtype=np.float32)
+    if packed_pairs.size == 0:
+        return features
+    max_id = int(fragments.max(initial=0))
+    base = max_id + 1
+    flat = fragments.reshape(-1).astype(np.int64, copy=False)
+    sizes = np.bincount(flat, minlength=max_id + 1).astype(np.float32, copy=False)
+    left = (packed_pairs // base).astype(np.int64, copy=False)
+    right = (packed_pairs % base).astype(np.int64, copy=False)
+    left_size = sizes[np.clip(left, 0, max_id)]
+    right_size = sizes[np.clip(right, 0, max_id)]
+    min_size = np.minimum(left_size, right_size)
+    max_size = np.maximum(left_size, right_size)
+    size_context = np.stack(
+        [
+            np.log1p(left_size),
+            np.log1p(right_size),
+            np.log1p(min_size),
+            np.log1p(max_size),
+            min_size / np.maximum(max_size, 1.0),
+            features[:, 12] / np.maximum(np.log1p(min_size), 1e-6),
+        ],
+        axis=1,
+    ).astype(np.float32, copy=False)
+    return np.concatenate([features, size_context], axis=1)
+
+
 @torch.no_grad()
 def build_rag_sample(
     path: Path,
@@ -101,6 +132,7 @@ def build_rag_sample(
     cremi_boundary_ignore_distance_xy: int,
     cremi_boundary_ignore_distance_z: int,
     positive_fraction: float,
+    append_context_features: bool,
     with_targets: bool,
 ) -> RagSample:
     data_cfg = cfg.get("data", {})
@@ -136,6 +168,8 @@ def build_rag_sample(
 
     t2 = time.perf_counter()
     packed_pairs, features, counts = rag_boundary_features(affinities, fragments, min_boundary=int(min_boundary))
+    if append_context_features:
+        features = append_fragment_context_features(fragments, packed_pairs, features)
     timings["rag_feature_sec"] = time.perf_counter() - t2
     print(
         {
@@ -338,6 +372,8 @@ def main() -> None:
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.05)
+    parser.add_argument("--append-context-features", action="store_true")
+    parser.add_argument("--merge-backends", nargs="+", choices=["cpu", "gpu"], default=["cpu"])
     parser.add_argument("--merge-thresholds", nargs="+", type=float, default=[0.30, 0.40, 0.50, 0.60, 0.70])
     parser.add_argument("--baseline-z-thresholds", nargs="+", type=float, default=[0.20, 0.30])
     parser.add_argument("--baseline-xy-thresholds", nargs="+", type=float, default=[0.20, 0.30])
@@ -386,6 +422,7 @@ def main() -> None:
             cremi_boundary_ignore_distance_xy=int(args.cremi_boundary_ignore_distance_xy),
             cremi_boundary_ignore_distance_z=int(args.cremi_boundary_ignore_distance_z),
             positive_fraction=float(args.positive_fraction),
+            append_context_features=bool(args.append_context_features),
             with_targets=True,
         )
         if sample.edge_targets is not None and sample.features.size:
@@ -451,6 +488,7 @@ def main() -> None:
             cremi_boundary_ignore_distance_xy=int(args.cremi_boundary_ignore_distance_xy),
             cremi_boundary_ignore_distance_z=int(args.cremi_boundary_ignore_distance_z),
             positive_fraction=float(args.positive_fraction),
+            append_context_features=bool(args.append_context_features),
             with_targets=path.name in {p.name for p in train_files},
         )
         sample_summaries.append(
@@ -471,37 +509,66 @@ def main() -> None:
             batch_size=int(args.batch_size),
         )
         score_sec = time.perf_counter() - t_score
-        for threshold in args.merge_thresholds:
-            t0 = time.perf_counter()
-            seg = agglomerate_fragments_by_scores(
-                sample.fragments,
-                sample.packed_pairs,
-                edge_scores,
-                threshold=float(threshold),
-            )
-            postprocess_sec = time.perf_counter() - t0 + score_sec / max(1, len(args.merge_thresholds))
-            t1 = time.perf_counter()
-            metrics = segmentation_metrics(
-                seg,
-                sample.metric_labels,
-                ignore_label=int(args.ignore_label),
-                backend=str(args.metric_backend),
-            )
-            metrics_sec = time.perf_counter() - t1
-            row: dict[str, float | int | str] = {
-                "sample": sample.sample,
-                "backend": "learned_rag",
-                "threshold": float(threshold),
-                "z_threshold": "",
-                "xy_threshold": "",
-                "score_mode": "mlp",
-                "rag_quantile": "",
-                "postprocess_sec": float(postprocess_sec),
-                "metrics_sec": float(metrics_sec),
-                **metric_dict(metrics),
-            }
-            print(row, flush=True)
-            records.append(row)
+        for merge_backend in args.merge_backends:
+            for threshold in args.merge_thresholds:
+                t0 = time.perf_counter()
+                try:
+                    if merge_backend == "gpu":
+                        seg = cupy_agglomerate_fragments_by_scores(
+                            sample.fragments,
+                            sample.packed_pairs,
+                            edge_scores,
+                            threshold=float(threshold),
+                        )
+                    else:
+                        seg = agglomerate_fragments_by_scores(
+                            sample.fragments,
+                            sample.packed_pairs,
+                            edge_scores,
+                            threshold=float(threshold),
+                        )
+                except Exception as exc:
+                    row = {
+                        "sample": sample.sample,
+                        "backend": f"learned_rag_{merge_backend}",
+                        "threshold": float(threshold),
+                        "z_threshold": "",
+                        "xy_threshold": "",
+                        "score_mode": "mlp",
+                        "rag_quantile": "",
+                        "postprocess_sec": float(time.perf_counter() - t0),
+                        "metrics_sec": 0.0,
+                        "error": repr(exc),
+                    }
+                    print(row, flush=True)
+                    records.append(row)
+                    continue
+                postprocess_sec = time.perf_counter() - t0 + score_sec / max(
+                    1,
+                    len(args.merge_thresholds) * len(args.merge_backends),
+                )
+                t1 = time.perf_counter()
+                metrics = segmentation_metrics(
+                    seg,
+                    sample.metric_labels,
+                    ignore_label=int(args.ignore_label),
+                    backend=str(args.metric_backend),
+                )
+                metrics_sec = time.perf_counter() - t1
+                row = {
+                    "sample": sample.sample,
+                    "backend": f"learned_rag_{merge_backend}",
+                    "threshold": float(threshold),
+                    "z_threshold": "",
+                    "xy_threshold": "",
+                    "score_mode": "mlp",
+                    "rag_quantile": "",
+                    "postprocess_sec": float(postprocess_sec),
+                    "metrics_sec": float(metrics_sec),
+                    **metric_dict(metrics),
+                }
+                print(row, flush=True)
+                records.append(row)
 
         for z_threshold in args.baseline_z_thresholds:
             for xy_threshold in args.baseline_xy_thresholds:
@@ -543,13 +610,15 @@ def main() -> None:
 
     if records:
         with (output_dir / "learned_rag_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
+            fieldnames = sorted({key for record in records for key in record.keys()})
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(records)
     group_keys = ["backend", "threshold", "z_threshold", "xy_threshold", "score_mode", "rag_quantile"]
+    records_for_summary = [row for row in records if "error" not in row]
     metric_keys = ["adapted_rand_error", "rand_fscore", "voi_split", "voi_merge", "voi_sum", "postprocess_sec"]
     grouped: dict[tuple[object, ...], list[dict[str, float | int | str]]] = {}
-    for record in records:
+    for record in records_for_summary:
         grouped.setdefault(tuple(record[key] for key in group_keys), []).append(record)
     per_group: list[dict[str, float | int | str]] = []
     for key_tuple, rows in sorted(grouped.items(), key=lambda item: tuple(str(v) for v in item[0])):
@@ -559,7 +628,7 @@ def main() -> None:
             row[key] = _mean(rows, key)
         per_group.append(row)
     eval_holdout = {p.name for p in eval_files} - {p.name for p in train_files}
-    holdout_rows = [row for row in records if str(row["sample"]) in eval_holdout]
+    holdout_rows = [row for row in records_for_summary if str(row["sample"]) in eval_holdout]
     summary: dict[str, object] = {
         "checkpoint": str(args.checkpoint),
         "config": str(args.config),
@@ -572,6 +641,9 @@ def main() -> None:
         "train_stats": train_stats,
         "sample_summaries": sample_summaries,
         "num_records": len(records),
+        "append_context_features": bool(args.append_context_features),
+        "merge_backends": list(args.merge_backends),
+        "failures": [row for row in records if "error" in row],
         "per_group": per_group,
     }
     if per_group:

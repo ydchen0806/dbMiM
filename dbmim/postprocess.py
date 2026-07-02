@@ -435,6 +435,45 @@ def agglomerate_fragments_by_scores(
     return relabel_sequential(root_labels)
 
 
+def cupy_agglomerate_fragments_by_scores(
+    fragments: np.ndarray,
+    packed_pairs: np.ndarray,
+    merge_scores: np.ndarray,
+    threshold: float = 0.5,
+) -> np.ndarray:
+    """GPU connected components over the learned fragment-pair merge graph."""
+
+    import cupy as cp  # type: ignore
+    from cupyx.scipy.sparse import coo_matrix  # type: ignore
+    from cupyx.scipy.sparse.csgraph import connected_components  # type: ignore
+
+    fragments = np.asarray(fragments, dtype=np.uint64)
+    packed_pairs = np.asarray(packed_pairs, dtype=np.int64)
+    merge_scores = np.asarray(merge_scores, dtype=np.float32)
+    max_id = int(fragments.max(initial=0))
+    if max_id <= 1 or packed_pairs.size == 0:
+        return relabel_sequential(fragments)
+    base = max_id + 1
+    selected = packed_pairs[merge_scores >= float(threshold)]
+    if selected.size == 0:
+        return relabel_sequential(fragments)
+    left = (selected // base).astype(np.int32, copy=False)
+    right = (selected % base).astype(np.int32, copy=False)
+    valid = (left > 0) & (right > 0) & (left <= max_id) & (right <= max_id)
+    if not np.any(valid):
+        return relabel_sequential(fragments)
+    left_gpu = cp.asarray(left[valid])
+    right_gpu = cp.asarray(right[valid])
+    rows = cp.concatenate([left_gpu, right_gpu])
+    cols = cp.concatenate([right_gpu, left_gpu])
+    data = cp.ones(rows.shape[0], dtype=cp.float32)
+    graph = coo_matrix((data, (rows, cols)), shape=(max_id + 1, max_id + 1)).tocsr()
+    _, labels_gpu = connected_components(graph, directed=False, return_labels=True)
+    frag_gpu = cp.asarray(fragments.astype(np.int32, copy=False))
+    labels = cp.asnumpy(labels_gpu[frag_gpu]).astype(np.uint64, copy=False)
+    return relabel_sequential(labels)
+
+
 def rag_pair_labels_from_ground_truth(
     packed_pairs: np.ndarray,
     fragments: np.ndarray,

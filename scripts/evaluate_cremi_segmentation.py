@@ -53,6 +53,20 @@ def list_cremi_files(data_dir: str | Path) -> list[Path]:
     return files
 
 
+def select_cremi_files(files: list[Path], names: list[str] | None) -> list[Path]:
+    if not names:
+        return files
+    by_name = {path.name: path for path in files}
+    by_stem = {path.stem: path for path in files}
+    selected: list[Path] = []
+    for name in names:
+        path = by_name.get(name) or by_stem.get(Path(name).stem)
+        if path is None:
+            raise FileNotFoundError(f"requested sample {name!r} not found; available={[p.name for p in files]}")
+        selected.append(path)
+    return selected
+
+
 def select_h5_dataset(handle, keys: Iterable[str]):
     for key in keys:
         if key in handle:
@@ -491,6 +505,7 @@ def main() -> None:
     parser.add_argument("--rag-quantile", nargs="+", type=float, default=[0.25])
     parser.add_argument("--z-thresholds", nargs="+", type=float, default=None)
     parser.add_argument("--xy-thresholds", nargs="+", type=float, default=None)
+    parser.add_argument("--sample-names", nargs="+", default=None)
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
@@ -548,7 +563,7 @@ def main() -> None:
     data_cfg = cfg.get("data", {})
     raw_keys = data_cfg.get("image_keys") or ["volumes/raw", "raw", "main"]
     label_keys = data_cfg.get("label_keys") or ["volumes/labels/neuron_ids", "labels", "label", "gt"]
-    files = list_cremi_files(args.data_dir)
+    files = select_cremi_files(list_cremi_files(args.data_dir), args.sample_names)
     if args.max_samples > 0:
         files = files[: args.max_samples]
 
