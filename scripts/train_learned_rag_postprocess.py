@@ -355,6 +355,7 @@ def main() -> None:
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--crop-size", nargs=3, type=int, default=[64, 512, 512])
+    parser.add_argument("--eval-crop-size", nargs=3, type=int, default=None)
     parser.add_argument("--stride", nargs=3, type=int, default=[16, 80, 80])
     parser.add_argument("--train-samples", nargs="+", default=["sample_A_20160501.hdf", "sample_B_20160501.hdf"])
     parser.add_argument("--eval-samples", nargs="+", default=["all"])
@@ -377,6 +378,7 @@ def main() -> None:
     parser.add_argument("--merge-thresholds", nargs="+", type=float, default=[0.30, 0.40, 0.50, 0.60, 0.70])
     parser.add_argument("--baseline-z-thresholds", nargs="+", type=float, default=[0.20, 0.30])
     parser.add_argument("--baseline-xy-thresholds", nargs="+", type=float, default=[0.20, 0.30])
+    parser.add_argument("--skip-baseline", action="store_true")
     parser.add_argument("--score-mode", nargs="+", default=["mean", "q25"])
     parser.add_argument("--rag-quantile", type=float, default=0.25)
     parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="skimage")
@@ -394,6 +396,11 @@ def main() -> None:
     postprocess = build_postprocess(cfg, Path(args.checkpoint), device)
     model_window = tuple(int(v) for v in model.volume_size)
     crop_size = normalize_crop_size(tuple(int(v) for v in args.crop_size), model_window)
+    eval_crop_size = (
+        normalize_crop_size(tuple(int(v) for v in args.eval_crop_size), model_window)
+        if args.eval_crop_size is not None
+        else crop_size
+    )
     stride = tuple(int(v) for v in args.stride)
     calibration_bias = parse_triplet([float(v) for v in args.calibration_biases])
     files = list_cremi_files(args.data_dir)
@@ -476,7 +483,7 @@ def main() -> None:
             model=model,
             postprocess=postprocess,
             model_window=model_window,
-            crop_size=crop_size,
+            crop_size=eval_crop_size,
             stride=stride,
             device=device,
             calibration_bias=calibration_bias,
@@ -570,43 +577,44 @@ def main() -> None:
                 print(row, flush=True)
                 records.append(row)
 
-        for z_threshold in args.baseline_z_thresholds:
-            for xy_threshold in args.baseline_xy_thresholds:
-                for score_mode in args.score_mode:
-                    t0 = time.perf_counter()
-                    seg = agglomerate_fragments_by_affinity(
-                        sample.affinities,
-                        sample.fragments,
-                        threshold=0.0,
-                        z_threshold=float(z_threshold),
-                        xy_threshold=float(xy_threshold),
-                        min_boundary=int(args.min_boundary),
-                        score_mode=str(score_mode),
-                        quantile=float(args.rag_quantile),
-                    )
-                    postprocess_sec = time.perf_counter() - t0
-                    t1 = time.perf_counter()
-                    metrics = segmentation_metrics(
-                        seg,
-                        sample.metric_labels,
-                        ignore_label=int(args.ignore_label),
-                        backend=str(args.metric_backend),
-                    )
-                    metrics_sec = time.perf_counter() - t1
-                    row = {
-                        "sample": sample.sample,
-                        "backend": "seeded_rag",
-                        "threshold": 0.0,
-                        "z_threshold": float(z_threshold),
-                        "xy_threshold": float(xy_threshold),
-                        "score_mode": str(score_mode),
-                        "rag_quantile": float(args.rag_quantile),
-                        "postprocess_sec": float(postprocess_sec),
-                        "metrics_sec": float(metrics_sec),
-                        **metric_dict(metrics),
-                    }
-                    print(row, flush=True)
-                    records.append(row)
+        if not bool(args.skip_baseline):
+            for z_threshold in args.baseline_z_thresholds:
+                for xy_threshold in args.baseline_xy_thresholds:
+                    for score_mode in args.score_mode:
+                        t0 = time.perf_counter()
+                        seg = agglomerate_fragments_by_affinity(
+                            sample.affinities,
+                            sample.fragments,
+                            threshold=0.0,
+                            z_threshold=float(z_threshold),
+                            xy_threshold=float(xy_threshold),
+                            min_boundary=int(args.min_boundary),
+                            score_mode=str(score_mode),
+                            quantile=float(args.rag_quantile),
+                        )
+                        postprocess_sec = time.perf_counter() - t0
+                        t1 = time.perf_counter()
+                        metrics = segmentation_metrics(
+                            seg,
+                            sample.metric_labels,
+                            ignore_label=int(args.ignore_label),
+                            backend=str(args.metric_backend),
+                        )
+                        metrics_sec = time.perf_counter() - t1
+                        row = {
+                            "sample": sample.sample,
+                            "backend": "seeded_rag",
+                            "threshold": 0.0,
+                            "z_threshold": float(z_threshold),
+                            "xy_threshold": float(xy_threshold),
+                            "score_mode": str(score_mode),
+                            "rag_quantile": float(args.rag_quantile),
+                            "postprocess_sec": float(postprocess_sec),
+                            "metrics_sec": float(metrics_sec),
+                            **metric_dict(metrics),
+                        }
+                        print(row, flush=True)
+                        records.append(row)
 
     if records:
         with (output_dir / "learned_rag_metrics.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -633,6 +641,7 @@ def main() -> None:
         "checkpoint": str(args.checkpoint),
         "config": str(args.config),
         "crop_size": list(crop_size),
+        "eval_crop_size": list(eval_crop_size),
         "stride": list(stride),
         "calibration_bias": list(calibration_bias),
         "calibration_temperature": float(args.calibration_temperature),
