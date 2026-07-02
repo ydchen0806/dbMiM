@@ -29,6 +29,7 @@ from dbmim.postprocess import (
     rag_pair_labels_from_ground_truth,
     segmentation_metrics,
     waterz_agglomeration,
+    waterz_agglomerations,
     watershed_fragments,
 )
 from dbmim.utils import ensure_dir, load_config
@@ -186,6 +187,7 @@ def build_rag_sample(
     append_context_features: bool,
     target_mode: str,
     teacher_waterz_threshold: float,
+    teacher_waterz_thresholds: tuple[float, ...],
     teacher_waterz_scoring: str,
     with_targets: bool,
 ) -> RagSample:
@@ -261,6 +263,25 @@ def build_rag_sample(
                 ignore_label=int(ignore_label),
                 positive_fraction=float(positive_fraction),
             )
+        elif target_mode == "waterz_ladder":
+            if not teacher_waterz_thresholds:
+                raise ValueError("target_mode=waterz_ladder requires at least one teacher threshold")
+            teacher_segmentations = waterz_agglomerations(
+                affinities,
+                thresholds=list(teacher_waterz_thresholds),
+                fragments=fragments,
+                scoring_function=str(teacher_waterz_scoring),
+            )
+            soft_targets = np.zeros(packed_pairs.shape, dtype=np.float32)
+            for teacher_seg in teacher_segmentations:
+                soft_targets += rag_pair_labels_from_teacher_segmentation(
+                    packed_pairs,
+                    fragments,
+                    teacher_seg,
+                    ignore_label=int(ignore_label),
+                    positive_fraction=float(positive_fraction),
+                )
+            edge_targets = soft_targets / max(1, len(teacher_segmentations))
         else:
             edge_targets = rag_pair_labels_from_ground_truth(
                 packed_pairs,
@@ -275,7 +296,11 @@ def build_rag_sample(
                 "sample": path.name,
                 "target_mode": str(target_mode),
                 "teacher_waterz_threshold": float(teacher_waterz_threshold) if target_mode == "waterz" else "",
+                "teacher_waterz_thresholds": list(teacher_waterz_thresholds)
+                if target_mode == "waterz_ladder"
+                else "",
                 "edge_positive_fraction": float(np.mean(edge_targets)) if edge_targets.size else 0.0,
+                "edge_hard_positive_fraction": float(np.mean(edge_targets >= 0.5)) if edge_targets.size else 0.0,
                 "edge_label_sec": timings["edge_label_sec"],
             },
             flush=True,
@@ -346,9 +371,11 @@ def train_scorer(
         dropout=float(dropout),
     ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=float(lr), weight_decay=float(weight_decay))
-    pos = float(np.sum(y_np >= 0.5))
-    neg = float(np.sum(y_np < 0.5))
-    pos_weight = torch.tensor([neg / max(pos, 1.0)], dtype=torch.float32, device=device)
+    hard_pos = float(np.sum(y_np >= 0.5))
+    hard_neg = float(np.sum(y_np < 0.5))
+    pos_mass = float(np.sum(y_np))
+    neg_mass = float(np.sum(1.0 - y_np))
+    pos_weight = torch.tensor([neg_mass / max(pos_mass, 1.0)], dtype=torch.float32, device=device)
     x = torch.from_numpy(x_np)
     y = torch.from_numpy(y_np)
     rng = np.random.default_rng(int(seed))
@@ -385,9 +412,12 @@ def train_scorer(
             history.append(row)
     stats: dict[str, float | int] = {
         "num_edges": int(y_np.size),
-        "num_positive": int(pos),
-        "num_negative": int(neg),
-        "positive_fraction": float(pos / max(pos + neg, 1.0)),
+        "num_positive": int(hard_pos),
+        "num_negative": int(hard_neg),
+        "positive_fraction": float(hard_pos / max(hard_pos + hard_neg, 1.0)),
+        "soft_positive_mass": float(pos_mass),
+        "soft_negative_mass": float(neg_mass),
+        "soft_positive_fraction": float(pos_mass / max(pos_mass + neg_mass, 1.0)),
         "pos_weight": float(pos_weight.item()),
         "final_loss": history[-1]["loss"] if history else 0.0,
         "final_edge_accuracy_0p5": history[-1]["edge_accuracy_0p5"] if history else 0.0,
@@ -436,8 +466,9 @@ def main() -> None:
     parser.add_argument("--boundary-threshold", type=float, default=0.5)
     parser.add_argument("--min-boundary", type=int, default=4)
     parser.add_argument("--positive-fraction", type=float, default=0.5)
-    parser.add_argument("--target-mode", choices=["gt", "waterz"], default="gt")
+    parser.add_argument("--target-mode", choices=["gt", "waterz", "waterz_ladder"], default="gt")
     parser.add_argument("--teacher-waterz-threshold", type=float, default=0.20)
+    parser.add_argument("--teacher-waterz-thresholds", nargs="+", type=float, default=None)
     parser.add_argument("--teacher-waterz-scoring", default="hist_quantile")
     parser.add_argument("--max-train-edges", type=int, default=600000)
     parser.add_argument("--epochs", type=int, default=80)
@@ -477,6 +508,9 @@ def main() -> None:
     )
     stride = tuple(int(v) for v in args.stride)
     calibration_bias = parse_triplet([float(v) for v in args.calibration_biases])
+    teacher_waterz_thresholds = tuple(
+        float(v) for v in (args.teacher_waterz_thresholds or [args.teacher_waterz_threshold])
+    )
     files = list_cremi_files(args.data_dir)
     train_files = select_named_files(files, list(args.train_samples))
     eval_files = select_named_files(files, list(args.eval_samples))
@@ -506,6 +540,7 @@ def main() -> None:
             append_context_features=bool(args.append_context_features),
             target_mode=str(args.target_mode),
             teacher_waterz_threshold=float(args.teacher_waterz_threshold),
+            teacher_waterz_thresholds=teacher_waterz_thresholds,
             teacher_waterz_scoring=str(args.teacher_waterz_scoring),
             with_targets=True,
         )
@@ -575,8 +610,9 @@ def main() -> None:
             append_context_features=bool(args.append_context_features),
             target_mode=str(args.target_mode),
             teacher_waterz_threshold=float(args.teacher_waterz_threshold),
+            teacher_waterz_thresholds=teacher_waterz_thresholds,
             teacher_waterz_scoring=str(args.teacher_waterz_scoring),
-            with_targets=path.name in {p.name for p in train_files},
+            with_targets=False,
         )
         sample_summaries.append(
             {
@@ -730,6 +766,7 @@ def main() -> None:
         "train_stats": train_stats,
         "target_mode": str(args.target_mode),
         "teacher_waterz_threshold": float(args.teacher_waterz_threshold),
+        "teacher_waterz_thresholds": list(teacher_waterz_thresholds),
         "teacher_waterz_scoring": str(args.teacher_waterz_scoring),
         "sample_summaries": sample_summaries,
         "num_records": len(records),
