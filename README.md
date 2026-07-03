@@ -146,14 +146,24 @@ python scripts/evaluate_cremi_segmentation.py \
   --crop-size 0 0 0 \
   --stride 16 80 80 \
   --backends waterz \
-  --thresholds 0.20 0.30 0.50 \
+  --thresholds 0.16 0.18 0.20 0.22 0.24 \
   --calibration-biases -0.25 -0.50 -0.50 \
+  --seed-method maxima_distance \
+  --seed-distance 10 \
+  --boundary-threshold 0.5 \
+  --waterz-scoring hist_quantile \
+  --batched-waterz \
   --metric-backend skimage \
   --ignore-label 0 \
   --cremi-boundary-ignore-distance-xy 1 \
   --cremi-boundary-ignore-distance-z 0 \
   --device cuda
 ```
+
+`--batched-waterz` evaluates all waterz thresholds for each affinity variant in
+one waterz hierarchy pass. It keeps the reported R48 VOI unchanged
+(`0.962154`) and reduces threshold-sweep post-processing time from about
+`75s` to about `17s` on CREMI A/B/C.
 
 The summary is written to:
 

@@ -141,14 +141,23 @@ python scripts/evaluate_cremi_segmentation.py \
   --crop-size 0 0 0 \
   --stride 16 80 80 \
   --backends waterz \
-  --thresholds 0.20 0.30 0.50 \
+  --thresholds 0.16 0.18 0.20 0.22 0.24 \
   --calibration-biases -0.25 -0.50 -0.50 \
+  --seed-method maxima_distance \
+  --seed-distance 10 \
+  --boundary-threshold 0.5 \
+  --waterz-scoring hist_quantile \
+  --batched-waterz \
   --metric-backend skimage \
   --ignore-label 0 \
   --cremi-boundary-ignore-distance-xy 1 \
   --cremi-boundary-ignore-distance-z 0 \
   --device cuda
 ```
+
+`--batched-waterz` 会在同一次 waterz hierarchy 中评测多个 threshold。它保持
+R48 的 VOI 不变（`0.962154`），并把 CREMI A/B/C threshold sweep 的后处理时间
+从约 `75s` 降到约 `17s`。
 
 结果写入：
 
