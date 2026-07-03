@@ -107,7 +107,8 @@ Weights are hosted at:
 
 | Model | HF path | Intended use |
 |---|---|---|
-| PublicEM dbMiM R48 finetune | `weights/publicem_dbmim_r48_seed309_long20k/finetuned_latest.pt` | Best current segmentation checkpoint; pending HF sync after TOS artifact retrieval |
+| PublicEM dbMiM R48 finetune | `weights/publicem_dbmim_r48_seed309_long20k/finetuned_latest.pt` | Best current segmentation checkpoint |
+| PublicEM dbMiM R57 finetune | `weights/publicem_dbmim_r57_seed777_long20k/finetuned_latest.pt` | Seed-repeat checkpoint with the best ARAND in the current repeat sweep |
 | PublicEM dbMiM R17 pretrain | `weights/publicem_dbmim_r17/pretrained_latest.pt` | ViT/dbMiM encoder checkpoint for UNETR initialization |
 | PublicEM dbMiM R17 finetune | `weights/publicem_dbmim_r17/finetuned_latest.pt` | Earlier publicEM segmentation checkpoint |
 | FullEM mixed-mask dbMiM R33 pretrain | `weights/fullem_mixedmask_dbmim_r33/pretrained_latest.pt` | Recommended full-data dbMiM pretraining checkpoint |

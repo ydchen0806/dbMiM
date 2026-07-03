@@ -92,7 +92,8 @@ adaptive prior sampling。R52/R53 下游微调已经完成但为负结果，所�
 
 | 模型 | HF 路径 | 用途 |
 |---|---|---|
-| PublicEM dbMiM R48 微调 | `weights/publicem_dbmim_r48_seed309_long20k/finetuned_latest.pt` | 当前最好分割权重；等 TOS artifact 可拉回后同步到 HF |
+| PublicEM dbMiM R48 微调 | `weights/publicem_dbmim_r48_seed309_long20k/finetuned_latest.pt` | 当前最好分割权重 |
+| PublicEM dbMiM R57 微调 | `weights/publicem_dbmim_r57_seed777_long20k/finetuned_latest.pt` | 当前 repeat sweep 中 ARAND 最好的 seed-repeat 权重 |
 | PublicEM dbMiM R17 预训练 | `weights/publicem_dbmim_r17/pretrained_latest.pt` | ViT/dbMiM encoder 初始化权重 |
 | PublicEM dbMiM R17 微调 | `weights/publicem_dbmim_r17/finetuned_latest.pt` | 较早 publicEM 分割权重 |
 | FullEM mixed-mask dbMiM R33 预训练 | `weights/fullem_mixedmask_dbmim_r33/pretrained_latest.pt` | 推荐的 full-data dbMiM 预训练权重 |
