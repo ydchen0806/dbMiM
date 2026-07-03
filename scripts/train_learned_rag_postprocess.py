@@ -84,7 +84,35 @@ def calibrated_affinities(logits: np.ndarray, bias: tuple[float, float, float], 
     return sigmoid_np((logits + bias_arr) / max(float(temperature), 1e-6)).astype(np.float32, copy=False)
 
 
-def append_fragment_context_features(fragments: np.ndarray, packed_pairs: np.ndarray, features: np.ndarray) -> np.ndarray:
+def _fragment_centroids(fragments: np.ndarray, max_id: int) -> tuple[np.ndarray, np.ndarray]:
+    """Compute fragment sizes and centroids without materializing full coordinate grids."""
+
+    depth, height, width = (int(v) for v in fragments.shape)
+    sizes = np.zeros(max_id + 1, dtype=np.float64)
+    sum_z = np.zeros(max_id + 1, dtype=np.float64)
+    sum_y = np.zeros(max_id + 1, dtype=np.float64)
+    sum_x = np.zeros(max_id + 1, dtype=np.float64)
+    y_coords = np.repeat(np.arange(height, dtype=np.float64), width)
+    x_coords = np.tile(np.arange(width, dtype=np.float64), height)
+    for z in range(depth):
+        ids = fragments[z].reshape(-1).astype(np.int64, copy=False)
+        counts = np.bincount(ids, minlength=max_id + 1).astype(np.float64, copy=False)
+        sizes += counts
+        sum_z += counts * float(z)
+        sum_y += np.bincount(ids, weights=y_coords, minlength=max_id + 1).astype(np.float64, copy=False)
+        sum_x += np.bincount(ids, weights=x_coords, minlength=max_id + 1).astype(np.float64, copy=False)
+    denom = np.maximum(sizes, 1.0)
+    centroids = np.stack([sum_z / denom, sum_y / denom, sum_x / denom], axis=1).astype(np.float32, copy=False)
+    return sizes.astype(np.float32, copy=False), centroids
+
+
+def append_fragment_context_features(
+    fragments: np.ndarray,
+    packed_pairs: np.ndarray,
+    features: np.ndarray,
+    *,
+    feature_set: str = "basic",
+) -> np.ndarray:
     fragments = np.asarray(fragments, dtype=np.uint64)
     packed_pairs = np.asarray(packed_pairs, dtype=np.int64)
     features = np.asarray(features, dtype=np.float32)
@@ -92,14 +120,19 @@ def append_fragment_context_features(fragments: np.ndarray, packed_pairs: np.nda
         return features
     max_id = int(fragments.max(initial=0))
     base = max_id + 1
-    flat = fragments.reshape(-1).astype(np.int64, copy=False)
-    sizes = np.bincount(flat, minlength=max_id + 1).astype(np.float32, copy=False)
     left = (packed_pairs // base).astype(np.int64, copy=False)
     right = (packed_pairs % base).astype(np.int64, copy=False)
+    if str(feature_set) == "morphology":
+        sizes, centroids = _fragment_centroids(fragments, max_id)
+    else:
+        flat = fragments.reshape(-1).astype(np.int64, copy=False)
+        sizes = np.bincount(flat, minlength=max_id + 1).astype(np.float32, copy=False)
+        centroids = None
     left_size = sizes[np.clip(left, 0, max_id)]
     right_size = sizes[np.clip(right, 0, max_id)]
     min_size = np.minimum(left_size, right_size)
     max_size = np.maximum(left_size, right_size)
+    boundary_count = np.expm1(features[:, 12]).astype(np.float32, copy=False)
     size_context = np.stack(
         [
             np.log1p(left_size),
@@ -107,11 +140,43 @@ def append_fragment_context_features(fragments: np.ndarray, packed_pairs: np.nda
             np.log1p(min_size),
             np.log1p(max_size),
             min_size / np.maximum(max_size, 1.0),
-            features[:, 12] / np.maximum(np.log1p(min_size), 1e-6),
+            np.log1p(boundary_count) / np.maximum(np.log1p(min_size), 1e-6),
         ],
         axis=1,
     ).astype(np.float32, copy=False)
-    return np.concatenate([features, size_context], axis=1)
+    if str(feature_set) == "basic":
+        return np.concatenate([features, size_context], axis=1)
+    if str(feature_set) != "morphology":
+        raise ValueError(f"unknown context feature set: {feature_set}")
+    if centroids is None:
+        raise RuntimeError("morphology context requested without centroids")
+    left_centroid = centroids[np.clip(left, 0, max_id)]
+    right_centroid = centroids[np.clip(right, 0, max_id)]
+    delta = np.abs(left_centroid - right_centroid).astype(np.float32, copy=False)
+    shape = np.asarray(fragments.shape, dtype=np.float32).reshape(1, 3)
+    boundary_mean = np.clip(boundary_mean_from_features(features), 0.0, 1.0).astype(np.float32, copy=False)
+    density_min = boundary_count / np.maximum(min_size, 1.0)
+    density_max = boundary_count / np.maximum(max_size, 1.0)
+    morphology_context = np.stack(
+        [
+            delta[:, 0] / max(shape[0, 0], 1.0),
+            delta[:, 1] / max(shape[0, 1], 1.0),
+            delta[:, 2] / max(shape[0, 2], 1.0),
+            np.log1p(delta[:, 0]),
+            np.log1p(delta[:, 1]),
+            np.log1p(delta[:, 2]),
+            np.sqrt(np.sum((delta / np.maximum(shape, 1.0)) ** 2, axis=1)),
+            density_min,
+            density_max,
+            np.log1p(boundary_count) / np.maximum(np.log1p(max_size), 1e-6),
+            boundary_mean,
+            1.0 - boundary_mean,
+            boundary_mean * (min_size / np.maximum(max_size, 1.0)),
+            (1.0 - boundary_mean) * np.log1p(boundary_count),
+        ],
+        axis=1,
+    ).astype(np.float32, copy=False)
+    return np.concatenate([features, size_context, morphology_context], axis=1)
 
 
 def rag_pair_labels_from_teacher_segmentation(
@@ -185,6 +250,7 @@ def build_rag_sample(
     cremi_boundary_ignore_distance_z: int,
     positive_fraction: float,
     append_context_features: bool,
+    context_feature_set: str,
     target_mode: str,
     teacher_waterz_threshold: float,
     teacher_waterz_thresholds: tuple[float, ...],
@@ -225,7 +291,12 @@ def build_rag_sample(
     t2 = time.perf_counter()
     packed_pairs, features, counts = rag_boundary_features(affinities, fragments, min_boundary=int(min_boundary))
     if append_context_features:
-        features = append_fragment_context_features(fragments, packed_pairs, features)
+        features = append_fragment_context_features(
+            fragments,
+            packed_pairs,
+            features,
+            feature_set=str(context_feature_set),
+        )
     timings["rag_feature_sec"] = time.perf_counter() - t2
     print(
         {
@@ -551,6 +622,7 @@ def main() -> None:
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.05)
     parser.add_argument("--append-context-features", action="store_true")
+    parser.add_argument("--context-feature-set", choices=["basic", "morphology"], default="basic")
     parser.add_argument("--merge-backends", nargs="+", choices=["cpu", "gpu"], default=["cpu"])
     parser.add_argument("--merge-thresholds", nargs="+", type=float, default=[0.30, 0.40, 0.50, 0.60, 0.70])
     parser.add_argument("--signed-veto-modes", nargs="+", choices=["hard", "penalty"], default=[])
@@ -617,6 +689,7 @@ def main() -> None:
             cremi_boundary_ignore_distance_z=int(args.cremi_boundary_ignore_distance_z),
             positive_fraction=float(args.positive_fraction),
             append_context_features=bool(args.append_context_features),
+            context_feature_set=str(args.context_feature_set),
             target_mode=str(args.target_mode),
             teacher_waterz_threshold=float(args.teacher_waterz_threshold),
             teacher_waterz_thresholds=teacher_waterz_thresholds,
@@ -687,6 +760,7 @@ def main() -> None:
             cremi_boundary_ignore_distance_z=int(args.cremi_boundary_ignore_distance_z),
             positive_fraction=float(args.positive_fraction),
             append_context_features=bool(args.append_context_features),
+            context_feature_set=str(args.context_feature_set),
             target_mode=str(args.target_mode),
             teacher_waterz_threshold=float(args.teacher_waterz_threshold),
             teacher_waterz_thresholds=teacher_waterz_thresholds,
@@ -965,6 +1039,7 @@ def main() -> None:
         "sample_summaries": sample_summaries,
         "num_records": len(records),
         "append_context_features": bool(args.append_context_features),
+        "context_feature_set": str(args.context_feature_set),
         "merge_backends": list(args.merge_backends),
         "signed_veto_modes": list(args.signed_veto_modes),
         "signed_veto_mean_thresholds": [float(v) for v in args.signed_veto_mean_thresholds],
