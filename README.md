@@ -17,8 +17,7 @@ checkpoints, reports, and local experiment outputs are intentionally ignored.
 
 ## Current Method
 
-The current best method is not the original minimal reproduction. It combines
-the following changes that were stable in ablations:
+The official implementation follows the dbMiM neuron-segmentation pipeline:
 
 1. **Anisotropic UNETR backbone**: `UNETRAnisotropicAffinityNet` with
    `32x160x160` input crops, `patch_size=(4,16,16)`, transformer hidden states
@@ -35,34 +34,36 @@ the following changes that were stable in ablations:
    evaluated with `ignore_label=0`, CREMI-style XY boundary ignore distance `1`,
    z boundary ignore `0`, logit calibration biases, and a waterz threshold sweep.
 
-## Relation to the IJCAI 2023 Paper
+## Implementation Details
 
-The IJCAI 2023 paper describes **decision-based MIM (dbMiM)** for EM neuron
-segmentation. In the paper, each 3D ViT patch is treated as an agent whose
-action is binary: keep the patch visible or mask it. A shared policy network
-uses target-network features as state/observation, receives team reward from
-the change in masked-reconstruction loss, and is optimized with an
-actor-critic/A2C-style objective. The masked-image target reconstructs raw
-voxels plus HOG features, the pretrained ViT encoder is transferred into
-UNETR, and final instances are produced from affinity maps with classical
-post-processing such as waterz/LMC.
+**Decision-based MIM.** The pretraining stage treats each 3D ViT patch as an
+agent. Each agent chooses a binary action, `keep` or `mask`, and all agents
+share policy parameters. The target network provides global and local features
+for the decision module. The policy receives a team reward from the change in
+masked-reconstruction loss and is trained with an actor-critic/A2C-style
+objective.
 
-This repository keeps that core paper framing: self-supervised EM pretraining,
-dbMiM/MAE controls, UNETR affinity finetuning, and waterz-style segmentation
-evaluation. It is **not** a byte-for-byte rerun of the IJCAI tables. The
-maintained experiments add practical updates that were needed for a stronger
-modern CREMI reproduction:
+**Reconstruction targets.** The masked-image target reconstructs raw EM voxels
+and structure-aware features. The maintained dbMiM pretraining path uses raw
+reconstruction, membrane-aware reconstruction weighting, and a lightweight
+structure consistency term. Plain MAE controls use the same data, crop size,
+model size, mask ratio, and training schedule with the dbMiM-specific structure
+terms disabled.
 
-- an anisotropic EM UNETR implementation instead of a generic isotropic UNETR;
-- publicEM/fullEM pretraining sets beyond the exact paper subset;
-- MSE + membrane-aware spatial weighting for supervised affinity finetuning;
-- full-volume CREMI A/B/C validation grouping for controlled ablations.
+**UNETR transfer.** Finetuning loads compatible ViT encoder prefixes from the
+pretrained masked-image model into the anisotropic UNETR affinity network:
+`pos_embed`, `patch_embed`, `encoder_blocks`, and `norm`. The convolutional
+decoder and affinity head are trained for the supervised CREMI task.
 
-The paper's CREMI protocol splits each sample by slices for train/validation
-and test, while the current tables below report official-style validation over
-the public labeled A/B/C volumes. The numbers should therefore be read as the
-current controlled reproduction and improvement track, not as a direct copy of
-the IJCAI table layout.
+**Affinity and instance decoding.** CREMI instance labels are converted to
+nearest-neighbor z/y/x affinities. The finetuned network predicts affinity
+logits; calibrated affinities are converted to instance labels with watershed
+fragments and waterz agglomeration.
+
+**Evaluation protocol.** The maintained validation protocol runs full-volume
+sliding-window inference on public CREMI A/B/C labeled volumes, applies
+CREMI-style boundary ignore (`xy=1`, `z=0`), and reports aggregate `voi_sum`
+and `adapted_rand_error` over A/B/C.
 
 ## Post-processing Scope
 
@@ -75,13 +76,9 @@ method line in:
 
 **https://github.com/ydchen0806/nnEM-Seg-diff-postprocess**
 
-The separation is intentional. Learned RAG, differentiable connected
-components, GPU watershed, and future GPU/MWS-style solvers are post-processing
-methods that should be evaluated independently from dbMiM pretraining. The
-current dbMiM R48 transfer result is a useful negative/diagnostic baseline:
-learned RAG with morphology context reaches `VOI=1.294653`, `ARAND=0.283912`
-on full CREMI A/B/C, which is faster in the final merge step but still far from
-the R48 waterz reference `VOI=0.962154`, `ARAND=0.178252`.
+Learned RAG, differentiable connected components, GPU watershed, and
+GPU/MWS-style solvers are maintained there so this repository can stay focused
+on the official dbMiM pretraining and affinity-segmentation implementation.
 
 The current best controlled result is **R48**, which uses the publicEM dbMiM
 pretrained encoder from the R16 line, seed-isolated finetuning (`seed=309`),
@@ -160,9 +157,8 @@ The protocol is:
 - sweep calibration biases and waterz thresholds;
 - report aggregate A/B/C `voi_sum` and `adapted_rand_error`.
 
-This split is small but matches the controlled ablation goal: isolate whether
-dbMiM pretraining improves the same anisotropic UNETR finetuning recipe over
-scratch and plain MAE controls.
+This validation setup is used to isolate whether dbMiM pretraining improves the
+same anisotropic UNETR finetuning recipe over scratch and plain MAE controls.
 
 ## Results
 

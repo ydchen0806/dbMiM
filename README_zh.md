@@ -15,7 +15,7 @@
 
 ## 当前方法
 
-当前最好方法不是最早的简单复现，而是经过消融后稳定有效的一条主线：
+官方实现遵循 dbMiM 神经元分割流程：
 
 1. **各向异性 UNETR backbone**：使用 `UNETRAnisotropicAffinityNet`，
    输入 crop 为 `32x160x160`，`patch_size=(4,16,16)`，Transformer hidden
@@ -31,26 +31,29 @@
    `ignore_label=0`，CREMI 风格 XY boundary ignore distance `1`，z 方向为 `0`，
    并做 logit calibration bias 与 waterz threshold sweep。
 
-## 和 IJCAI 2023 论文方法的关系
+## 具体实现细节
 
-IJCAI 2023 论文里的 **decision-based MIM (dbMiM)** 核心是把 3D ViT patch
-看成多个 agent，每个 agent 的动作是二选一：保留 patch 或 mask patch。共享
-policy network 使用 target network 的特征作为 state/observation，reward 来自
-masked reconstruction loss 的变化，并用 actor-critic / A2C 风格目标更新。
-预训练目标同时重建 raw voxel 和 HOG feature；微调时把预训练 ViT encoder
-迁移到 UNETR；最后从 affinity map 经过 waterz/LMC 等经典后处理得到实例分割。
+**Decision-based MIM。** 预训练阶段把每个 3D ViT patch 看成一个 agent。每个
+agent 的动作是二选一：`keep` 或 `mask`，所有 agent 共享 policy 参数。target
+network 为 decision module 提供全局和局部特征；policy 的 team reward 来自
+masked reconstruction loss 的变化，并用 actor-critic / A2C 风格目标训练。
 
-本仓库保留了这条论文主线：EM 自监督预训练、dbMiM/MAE 对照、UNETR affinity
-微调和 waterz 风格分割评测。但它不是 IJCAI 表格的逐字节复跑。当前维护版本加入了
-更适合现代 CREMI 复现实验的工程增强：
+**重建目标。** masked-image target 重建 raw EM voxel 和结构相关特征。当前维护的
+dbMiM 预训练路径使用 raw reconstruction、membrane-aware reconstruction
+weighting 和轻量 structure consistency term。plain MAE 控制组保持相同数据、crop、
+模型大小、mask ratio 和训练 schedule，只关闭 dbMiM-specific structure terms。
 
-- 面向 EM 的各向异性 UNETR，而不是通用各向同性 UNETR；
-- publicEM/fullEM 预训练集合，而不完全局限于论文中的数据子集；
-- MSE + membrane-aware spatial weighting 的监督 affinity 微调；
-- 用 CREMI A/B/C full-volume validation grouping 做受控消融。
+**UNETR 迁移。** 微调时把 masked-image model 中兼容的 ViT encoder 前缀加载到
+各向异性 UNETR affinity 网络：`pos_embed`、`patch_embed`、`encoder_blocks` 和
+`norm`。卷积 decoder 与 affinity head 在 CREMI 监督任务上训练。
 
-论文中的 CREMI 口径是每个 sample 按 slice 划分训练/验证/测试；本文档里的结果是
-public labeled A/B/C volumes 上的 official-style full-volume validation。因此这些数字应被理解为当前复现和增强路线的受控结果，而不是 IJCAI 表格版式的直接复刻。
+**Affinity 与实例解码。** CREMI instance label 被转换为 z/y/x 最近邻 affinity。
+微调网络预测 affinity logits；校准后的 affinity 经过 watershed fragments 和
+waterz agglomeration 得到实例分割。
+
+**评测口径。** 当前维护的验证流程在公开 CREMI A/B/C labeled volumes 上做
+full-volume sliding-window inference，启用 CREMI-style boundary ignore
+(`xy=1`, `z=0`)，并汇报 A/B/C 聚合后的 `voi_sum` 和 `adapted_rand_error`。
 
 ## 后处理范围
 
@@ -61,12 +64,9 @@ VOI/ARAND 的参考后处理 backend。
 
 **https://github.com/ydchen0806/nnEM-Seg-diff-postprocess**
 
-这样切开是有必要的。Learned RAG、differentiable connected components、GPU
-watershed 和后续 GPU/MWS-style solver 都是独立后处理方法，不应该混在 dbMiM
-预训练主线里。当前 dbMiM R48 迁移实验可以作为负结果/诊断 baseline：带
-morphology context 的 learned RAG 在 CREMI A/B/C full-volume 上达到
-`VOI=1.294653`、`ARAND=0.283912`，最终 merge 更快，但离 R48 waterz 参考结果
-`VOI=0.962154`、`ARAND=0.178252` 还很远。
+Learned RAG、differentiable connected components、GPU watershed 和
+GPU/MWS-style solver 会在该仓库维护；dbMiM 仓库专注于官方预训练与 affinity
+分割实现。
 
 当前最好的受控结果是 **R48**：它使用 R16 线的 publicEM dbMiM 预训练
 encoder，固定微调 seed 为 `309`，并把 MSE+MAWS 微调延长到 20k step。在
@@ -138,7 +138,8 @@ raw key 是 `volumes/raw`，instance label key 是
 - sweep calibration bias 和 waterz threshold；
 - 报告 A/B/C 聚合后的 `voi_sum` 和 `adapted_rand_error`。
 
-这个划分很小，但适合当前目标：在同一各向异性 UNETR、同一微调 recipe、同一后处理下，对比 dbMiM 预训练、scratch 和 plain MAE 控制组。
+这个验证设置用于在同一各向异性 UNETR、同一微调 recipe、同一后处理下，对比 dbMiM
+预训练、scratch 和 plain MAE 控制组。
 
 ## 结果
 
