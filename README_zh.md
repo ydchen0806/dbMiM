@@ -9,7 +9,7 @@
 - 在未标注 EM 体数据上做 dbMiM / MAE 风格自监督预训练；
 - 在 CREMI 上用各向异性 3D UNETR 做 affinity 微调；
 - 在 CREMI A/B/C 全体积上用 VOI 和 adapted Rand error (ARAND) 评测；
-- 用 waterz 后处理，并做 calibration / threshold sweep。
+- 用 waterz 作为参考后处理，并做小范围 calibration / threshold sweep。
 
 旧的私有集群提交器、历史实验报告、缓存字节码、旧 dataloader、旧模型和临时脚本已经从 Git 中删除。大数据、权重、报告和本地实验输出会被 `.gitignore` 忽略。
 
@@ -30,6 +30,43 @@
 4. **official-style waterz 评测**：在 CREMI A/B/C 全体积上评测，使用
    `ignore_label=0`，CREMI 风格 XY boundary ignore distance `1`，z 方向为 `0`，
    并做 logit calibration bias 与 waterz threshold sweep。
+
+## 和 IJCAI 2023 论文方法的关系
+
+IJCAI 2023 论文里的 **decision-based MIM (dbMiM)** 核心是把 3D ViT patch
+看成多个 agent，每个 agent 的动作是二选一：保留 patch 或 mask patch。共享
+policy network 使用 target network 的特征作为 state/observation，reward 来自
+masked reconstruction loss 的变化，并用 actor-critic / A2C 风格目标更新。
+预训练目标同时重建 raw voxel 和 HOG feature；微调时把预训练 ViT encoder
+迁移到 UNETR；最后从 affinity map 经过 waterz/LMC 等经典后处理得到实例分割。
+
+本仓库保留了这条论文主线：EM 自监督预训练、dbMiM/MAE 对照、UNETR affinity
+微调和 waterz 风格分割评测。但它不是 IJCAI 表格的逐字节复跑。当前维护版本加入了
+更适合现代 CREMI 复现实验的工程增强：
+
+- 面向 EM 的各向异性 UNETR，而不是通用各向同性 UNETR；
+- publicEM/fullEM 预训练集合，而不完全局限于论文中的数据子集；
+- MSE + membrane-aware spatial weighting 的监督 affinity 微调；
+- 用 CREMI A/B/C full-volume validation grouping 做受控消融。
+
+论文中的 CREMI 口径是每个 sample 按 slice 划分训练/验证/测试；本文档里的结果是
+public labeled A/B/C volumes 上的 official-style full-volume validation。因此这些数字应被理解为当前复现和增强路线的受控结果，而不是 IJCAI 表格版式的直接复刻。
+
+## 后处理范围
+
+这个仓库现在收口为 dbMiM 预训练和 UNETR affinity 分割主线。waterz 仍然是汇报
+VOI/ARAND 的参考后处理 backend。
+
+可学习/可微后处理会作为独立新方法维护在：
+
+**https://github.com/ydchen0806/nnEM-Seg-diff-postprocess**
+
+这样切开是有必要的。Learned RAG、differentiable connected components、GPU
+watershed 和后续 GPU/MWS-style solver 都是独立后处理方法，不应该混在 dbMiM
+预训练主线里。当前 dbMiM R48 迁移实验可以作为负结果/诊断 baseline：带
+morphology context 的 learned RAG 在 CREMI A/B/C full-volume 上达到
+`VOI=1.294653`、`ARAND=0.283912`，最终 merge 更快，但离 R48 waterz 参考结果
+`VOI=0.962154`、`ARAND=0.178252` 还很远。
 
 当前最好的受控结果是 **R48**：它使用 R16 线的 publicEM dbMiM 预训练
 encoder，固定微调 seed 为 `309`，并把 MSE+MAWS 微调延长到 20k step。在

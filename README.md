@@ -9,7 +9,7 @@ neuron-segmentation experiments on CREMI. The maintained path is:
 - self-supervised dbMiM / MAE-style pretraining on unlabeled EM volumes;
 - anisotropic 3D UNETR affinity finetuning on CREMI;
 - full-volume CREMI A/B/C evaluation with VOI and adapted Rand error (ARAND);
-- waterz-based post-processing with calibration and threshold sweeps.
+- waterz-based reference post-processing with small calibration and threshold sweeps.
 
 The old private cluster launchers, scratch reports, cached bytecode, legacy
 models, and historical dataloaders have been removed from Git. Large data,
@@ -34,6 +34,54 @@ the following changes that were stable in ablations:
 4. **Official-style waterz evaluation**: full CREMI A/B/C labeled volumes are
    evaluated with `ignore_label=0`, CREMI-style XY boundary ignore distance `1`,
    z boundary ignore `0`, logit calibration biases, and a waterz threshold sweep.
+
+## Relation to the IJCAI 2023 Paper
+
+The IJCAI 2023 paper describes **decision-based MIM (dbMiM)** for EM neuron
+segmentation. In the paper, each 3D ViT patch is treated as an agent whose
+action is binary: keep the patch visible or mask it. A shared policy network
+uses target-network features as state/observation, receives team reward from
+the change in masked-reconstruction loss, and is optimized with an
+actor-critic/A2C-style objective. The masked-image target reconstructs raw
+voxels plus HOG features, the pretrained ViT encoder is transferred into
+UNETR, and final instances are produced from affinity maps with classical
+post-processing such as waterz/LMC.
+
+This repository keeps that core paper framing: self-supervised EM pretraining,
+dbMiM/MAE controls, UNETR affinity finetuning, and waterz-style segmentation
+evaluation. It is **not** a byte-for-byte rerun of the IJCAI tables. The
+maintained experiments add practical updates that were needed for a stronger
+modern CREMI reproduction:
+
+- an anisotropic EM UNETR implementation instead of a generic isotropic UNETR;
+- publicEM/fullEM pretraining sets beyond the exact paper subset;
+- MSE + membrane-aware spatial weighting for supervised affinity finetuning;
+- full-volume CREMI A/B/C validation grouping for controlled ablations.
+
+The paper's CREMI protocol splits each sample by slices for train/validation
+and test, while the current tables below report official-style validation over
+the public labeled A/B/C volumes. The numbers should therefore be read as the
+current controlled reproduction and improvement track, not as a direct copy of
+the IJCAI table layout.
+
+## Post-processing Scope
+
+This repository is now closed around the dbMiM pretraining and UNETR affinity
+segmentation line. waterz remains the reference post-processing backend for
+headline VOI/ARAND results.
+
+Learnable and differentiable post-processing is being developed as a separate
+method line in:
+
+**https://github.com/ydchen0806/nnEM-Seg-diff-postprocess**
+
+The separation is intentional. Learned RAG, differentiable connected
+components, GPU watershed, and future GPU/MWS-style solvers are post-processing
+methods that should be evaluated independently from dbMiM pretraining. The
+current dbMiM R48 transfer result is a useful negative/diagnostic baseline:
+learned RAG with morphology context reaches `VOI=1.294653`, `ARAND=0.283912`
+on full CREMI A/B/C, which is faster in the final merge step but still far from
+the R48 waterz reference `VOI=0.962154`, `ARAND=0.178252`.
 
 The current best controlled result is **R48**, which uses the publicEM dbMiM
 pretrained encoder from the R16 line, seed-isolated finetuning (`seed=309`),
