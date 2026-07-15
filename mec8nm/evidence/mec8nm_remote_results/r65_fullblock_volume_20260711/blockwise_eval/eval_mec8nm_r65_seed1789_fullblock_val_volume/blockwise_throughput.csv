@@ -1,0 +1,3 @@
+sample,affinity_variant,inference_normalization,calibration_bias_z,calibration_bias_y,calibration_bias_x,calibration_temperature,window_d,window_h,window_w,stride_d,stride_h,stride_w,seam_fraction,num_chunks,inference_sec,total_voxels,voxels_per_sec,core_voxels_sum,chunk_d,chunk_h,chunk_w,halo_d,halo_h,halo_w
+mec8nm_08.h5,blockwise_halo_bias_z-0.20_y-0.45_x-0.45_t1.00,volume,-0.2,-0.45,-0.45,1.0,32,160,160,16,80,80,0.18619981824,36,64.58252417005133,195312500,3024231.438921858,195312500,32,512,512,8,64,64
+mec8nm_10.h5,blockwise_halo_bias_z-0.20_y-0.45_x-0.45_t1.00,volume,-0.2,-0.45,-0.45,1.0,32,160,160,16,80,80,0.18619981824,36,62.7715101056383,195312500,3111483.213822771,195312500,32,512,512,8,64,64

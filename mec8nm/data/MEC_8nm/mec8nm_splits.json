@@ -1,0 +1,144 @@
+{
+  "dataset": "MEC_8nm_myelin",
+  "policy": "block-level holdout; train includes odd-shape sample 6, val/test each include a uint8-label block",
+  "splits": {
+    "test": [
+      {
+        "foreground_fraction": 0.92450322944,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_11.h5",
+        "index": 11,
+        "num_nonzero_labels": 642,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.97376295424,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_12.h5",
+        "index": 12,
+        "num_nonzero_labels": 202,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      }
+    ],
+    "train": [
+      {
+        "foreground_fraction": 0.92068571648,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_01.h5",
+        "index": 1,
+        "num_nonzero_labels": 684,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.90987280384,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_02.h5",
+        "index": 2,
+        "num_nonzero_labels": 843,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.89712421888,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_03.h5",
+        "index": 3,
+        "num_nonzero_labels": 926,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.80301228544,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_04.h5",
+        "index": 4,
+        "num_nonzero_labels": 919,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.8298603413032963,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_05.h5",
+        "index": 5,
+        "num_nonzero_labels": 946,
+        "shape": [
+          125,
+          1251,
+          1251
+        ]
+      },
+      {
+        "foreground_fraction": 0.82014918144,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_06.h5",
+        "index": 6,
+        "num_nonzero_labels": 817,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.9390035456,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_07.h5",
+        "index": 7,
+        "num_nonzero_labels": 372,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.93059518976,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_09.h5",
+        "index": 9,
+        "num_nonzero_labels": 722,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      }
+    ],
+    "val": [
+      {
+        "foreground_fraction": 0.97466946048,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_08.h5",
+        "index": 8,
+        "num_nonzero_labels": 66,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      },
+      {
+        "foreground_fraction": 0.95711866368,
+        "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_10.h5",
+        "index": 10,
+        "num_nonzero_labels": 397,
+        "shape": [
+          125,
+          1250,
+          1250
+        ]
+      }
+    ]
+  }
+}

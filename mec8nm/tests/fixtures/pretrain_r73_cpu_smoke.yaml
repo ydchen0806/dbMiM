@@ -1,0 +1,51 @@
+seed: 73
+device: cpu
+output_dir: /tmp/dbmim_r73_pretrain_smoke
+pretrained_min_keys: 1
+data:
+  synthetic: true
+  synthetic_length: 1
+  volume_size:
+  - 8
+  - 32
+  - 32
+model:
+  architecture: decoder_aware
+  in_channels: 1
+  out_channels: 3
+  volume_size:
+  - 8
+  - 32
+  - 32
+  patch_size:
+  - 4
+  - 16
+  - 16
+  embed_dim: 24
+  depth: 3
+  num_heads: 3
+  feature_size: 4
+  decoder_dim: 24
+  mask_ratio: 0.75
+  structure_weight: 0.2
+  affinity_weight: 0.1
+  dropout: 0.0
+  em_refine_depth: 1
+  channel_bias_init:
+  - -0.2
+  - 0.0
+  - 0.0
+decision:
+  enabled: false
+train:
+  batch_size: 1
+  epochs: 1
+  max_steps: 1
+  num_workers: 0
+  lr: 2.0e-05
+  weight_decay: 0.01
+  amp: false
+  log_every: 1
+  save_every: 1
+  save_steps: 1
+  clip_grad: 1.0

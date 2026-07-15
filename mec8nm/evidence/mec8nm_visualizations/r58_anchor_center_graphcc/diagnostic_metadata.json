@@ -1,0 +1,64 @@
+[
+  {
+    "sample": "mec8nm_08.h5",
+    "crop": [
+      [
+        46,
+        78
+      ],
+      [
+        545,
+        705
+      ],
+      [
+        545,
+        705
+      ]
+    ],
+    "checkpoint": "outputs/hf_release/dbmim-neuron-segmentation/weights/publicem_dbmim_r57_seed777_long20k/finetuned_latest.pt",
+    "threshold": 0.5,
+    "bias": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "temperature": 1.15,
+    "backend": "graph_cc",
+    "arand": 0.07661480856186209,
+    "voi": 1.026190271370519,
+    "n_gt": 5,
+    "n_pred": 28092,
+    "figure": "outputs/mec8nm_visualizations/r58_anchor_center_graphcc/mec8nm_08_center_diagnostic.png"
+  },
+  {
+    "sample": "mec8nm_10.h5",
+    "crop": [
+      [
+        46,
+        78
+      ],
+      [
+        545,
+        705
+      ],
+      [
+        545,
+        705
+      ]
+    ],
+    "checkpoint": "outputs/hf_release/dbmim-neuron-segmentation/weights/publicem_dbmim_r57_seed777_long20k/finetuned_latest.pt",
+    "threshold": 0.5,
+    "bias": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "temperature": 1.15,
+    "backend": "graph_cc",
+    "arand": 0.039441871142109286,
+    "voi": 0.8122454048494571,
+    "n_gt": 1,
+    "n_pred": 31339,
+    "figure": "outputs/mec8nm_visualizations/r58_anchor_center_graphcc/mec8nm_10_center_diagnostic.png"
+  }
+]

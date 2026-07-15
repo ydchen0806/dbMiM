@@ -1,0 +1,157 @@
+{
+  "baseline": {
+    "balance": 0.08376122743618136,
+    "bias": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mean_arand": 0.02254600366656634,
+    "mean_voi": 0.3111834507513943,
+    "samples": {
+      "mec8nm_08.h5": {
+        "affinity_variant": "bias_z+0.00_y+0.00_x+0.00_t1.15",
+        "arand": 0.014948239287021159,
+        "n_pred": 242,
+        "voi": 0.2561279667535462
+      },
+      "mec8nm_10.h5": {
+        "affinity_variant": "bias_z+0.00_y+0.00_x+0.00_t1.15",
+        "arand": 0.03014376804611152,
+        "n_pred": 120,
+        "voi": 0.3662389347492424
+      }
+    },
+    "strict_crop_gate": true,
+    "temperature": 1.15,
+    "threshold": 0.5,
+    "vs_baseline_pct": {
+      "balance": 0.0,
+      "m08_arand": 0.0,
+      "m08_voi": 0.0,
+      "mean_arand": 0.0,
+      "mean_voi": 0.0
+    },
+    "worst_balance": 0.1050705548597519
+  },
+  "baseline_integrity": {
+    "collapsed_rows": 64,
+    "duplicate_rows": 16,
+    "raw_rows": 80
+  },
+  "baseline_metrics": "outputs/tos_fetch/finetune_mec8nm_r58_seed1789_balanced_stage1/eval_val_crop64x512/eval_finetune_mec8nm_r58_seed1789_balanced_stage1_val_crop64x512/cremi_segmentation_metrics.csv",
+  "best_balance": {
+    "balance": 0.15997791970279868,
+    "bias": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mean_arand": 0.06202138118921213,
+    "mean_voi": 0.4126469662834062,
+    "samples": {
+      "mec8nm_08.h5": {
+        "affinity_variant": "pred",
+        "arand": 0.03559146618605835,
+        "n_pred": 243,
+        "voi": 0.33750906487032684
+      },
+      "mec8nm_10.h5": {
+        "affinity_variant": "pred",
+        "arand": 0.08845129619236591,
+        "n_pred": 132,
+        "voi": 0.48778486769648555
+      }
+    },
+    "strict_crop_gate": false,
+    "temperature": 1.0,
+    "threshold": 0.5,
+    "vs_baseline_pct": {
+      "balance": 90.99280729223756,
+      "m08_arand": 138.09804956066444,
+      "m08_voi": 31.773608773886018,
+      "mean_arand": 175.08813582419563,
+      "mean_voi": 32.605691365339176
+    },
+    "worst_balance": 0.20771423593672117
+  },
+  "integrity": {
+    "collapsed_rows": 64,
+    "duplicate_rows": 16,
+    "raw_rows": 80
+  },
+  "metrics": "outputs/tos_fetch/finetune_mec8nm_r79_seed1789_topology_teacher_stage1/eval_val_crop64x512/eval_finetune_mec8nm_r79_seed1789_topology_teacher_stage1_val_crop64x512/cremi_segmentation_metrics.csv",
+  "pareto": [
+    {
+      "balance": 0.15997791970279868,
+      "bias": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean_arand": 0.06202138118921213,
+      "mean_voi": 0.4126469662834062,
+      "samples": {
+        "mec8nm_08.h5": {
+          "affinity_variant": "pred",
+          "arand": 0.03559146618605835,
+          "n_pred": 243,
+          "voi": 0.33750906487032684
+        },
+        "mec8nm_10.h5": {
+          "affinity_variant": "pred",
+          "arand": 0.08845129619236591,
+          "n_pred": 132,
+          "voi": 0.48778486769648555
+        }
+      },
+      "strict_crop_gate": false,
+      "temperature": 1.0,
+      "threshold": 0.5,
+      "vs_baseline_pct": {
+        "balance": 90.99280729223756,
+        "m08_arand": 138.09804956066444,
+        "m08_voi": 31.773608773886018,
+        "mean_arand": 175.08813582419563,
+        "mean_voi": 32.605691365339176
+      },
+      "worst_balance": 0.20771423593672117
+    },
+    {
+      "balance": 0.16232392073509616,
+      "bias": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "mean_arand": 0.0596145810222809,
+      "mean_voi": 0.441990110321598,
+      "samples": {
+        "mec8nm_08.h5": {
+          "affinity_variant": "bias_z+0.00_y+0.00_x+0.00_t1.15",
+          "arand": 0.033324479786702166,
+          "n_pred": 237,
+          "voi": 0.38075273992099334
+        },
+        "mec8nm_10.h5": {
+          "affinity_variant": "bias_z+0.00_y+0.00_x+0.00_t1.15",
+          "arand": 0.08590468225785963,
+          "n_pred": 129,
+          "voi": 0.5032274807222027
+        }
+      },
+      "strict_crop_gate": false,
+      "temperature": 1.15,
+      "threshold": 0.5,
+      "vs_baseline_pct": {
+        "balance": 93.79362707975191,
+        "m08_arand": 122.93247483425165,
+        "m08_voi": 48.657229722736496,
+        "mean_arand": 164.41307250687566,
+        "mean_voi": 42.03522367733677
+      },
+      "worst_balance": 0.20791728363670012
+    }
+  ],
+  "strict_crop_gate_passes": []
+}

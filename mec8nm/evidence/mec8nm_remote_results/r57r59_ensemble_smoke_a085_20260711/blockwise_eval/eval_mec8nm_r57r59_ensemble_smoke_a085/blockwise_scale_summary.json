@@ -1,0 +1,246 @@
+{
+  "best_full_by_adapted_rand": {
+    "adapted_rand_error": 0.03966103596538478,
+    "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+    "backend": "waterz",
+    "boundary_threshold": 0.5,
+    "inference_normalization": "volume",
+    "min_boundary": 4,
+    "n": 2,
+    "postprocess_sec": 0.7846713376541933,
+    "rag_quantile": 0.25,
+    "rand_fscore": 0.9603389640346152,
+    "region": "full",
+    "score_mode": "mean",
+    "seed_distance": 10,
+    "seed_nms_radius": 0,
+    "threshold": 0.6,
+    "voi_merge": 0.12557568636072808,
+    "voi_split": 0.19913337758159988,
+    "voi_sum": 0.3247090639423279,
+    "waterz_scoring": "hist_quantile",
+    "xy_threshold": "",
+    "z_threshold": ""
+  },
+  "best_full_by_voi_sum": {
+    "adapted_rand_error": 0.03966103596538478,
+    "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+    "backend": "waterz",
+    "boundary_threshold": 0.5,
+    "inference_normalization": "volume",
+    "min_boundary": 4,
+    "n": 2,
+    "postprocess_sec": 0.7846713376541933,
+    "rag_quantile": 0.25,
+    "rand_fscore": 0.9603389640346152,
+    "region": "full",
+    "score_mode": "mean",
+    "seed_distance": 10,
+    "seed_nms_radius": 0,
+    "threshold": 0.6,
+    "voi_merge": 0.12557568636072808,
+    "voi_split": 0.19913337758159988,
+    "voi_sum": 0.3247090639423279,
+    "waterz_scoring": "hist_quantile",
+    "xy_threshold": "",
+    "z_threshold": ""
+  },
+  "calibration_biases": [
+    [
+      0.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "calibration_temperatures": [
+    1.0
+  ],
+  "checkpoint": "assets/r57_mec_stage1/finetuned_latest.pt",
+  "chunk_size": [
+    32,
+    160,
+    160
+  ],
+  "config": "configs/runtime_eval_mec8nm_r57r59_ensemble_smoke_a085.yaml",
+  "crop_size": [
+    32,
+    160,
+    160
+  ],
+  "data_dir": "data/MEC_8nm/hdf5",
+  "ensemble": {
+    "checkpoints": [
+      "assets/r57_mec_stage1/finetuned_latest.pt",
+      "assets/r59_mec_stage1/finetuned_latest.pt"
+    ],
+    "member_biases": [
+      [
+        -0.20000000298023224,
+        -0.44999998807907104,
+        -0.44999998807907104
+      ],
+      [
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "member_has_postprocess": [
+      false,
+      true
+    ],
+    "member_temperatures": [
+      1.2000000476837158,
+      1.2000000476837158
+    ],
+    "mode": "weighted_logit_mean",
+    "weights": [
+      0.8500000238418579,
+      0.15000000596046448
+    ]
+  },
+  "failures": [],
+  "halo": [
+    0,
+    0,
+    0
+  ],
+  "num_records": 6,
+  "per_group": [
+    {
+      "adapted_rand_error": 0.20119965138389284,
+      "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+      "backend": "waterz",
+      "boundary_threshold": 0.5,
+      "inference_normalization": "volume",
+      "min_boundary": 4,
+      "n": 2,
+      "postprocess_sec": 0.7846713376541933,
+      "rag_quantile": 0.25,
+      "rand_fscore": 0.7988003486161072,
+      "region": "full",
+      "score_mode": "mean",
+      "seed_distance": 10,
+      "seed_nms_radius": 0,
+      "threshold": 0.16,
+      "voi_merge": 0.12358761221953425,
+      "voi_split": 1.1944317253226875,
+      "voi_sum": 1.3180193375422218,
+      "waterz_scoring": "hist_quantile",
+      "xy_threshold": "",
+      "z_threshold": ""
+    },
+    {
+      "adapted_rand_error": 0.16587042864672014,
+      "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+      "backend": "waterz",
+      "boundary_threshold": 0.5,
+      "inference_normalization": "volume",
+      "min_boundary": 4,
+      "n": 2,
+      "postprocess_sec": 0.7846713376541933,
+      "rag_quantile": 0.25,
+      "rand_fscore": 0.8341295713532799,
+      "region": "full",
+      "score_mode": "mean",
+      "seed_distance": 10,
+      "seed_nms_radius": 0,
+      "threshold": 0.32,
+      "voi_merge": 0.12450114236973349,
+      "voi_split": 0.8764379566002489,
+      "voi_sum": 1.0009390989699822,
+      "waterz_scoring": "hist_quantile",
+      "xy_threshold": "",
+      "z_threshold": ""
+    },
+    {
+      "adapted_rand_error": 0.03966103596538478,
+      "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+      "backend": "waterz",
+      "boundary_threshold": 0.5,
+      "inference_normalization": "volume",
+      "min_boundary": 4,
+      "n": 2,
+      "postprocess_sec": 0.7846713376541933,
+      "rag_quantile": 0.25,
+      "rand_fscore": 0.9603389640346152,
+      "region": "full",
+      "score_mode": "mean",
+      "seed_distance": 10,
+      "seed_nms_radius": 0,
+      "threshold": 0.6,
+      "voi_merge": 0.12557568636072808,
+      "voi_split": 0.19913337758159988,
+      "voi_sum": 0.3247090639423279,
+      "waterz_scoring": "hist_quantile",
+      "xy_threshold": "",
+      "z_threshold": ""
+    }
+  ],
+  "seam_width": [
+    0,
+    0,
+    0
+  ],
+  "stride": [
+    16,
+    80,
+    80
+  ],
+  "throughput_records": [
+    {
+      "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+      "calibration_bias_x": 0.0,
+      "calibration_bias_y": 0.0,
+      "calibration_bias_z": 0.0,
+      "calibration_temperature": 1.0,
+      "chunk_d": 32,
+      "chunk_h": 160,
+      "chunk_w": 160,
+      "core_voxels_sum": 819200,
+      "halo_d": 0,
+      "halo_h": 0,
+      "halo_w": 0,
+      "inference_normalization": "volume",
+      "inference_sec": 0.5765157248824835,
+      "num_chunks": 1,
+      "sample": "mec8nm_08.h5",
+      "seam_fraction": 0.0,
+      "stride_d": 16,
+      "stride_h": 80,
+      "stride_w": 80,
+      "total_voxels": 819200,
+      "voxels_per_sec": 1420949.9665720048,
+      "window_d": 32,
+      "window_h": 160,
+      "window_w": 160
+    },
+    {
+      "affinity_variant": "blockwise_halo_bias_z+0.00_y+0.00_x+0.00_t1.00",
+      "calibration_bias_x": 0.0,
+      "calibration_bias_y": 0.0,
+      "calibration_bias_z": 0.0,
+      "calibration_temperature": 1.0,
+      "chunk_d": 32,
+      "chunk_h": 160,
+      "chunk_w": 160,
+      "core_voxels_sum": 819200,
+      "halo_d": 0,
+      "halo_h": 0,
+      "halo_w": 0,
+      "inference_normalization": "volume",
+      "inference_sec": 0.0606133583933115,
+      "num_chunks": 1,
+      "sample": "mec8nm_10.h5",
+      "seam_fraction": 0.0,
+      "stride_d": 16,
+      "stride_h": 80,
+      "stride_w": 80,
+      "total_voxels": 819200,
+      "voxels_per_sec": 13515172.590905245,
+      "window_d": 32,
+      "window_h": 160,
+      "window_w": 160
+    }
+  ]
+}

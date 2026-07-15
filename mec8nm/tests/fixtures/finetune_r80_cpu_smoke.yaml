@@ -1,0 +1,66 @@
+seed: 80
+device: cpu
+output_dir: /tmp/mec8nm_r80_cpu_smoke
+data:
+  synthetic: true
+  synthetic_length: 2
+  volume_size:
+  - 8
+  - 32
+  - 32
+model:
+  architecture: unetr_aniso_em
+  in_channels: 1
+  out_channels: 3
+  volume_size:
+  - 8
+  - 32
+  - 32
+  patch_size:
+  - 4
+  - 16
+  - 16
+  embed_dim: 24
+  depth: 3
+  num_heads: 3
+  feature_size: 4
+  dropout: 0.0
+  em_refine_depth: 1
+  channel_bias_init:
+  - -0.2
+  - 0.0
+  - 0.0
+train:
+  batch_size: 1
+  epochs: 1
+  max_steps: 1
+  num_workers: 0
+  lr: 0.0001
+  weight_decay: 0.0
+  amp: false
+  log_every: 1
+  eval_every: 0
+  save_every: 0
+  save_steps: 0
+  val_fraction: 0.0
+  clip_grad: 1.0
+  replicate_affinity_boundary: true
+  instance_embedding:
+    weight: 0.02
+    feature_stride:
+    - 1
+    - 2
+    - 2
+    min_voxels: 1
+    max_instances: 16
+    variance_margin: 0.20
+    distance_margin: 1.0
+    variance_weight: 1.0
+    distance_weight: 1.0
+  loss:
+    loss_type: weighted_mse
+    weight_alpha: 1.0
+    channel_weights:
+    - 1.0
+    - 1.0
+    - 1.0

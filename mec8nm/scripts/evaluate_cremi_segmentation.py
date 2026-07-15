@@ -1,0 +1,1199 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import csv
+import itertools
+import json
+import sys
+import time
+from pathlib import Path
+from typing import Iterable, Sequence
+
+import numpy as np
+import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from dbmim.datasets import labels_to_affinities, normalize_volume
+from dbmim.metrics import binary_iou_from_logits, dice_from_logits
+from dbmim.postprocess import (
+    affinities_to_connected_components,
+    agglomerate_fragments_by_affinity,
+    cc3d_mean_affinity_components,
+    cupy_affinity_graph_connected_components,
+    cupy_mean_affinity_components,
+    segmentation_metrics,
+    waterz_agglomeration,
+    waterz_agglomerations,
+    watershed_fragments,
+)
+from train_finetune import _loss_cfg, build_affinity_model
+from dbmim.models import LearnableAffinityPostProcessor
+from dbmim.utils import ensure_dir, load_checkpoint, load_config
+
+
+def _lazy_h5py():
+    try:
+        import h5py  # type: ignore
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("h5py is required for CREMI HDF5 evaluation") from exc
+    return h5py
+
+
+def list_cremi_files(data_dir: str | Path) -> list[Path]:
+    data_dir = Path(data_dir)
+    files = sorted(data_dir.glob("sample_*_20160501.hdf"))
+    if not files:
+        files = sorted(p for p in data_dir.rglob("*") if p.suffix.lower() in {".h5", ".hdf", ".hdf5"})
+    if not files:
+        raise FileNotFoundError(f"no HDF5 files found under {data_dir}")
+    return files
+
+
+def select_cremi_files(files: list[Path], names: list[str] | None) -> list[Path]:
+    if not names:
+        return files
+    by_name = {path.name: path for path in files}
+    by_stem = {path.stem: path for path in files}
+    selected: list[Path] = []
+    for name in names:
+        path = by_name.get(name) or by_stem.get(Path(name).stem)
+        if path is None:
+            raise FileNotFoundError(f"requested sample {name!r} not found; available={[p.name for p in files]}")
+        selected.append(path)
+    return selected
+
+
+def select_h5_dataset(handle, keys: Iterable[str]):
+    for key in keys:
+        if key in handle:
+            item = handle[key]
+            if hasattr(item, "shape"):
+                return item
+    raise KeyError(f"none of these HDF5 keys exist: {list(keys)}")
+
+
+def center_slices(shape: tuple[int, int, int], crop_size: tuple[int, int, int]) -> tuple[slice, slice, slice]:
+    slices = []
+    for dim, crop in zip(shape, crop_size):
+        if crop <= 0 or crop >= dim:
+            start = 0
+            stop = dim
+        else:
+            start = max(0, (dim - crop) // 2)
+            stop = start + crop
+        slices.append(slice(start, stop))
+    return tuple(slices)  # type: ignore[return-value]
+
+
+def normalize_crop_size(crop_size: tuple[int, int, int], model_window: tuple[int, int, int]) -> tuple[int, int, int]:
+    return tuple(0 if c <= 0 else max(c, w) for c, w in zip(crop_size, model_window))
+
+
+def read_cremi_crop(
+    path: Path,
+    crop_size: tuple[int, int, int],
+    raw_keys: Iterable[str],
+    label_keys: Iterable[str],
+) -> tuple[np.ndarray, np.ndarray, tuple[slice, slice, slice]]:
+    h5py = _lazy_h5py()
+    with h5py.File(path, "r") as handle:
+        raw_ds = select_h5_dataset(handle, raw_keys)
+        label_ds = select_h5_dataset(handle, label_keys)
+        if tuple(raw_ds.shape[:3]) != tuple(label_ds.shape[:3]):
+            raise ValueError(f"raw/label shape mismatch in {path}: {raw_ds.shape} vs {label_ds.shape}")
+        crop = center_slices(tuple(int(v) for v in raw_ds.shape[:3]), crop_size)
+        raw = np.asarray(raw_ds[crop])
+        label = np.asarray(label_ds[crop])
+    return raw, label, crop
+
+
+def apply_cremi_boundary_ignore(
+    label: np.ndarray,
+    *,
+    ignore_label: int | None,
+    distance_xy: int,
+    distance_z: int = 0,
+) -> tuple[np.ndarray, float]:
+    """Mark GT object-boundary neighborhoods as ignore/background for CREMI-style metrics."""
+
+    if ignore_label is None or distance_xy <= 0 and distance_z <= 0:
+        return label, 0.0
+    boundary = np.zeros(label.shape, dtype=bool)
+    boundary[:, 1:, :] |= label[:, 1:, :] != label[:, :-1, :]
+    boundary[:, :-1, :] |= label[:, 1:, :] != label[:, :-1, :]
+    boundary[:, :, 1:] |= label[:, :, 1:] != label[:, :, :-1]
+    boundary[:, :, :-1] |= label[:, :, 1:] != label[:, :, :-1]
+    if distance_z > 0:
+        boundary[1:, :, :] |= label[1:, :, :] != label[:-1, :, :]
+        boundary[:-1, :, :] |= label[1:, :, :] != label[:-1, :, :]
+    if distance_xy > 0 or distance_z > 0:
+        from scipy import ndimage  # type: ignore
+
+        structure = np.ones(
+            (
+                2 * int(distance_z) + 1,
+                2 * int(distance_xy) + 1,
+                2 * int(distance_xy) + 1,
+            ),
+            dtype=bool,
+        )
+        boundary = ndimage.binary_dilation(boundary, structure=structure)
+    masked = np.asarray(label).copy()
+    masked[boundary] = int(ignore_label)
+    return masked, float(np.mean(boundary))
+
+
+def starts_for_dim(dim: int, window: int, stride: int) -> list[int]:
+    if dim <= window:
+        return [0]
+    starts = list(range(0, dim - window + 1, max(1, stride)))
+    if starts[-1] != dim - window:
+        starts.append(dim - window)
+    return starts
+
+
+@torch.no_grad()
+def predict_affinities(
+    model: torch.nn.Module,
+    raw: np.ndarray,
+    window_size: tuple[int, int, int],
+    stride: tuple[int, int, int],
+    device: torch.device,
+    channels: int = 3,
+    postprocess: torch.nn.Module | None = None,
+    return_logits: bool = False,
+    normalization_scope: str = "volume",
+) -> np.ndarray:
+    model.eval()
+    if postprocess is not None:
+        postprocess.eval()
+    if normalization_scope not in {"volume", "window", "global", "none"}:
+        raise ValueError(f"unknown normalization_scope={normalization_scope!r}")
+    # Volume preserves historical per-call behavior. Global is equivalent for
+    # a direct call, while blockwise evaluation pre-normalizes the full block
+    # and uses ``none`` for each chunk. Window matches training-crop scaling.
+    volume = normalize_volume(raw) if normalization_scope in {"volume", "global"} else np.asarray(raw)
+    depth, height, width = volume.shape
+    wd, wh, ww = window_size
+    pad = (
+        (0, max(0, wd - depth)),
+        (0, max(0, wh - height)),
+        (0, max(0, ww - width)),
+    )
+    if any(v for pair in pad for v in pair):
+        volume = np.pad(volume, pad, mode="reflect" if min(volume.shape) > 1 else "edge")
+    pd, ph, pw = volume.shape
+    out_channels = int(channels)
+    logits_sum = np.zeros((out_channels, pd, ph, pw), dtype=np.float32)
+    counts = np.zeros((1, pd, ph, pw), dtype=np.float32)
+    z_starts = starts_for_dim(pd, wd, stride[0])
+    y_starts = starts_for_dim(ph, wh, stride[1])
+    x_starts = starts_for_dim(pw, ww, stride[2])
+    amp_enabled = device.type == "cuda"
+    for z0 in z_starts:
+        for y0 in y_starts:
+            for x0 in x_starts:
+                patch = volume[z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww]
+                if normalization_scope == "window":
+                    patch = normalize_volume(patch)
+                tensor = torch.from_numpy(patch[None, None]).float().to(device)
+                with torch.amp.autocast("cuda", enabled=amp_enabled):
+                    logits = model(tensor)
+                    affinity_logits = logits[:, :out_channels]
+                    if postprocess is not None:
+                        affinity_logits = postprocess(affinity_logits)
+                logits_np = affinity_logits.float().cpu().numpy()[0]
+                logits_sum[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += logits_np
+                counts[:, z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww] += 1.0
+    logits_avg = logits_sum / np.maximum(counts, 1.0)
+    if return_logits:
+        return logits_avg[:, :depth, :height, :width]
+    affinities = 1.0 / (1.0 + np.exp(-logits_avg))
+    return affinities[:, :depth, :height, :width]
+
+
+def sigmoid_np(values: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(values, -50.0, 50.0)))
+
+
+def parse_channel_triplets(values: list[float]) -> list[tuple[float, float, float]]:
+    if len(values) % 3 != 0:
+        raise ValueError(f"expected values in z/y/x triplets, got {len(values)} values")
+    return [tuple(float(v) for v in values[i : i + 3]) for i in range(0, len(values), 3)]
+
+
+def make_calibrated_variants(
+    logits: np.ndarray,
+    bias_values: list[tuple[float, float, float]],
+    temperature_values: list[float],
+) -> list[tuple[str, np.ndarray, tuple[float, float, float], float]]:
+    variants: list[tuple[str, np.ndarray, tuple[float, float, float], float]] = []
+    bias_arrs = [np.asarray(bias, dtype=np.float32).reshape(3, 1, 1, 1) for bias in bias_values]
+    for bias, bias_arr in zip(bias_values, bias_arrs):
+        for temperature in temperature_values:
+            temp = max(float(temperature), 1e-6)
+            name = f"bias_z{bias[0]:+.2f}_y{bias[1]:+.2f}_x{bias[2]:+.2f}_t{temp:.2f}"
+            variants.append((name, sigmoid_np((logits + bias_arr) / temp).astype(np.float32, copy=False), bias, temp))
+    return variants
+
+
+def make_auto_calibrated_variants(
+    logits: np.ndarray,
+    target_values: list[tuple[float, float, float]],
+    quantile_values: list[float],
+    temperature_values: list[float],
+) -> list[tuple[str, np.ndarray, tuple[float, float, float], float]]:
+    """Build label-free per-volume calibration variants.
+
+    The fixed-bias calibration used for CREMI is strong but not portable across
+    arbitrary EM volumes. This variant chooses a z/y/x logit bias so that a
+    chosen per-channel logit quantile maps to a target affinity probability.
+    It does not inspect labels and is therefore usable for deployment volumes.
+    """
+
+    variants: list[tuple[str, np.ndarray, tuple[float, float, float], float]] = []
+    channel_logits = [logits[channel].reshape(-1).astype(np.float32, copy=False) for channel in range(3)]
+    for targets in target_values:
+        target_logits = np.asarray(
+            [np.log(np.clip(t, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - t, 1e-6, 1.0)) for t in targets],
+            dtype=np.float32,
+        )
+        for quantile in quantile_values:
+            q = float(quantile)
+            observed = np.asarray([np.quantile(values, q) for values in channel_logits], dtype=np.float32)
+            for temperature in temperature_values:
+                temp = max(float(temperature), 1e-6)
+                bias_arr = (temp * target_logits - observed).astype(np.float32)
+                bias = tuple(float(v) for v in bias_arr)
+                name = (
+                    f"auto_q{q:.2f}_tz{targets[0]:.2f}_ty{targets[1]:.2f}_"
+                    f"tx{targets[2]:.2f}_t{temp:.2f}"
+                )
+                variants.append(
+                    (
+                        name,
+                        sigmoid_np((logits + bias_arr.reshape(3, 1, 1, 1)) / temp).astype(np.float32, copy=False),
+                        bias,
+                        temp,
+                    )
+                )
+    return variants
+
+
+def build_model(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.Module:
+    payload = load_checkpoint(checkpoint, map_location="cpu")
+    effective_cfg = payload.get("config", cfg)
+    model = build_affinity_model(effective_cfg)
+    state = payload.get("model", payload)
+    model.load_state_dict(state, strict=True)
+    return model.to(device)
+
+
+def build_postprocess(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.Module | None:
+    payload = load_checkpoint(checkpoint, map_location="cpu")
+    state = payload.get("postprocess")
+    if state is None:
+        return None
+    effective_cfg = payload.get("config", cfg)
+    loss_cfg = _loss_cfg(effective_cfg.get("train", {}))
+    module = LearnableAffinityPostProcessor(
+        channels=int(loss_cfg.get("dpp_channels", 3)),
+        init_bias=loss_cfg.get("dpp_init_bias", loss_cfg.get("postprocess_init_bias", None)),
+        init_scale=loss_cfg.get("dpp_init_scale", None),
+        smooth_kernel=int(loss_cfg.get("dpp_smooth_kernel", 3)),
+        residual_weight=float(loss_cfg.get("dpp_residual_weight", 0.25)),
+    )
+    module.load_state_dict(state, strict=True)
+    return module.to(device)
+
+
+class LogitEnsemble(torch.nn.Module):
+    """Mix compatible affinity models before sigmoid calibration and WaterZ."""
+
+    def __init__(
+        self,
+        members: Sequence[tuple[torch.nn.Module, torch.nn.Module | None]],
+        weights: Sequence[float],
+        member_biases: Sequence[tuple[float, float, float]] | None = None,
+        member_temperatures: Sequence[float] | None = None,
+    ) -> None:
+        super().__init__()
+        if len(members) < 2:
+            raise ValueError("a logit ensemble requires at least two members")
+        if len(members) != len(weights):
+            raise ValueError(f"member/weight count mismatch: {len(members)} != {len(weights)}")
+        raw_weights = np.asarray(weights, dtype=np.float32)
+        if not np.all(np.isfinite(raw_weights)) or np.any(raw_weights < 0.0) or float(raw_weights.sum()) <= 0.0:
+            raise ValueError(f"ensemble weights must be finite, non-negative, and sum to a positive value: {weights}")
+        if member_biases is None:
+            member_biases = [(0.0, 0.0, 0.0)] * len(members)
+        if member_temperatures is None:
+            member_temperatures = [1.0] * len(members)
+        if len(member_biases) != len(members) or len(member_temperatures) != len(members):
+            raise ValueError(
+                "member calibration count must match the ensemble size: "
+                f"biases={len(member_biases)} temperatures={len(member_temperatures)} members={len(members)}"
+            )
+        bias_array = np.asarray(member_biases, dtype=np.float32)
+        temperature_array = np.asarray(member_temperatures, dtype=np.float32)
+        if bias_array.shape != (len(members), 3):
+            raise ValueError(f"member biases must have shape ({len(members)}, 3), got {bias_array.shape}")
+        if not np.all(np.isfinite(bias_array)) or not np.all(np.isfinite(temperature_array)) or np.any(temperature_array <= 0.0):
+            raise ValueError("member biases must be finite and member temperatures must be finite and positive")
+
+        first_model = members[0][0]
+        first_window = tuple(int(value) for value in first_model.volume_size)
+        first_channels = int(getattr(first_model, "out_channels", 3))
+        for index, (model, _) in enumerate(members[1:], start=1):
+            window = tuple(int(value) for value in model.volume_size)
+            channels = int(getattr(model, "out_channels", 3))
+            if window != first_window or channels != first_channels:
+                raise ValueError(
+                    "all ensemble members must have matching volume_size/out_channels; "
+                    f"member0={first_window}/{first_channels}, member{index}={window}/{channels}"
+                )
+
+        self.members = torch.nn.ModuleList([model for model, _ in members])
+        self.postprocessors = torch.nn.ModuleList(
+            [postprocess if postprocess is not None else torch.nn.Identity() for _, postprocess in members]
+        )
+        self.volume_size = first_window
+        self.out_channels = first_channels
+        normalized = torch.from_numpy(raw_weights / float(raw_weights.sum()))
+        self.register_buffer("ensemble_weights", normalized, persistent=False)
+        self.register_buffer("member_biases", torch.from_numpy(bias_array).reshape(len(members), 3, 1, 1, 1), persistent=False)
+        self.register_buffer(
+            "member_temperatures",
+            torch.from_numpy(temperature_array).reshape(len(members), 1, 1, 1, 1),
+            persistent=False,
+        )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        mixed_logits: torch.Tensor | None = None
+        for index, (model, postprocess, weight) in enumerate(zip(self.members, self.postprocessors, self.ensemble_weights)):
+            logits = model(inputs)
+            affinity_logits = postprocess(logits[:, : self.out_channels])
+            calibrated_logits = (
+                affinity_logits + self.member_biases[index].to(dtype=affinity_logits.dtype)
+            ) / self.member_temperatures[index].to(dtype=affinity_logits.dtype)
+            weighted_logits = calibrated_logits * weight.to(dtype=affinity_logits.dtype)
+            mixed_logits = weighted_logits if mixed_logits is None else mixed_logits + weighted_logits
+        if mixed_logits is None:  # pragma: no cover - constructor rejects an empty member list
+            raise RuntimeError("logit ensemble has no members")
+        return mixed_logits
+
+
+def build_logit_ensemble(
+    cfg: dict,
+    checkpoints: Sequence[Path],
+    weights: Sequence[float],
+    device: torch.device,
+    member_biases: Sequence[tuple[float, float, float]] | None = None,
+    member_temperatures: Sequence[float] | None = None,
+) -> tuple[LogitEnsemble, dict[str, object]]:
+    """Load compatible checkpoints and expose their weighted affinity logits."""
+
+    if len(checkpoints) < 2:
+        raise ValueError("--ensemble-checkpoints requires at least one secondary checkpoint")
+    if len(checkpoints) != len(weights):
+        raise ValueError(f"checkpoint/weight count mismatch: {len(checkpoints)} != {len(weights)}")
+    members: list[tuple[torch.nn.Module, torch.nn.Module | None]] = []
+    for checkpoint in checkpoints:
+        members.append((build_model(cfg, checkpoint, device), build_postprocess(cfg, checkpoint, device)))
+    ensemble = LogitEnsemble(
+        members,
+        weights,
+        member_biases=member_biases,
+        member_temperatures=member_temperatures,
+    ).to(device)
+    return ensemble, {
+        "mode": "weighted_logit_mean",
+        "checkpoints": [str(checkpoint) for checkpoint in checkpoints],
+        "weights": [float(value) for value in ensemble.ensemble_weights.detach().cpu().tolist()],
+        "member_biases": [
+            [float(value) for value in bias]
+            for bias in ensemble.member_biases.detach().cpu().reshape(len(members), 3).tolist()
+        ],
+        "member_temperatures": [
+            float(value)
+            for value in ensemble.member_temperatures.detach().cpu().reshape(len(members)).tolist()
+        ],
+        "member_has_postprocess": [postprocess is not None for _, postprocess in members],
+    }
+
+
+def metric_dict(obj) -> dict[str, float | int]:
+    return {
+        "adapted_rand_error": obj.adapted_rand_error,
+        "rand_fscore": obj.rand_fscore,
+        "rand_precision": obj.rand_precision,
+        "rand_recall": obj.rand_recall,
+        "voi_split": obj.voi_split,
+        "voi_merge": obj.voi_merge,
+        "voi_sum": obj.voi_split + obj.voi_merge,
+        "n_pred": obj.n_pred,
+        "n_gt": obj.n_gt,
+        "n_voxels": obj.n_voxels,
+    }
+
+
+def affinity_stats(name: str, affinities: np.ndarray) -> dict[str, float | str]:
+    stats: dict[str, float | str] = {"affinity_variant": name}
+    for channel, channel_name in enumerate(["z", "y", "x"]):
+        values = affinities[channel].reshape(-1).astype(np.float32, copy=False)
+        stats[f"{channel_name}_mean"] = float(np.mean(values))
+        stats[f"{channel_name}_std"] = float(np.std(values))
+        stats[f"{channel_name}_p01"] = float(np.quantile(values, 0.01))
+        stats[f"{channel_name}_p05"] = float(np.quantile(values, 0.05))
+        stats[f"{channel_name}_p50"] = float(np.quantile(values, 0.50))
+        stats[f"{channel_name}_p95"] = float(np.quantile(values, 0.95))
+        stats[f"{channel_name}_p99"] = float(np.quantile(values, 0.99))
+    return stats
+
+
+def package_probe() -> dict[str, object]:
+    import importlib.util
+
+    packages = ["scipy", "mahotas", "cc3d", "waterz", "elf", "cupy"]
+    result: dict[str, object] = {name: importlib.util.find_spec(name) is not None for name in packages}
+    if result.get("cupy"):
+        try:
+            import cupy as cp  # type: ignore
+
+            result["cupy_version"] = cp.__version__
+            result["cuda_device_count"] = int(cp.cuda.runtime.getDeviceCount())
+        except Exception as exc:
+            result["cupy_error"] = repr(exc)
+    return result
+
+
+def run_backend(
+    affinities: np.ndarray,
+    backend: str,
+    threshold: float,
+    min_size: int,
+    seed_method: str,
+    seed_distance: int,
+    boundary_threshold: float,
+    min_boundary: int,
+    seed_nms_radius: int = 0,
+    score_mode: str = "mean",
+    rag_quantile: float = 0.25,
+    z_threshold: float | None = None,
+    xy_threshold: float | None = None,
+    waterz_scoring: str = "hist_quantile",
+    cache: dict[str, tuple[np.ndarray, float]] | None = None,
+) -> np.ndarray:
+    graph_threshold = threshold
+    if z_threshold is not None or xy_threshold is not None:
+        z_thr = float(threshold if z_threshold is None else z_threshold)
+        xy_thr = float(threshold if xy_threshold is None else xy_threshold)
+        graph_threshold = (z_thr, xy_thr, xy_thr)
+    if backend == "graph_cc":
+        return affinities_to_connected_components(affinities, threshold=graph_threshold, min_size=min_size)
+    if backend == "cc3d_mean":
+        return cc3d_mean_affinity_components(affinities, threshold=threshold, min_size=min_size)
+    if backend == "cupy_mean":
+        return cupy_mean_affinity_components(affinities, threshold=threshold, min_size=min_size)
+    if backend == "cupy_graph_cc":
+        return cupy_affinity_graph_connected_components(affinities, threshold=graph_threshold, min_size=min_size)
+    if backend == "mahotas_watershed":
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
+        if cache is not None and key in cache:
+            return cache[key][0]
+        fragments = watershed_fragments(
+            affinities,
+            backend="mahotas",
+            seed_method=seed_method,
+            seed_distance=seed_distance,
+            boundary_threshold=boundary_threshold,
+            seed_nms_radius=seed_nms_radius,
+        )
+        if cache is not None:
+            cache[key] = (fragments, 0.0)
+        return fragments
+    if backend == "scipy_watershed":
+        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
+        if cache is not None and key in cache:
+            return cache[key][0]
+        fragments = watershed_fragments(
+            affinities,
+            backend="scipy",
+            seed_method=seed_method,
+            seed_distance=seed_distance,
+            boundary_threshold=boundary_threshold,
+            seed_nms_radius=seed_nms_radius,
+        )
+        if cache is not None:
+            cache[key] = (fragments, 0.0)
+        return fragments
+    if backend in {"mahotas_agglomeration", "seeded_rag"}:
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
+        fragments = None
+        if cache is not None and key in cache:
+            fragments = cache[key][0]
+        if fragments is None:
+            fragments = watershed_fragments(
+                affinities,
+                backend="mahotas",
+                seed_method=seed_method,
+                seed_distance=seed_distance,
+                boundary_threshold=boundary_threshold,
+                seed_nms_radius=seed_nms_radius,
+            )
+            if cache is not None:
+                cache[key] = (fragments, 0.0)
+        return agglomerate_fragments_by_affinity(
+            affinities,
+            fragments,
+            threshold=threshold,
+            z_threshold=z_threshold,
+            xy_threshold=xy_threshold,
+            min_boundary=min_boundary,
+            score_mode=score_mode,
+            quantile=rag_quantile,
+        )
+    if backend == "scipy_agglomeration":
+        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
+        fragments = None
+        if cache is not None and key in cache:
+            fragments = cache[key][0]
+        if fragments is None:
+            fragments = watershed_fragments(
+                affinities,
+                backend="scipy",
+                seed_method=seed_method,
+                seed_distance=seed_distance,
+                boundary_threshold=boundary_threshold,
+                seed_nms_radius=seed_nms_radius,
+            )
+            if cache is not None:
+                cache[key] = (fragments, 0.0)
+        return agglomerate_fragments_by_affinity(
+            affinities,
+            fragments,
+            threshold=threshold,
+            z_threshold=z_threshold,
+            xy_threshold=xy_threshold,
+            min_boundary=min_boundary,
+            score_mode=score_mode,
+            quantile=rag_quantile,
+        )
+    if backend == "waterz":
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
+        fragments = None
+        if cache is not None and key in cache:
+            fragments = cache[key][0]
+        if fragments is None:
+            fragments = watershed_fragments(
+                affinities,
+                backend="mahotas",
+                seed_method=seed_method,
+                seed_distance=seed_distance,
+                boundary_threshold=boundary_threshold,
+                seed_nms_radius=seed_nms_radius,
+            )
+            if cache is not None:
+                cache[key] = (fragments, 0.0)
+        return waterz_agglomeration(affinities, threshold=threshold, fragments=fragments, scoring_function=waterz_scoring)
+    raise ValueError(f"unknown backend: {backend}")
+
+
+def run_waterz_threshold_sweep(
+    affinities: np.ndarray,
+    thresholds: list[float],
+    *,
+    seed_method: str,
+    seed_distance: int,
+    boundary_threshold: float,
+    waterz_scoring: str,
+    seed_nms_radius: int = 0,
+    cache: dict[str, tuple[np.ndarray, float]] | None = None,
+) -> tuple[list[np.ndarray], float]:
+    key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
+    t0 = time.perf_counter()
+    fragments = None
+    if cache is not None and key in cache:
+        fragments = cache[key][0]
+    if fragments is None:
+        fragments = watershed_fragments(
+            affinities,
+            backend="mahotas",
+            seed_method=seed_method,
+            seed_distance=seed_distance,
+            boundary_threshold=boundary_threshold,
+            seed_nms_radius=seed_nms_radius,
+        )
+        if cache is not None:
+            cache[key] = (fragments, 0.0)
+    segmentations = waterz_agglomerations(
+        affinities,
+        thresholds=thresholds,
+        fragments=fragments,
+        scoring_function=waterz_scoring,
+    )
+    return segmentations, time.perf_counter() - t0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Evaluate CREMI neuron segmentation from dbMiM affinities")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--data-dir", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--crop-size", nargs=3, type=int, default=[32, 256, 256])
+    parser.add_argument("--stride", nargs=3, type=int, default=None)
+    parser.add_argument("--thresholds", nargs="+", type=float, default=[0.4, 0.5, 0.6, 0.7])
+    parser.add_argument(
+        "--backends",
+        nargs="+",
+        default=["graph_cc"],
+        choices=[
+            "graph_cc",
+            "cc3d_mean",
+            "cupy_mean",
+            "cupy_graph_cc",
+            "mahotas_watershed",
+            "scipy_watershed",
+            "seeded_rag",
+            "mahotas_agglomeration",
+            "scipy_agglomeration",
+            "waterz",
+        ],
+    )
+    parser.add_argument("--min-size", type=int, default=0)
+    parser.add_argument("--seed-method", default="maxima_distance", choices=["maxima_distance", "minima", "grid"])
+    parser.add_argument("--seed-distance", nargs="+", type=int, default=[12])
+    parser.add_argument("--boundary-threshold", nargs="+", type=float, default=[0.5])
+    parser.add_argument("--min-boundary", nargs="+", type=int, default=[1])
+    parser.add_argument(
+        "--score-mode",
+        nargs="+",
+        default=["mean"],
+        choices=["mean", "max", "min", "median", "q10", "q25", "q50", "q75", "quantile"],
+    )
+    parser.add_argument("--rag-quantile", nargs="+", type=float, default=[0.25])
+    parser.add_argument("--z-thresholds", nargs="+", type=float, default=None)
+    parser.add_argument("--xy-thresholds", nargs="+", type=float, default=None)
+    parser.add_argument("--sample-names", nargs="+", default=None)
+    parser.add_argument("--max-samples", type=int, default=0)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--inference-normalization",
+        choices=["volume", "window", "global"],
+        default="volume",
+        help="normalization scope before model inference; global normalizes the requested volume once",
+    )
+    parser.add_argument(
+        "--affinity-channels",
+        nargs="+",
+        type=int,
+        default=[0, 1, 2],
+        help="Model output channels to use as z/y/x affinities for post-processing.",
+    )
+    parser.add_argument("--save-seg", action="store_true")
+    parser.add_argument("--ignore-label", type=int, default=0)
+    parser.add_argument("--cremi-boundary-ignore-distance-xy", type=int, default=0)
+    parser.add_argument("--cremi-boundary-ignore-distance-z", type=int, default=0)
+    parser.add_argument("--replicate-affinity-boundary", action="store_true")
+    parser.add_argument("--metric-backend", choices=["internal", "skimage"], default="internal")
+    parser.add_argument(
+        "--calibration-biases",
+        nargs="+",
+        type=float,
+        default=[0.0, 0.0, 0.0],
+        help="z/y/x logit bias triplets for eval-time affinity calibration",
+    )
+    parser.add_argument(
+        "--calibration-temperatures",
+        nargs="+",
+        type=float,
+        default=[1.0],
+        help="logit temperatures for eval-time affinity calibration",
+    )
+    parser.add_argument(
+        "--auto-calibration-targets",
+        nargs="+",
+        type=float,
+        default=[],
+        help=(
+            "Optional z/y/x target affinity triplets for label-free per-volume calibration. "
+            "For each triplet, a channel-wise logit bias is chosen so the requested "
+            "logit quantile maps to the target probability."
+        ),
+    )
+    parser.add_argument(
+        "--auto-calibration-quantiles",
+        nargs="+",
+        type=float,
+        default=[],
+        help="Quantiles used by --auto-calibration-targets, e.g. 0.50 0.60.",
+    )
+    parser.add_argument(
+        "--waterz-scoring",
+        nargs="+",
+        default="hist_quantile",
+        help="waterz scoring alias: hist_quantile, hist_quantile_false, mean, or a full waterz scoring string",
+    )
+    parser.add_argument(
+        "--batched-waterz",
+        action="store_true",
+        help="Run all waterz thresholds for each affinity variant in one waterz.agglomerate call.",
+    )
+    parser.add_argument("--fail-on-backend-error", action="store_true")
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
+    output_dir = ensure_dir(args.output_dir)
+    model = build_model(cfg, Path(args.checkpoint), device)
+    postprocess = build_postprocess(cfg, Path(args.checkpoint), device)
+    print({"learned_postprocess_loaded": postprocess is not None}, flush=True)
+    model_window = tuple(int(v) for v in model.volume_size)
+    stride = tuple(args.stride) if args.stride is not None else tuple(max(1, v // 2) for v in model_window)
+    requested_crop_size = tuple(int(v) for v in args.crop_size)
+    crop_size = normalize_crop_size(requested_crop_size, model_window)
+
+    data_cfg = cfg.get("data", {})
+    raw_keys = data_cfg.get("image_keys") or ["volumes/raw", "raw", "main"]
+    label_keys = data_cfg.get("label_keys") or ["volumes/labels/neuron_ids", "labels", "label", "gt"]
+    files = select_cremi_files(list_cremi_files(args.data_dir), args.sample_names)
+    if args.max_samples > 0:
+        files = files[: args.max_samples]
+
+    records: list[dict[str, float | int | str]] = []
+    affinity_records: list[dict[str, float | int | str]] = []
+    sample_records: list[dict[str, float | int | str]] = []
+    failures: list[dict[str, str | float]] = []
+    probes = package_probe()
+    print({"package_probe": probes}, flush=True)
+    waterz_scorings = args.waterz_scoring if isinstance(args.waterz_scoring, list) else [args.waterz_scoring]
+    calibration_biases = parse_channel_triplets([float(v) for v in args.calibration_biases])
+    calibration_temperatures = [float(v) for v in args.calibration_temperatures]
+    auto_calibration_targets = (
+        parse_channel_triplets([float(v) for v in args.auto_calibration_targets])
+        if args.auto_calibration_targets
+        else []
+    )
+    auto_calibration_quantiles = [float(v) for v in args.auto_calibration_quantiles]
+    watershed_backends = {"mahotas_watershed", "scipy_watershed"}
+    anisotropic_graph_backends = {"graph_cc", "cupy_graph_cc"}
+    agglomeration_backends = {"seeded_rag", "mahotas_agglomeration", "scipy_agglomeration"}
+    seed_backends = watershed_backends | agglomeration_backends
+    affinity_channel_indices = [int(v) for v in args.affinity_channels]
+    if len(affinity_channel_indices) != 3:
+        raise ValueError(f"--affinity-channels must contain exactly 3 indices, got {affinity_channel_indices}")
+    required_channels = max(affinity_channel_indices) + 1
+    for path in files:
+        raw, label, crop = read_cremi_crop(path, crop_size, raw_keys, label_keys)
+        metric_label, boundary_ignore_fraction = apply_cremi_boundary_ignore(
+            label,
+            ignore_label=args.ignore_label,
+            distance_xy=int(args.cremi_boundary_ignore_distance_xy),
+            distance_z=int(args.cremi_boundary_ignore_distance_z),
+        )
+        sample_record: dict[str, float | int | str] = {
+            "sample": path.name,
+            "inference_normalization": str(args.inference_normalization),
+            "label_unique": int(np.unique(label).size),
+            "label_zero_fraction": float(np.mean(label == args.ignore_label)) if args.ignore_label is not None else 0.0,
+            "metric_label_unique": int(np.unique(metric_label[metric_label != args.ignore_label]).size)
+            if args.ignore_label is not None
+            else int(np.unique(metric_label).size),
+            "boundary_ignore_fraction": float(boundary_ignore_fraction),
+        }
+        sample_records.append(sample_record)
+        print(
+            {
+                "sample": path.name,
+                "raw_shape": list(raw.shape),
+                "crop": [[sl.start, sl.stop] for sl in crop],
+                "checkpoint": str(args.checkpoint),
+                **sample_record,
+            },
+            flush=True,
+        )
+        t0 = time.perf_counter()
+        logits_all = predict_affinities(
+            model,
+            raw,
+            model_window,
+            stride,
+            device,
+            channels=required_channels,
+            postprocess=postprocess,
+            return_logits=True,
+            normalization_scope=str(args.inference_normalization),
+        )
+        logits_np = logits_all[np.asarray(affinity_channel_indices, dtype=np.int64)]
+        aff = sigmoid_np(logits_np).astype(np.float32, copy=False)
+        infer_sec = time.perf_counter() - t0
+        target_aff = labels_to_affinities(
+            torch.from_numpy(label.astype(np.int64))[None],
+            replicate_boundary=args.replicate_affinity_boundary,
+        ).numpy()[0]
+        target = torch.from_numpy(target_aff)
+        variants = [("pred", aff, (0.0, 0.0, 0.0), 1.0)]
+        variants.extend(make_calibrated_variants(logits_np, calibration_biases, calibration_temperatures))
+        if auto_calibration_targets and auto_calibration_quantiles:
+            variants.extend(
+                make_auto_calibrated_variants(
+                    logits_np,
+                    auto_calibration_targets,
+                    auto_calibration_quantiles,
+                    calibration_temperatures,
+                )
+            )
+        seen_variant_names: set[str] = set()
+        for variant_name, variant_aff, calibration_bias, calibration_temperature in variants:
+            if variant_name in seen_variant_names:
+                continue
+            seen_variant_names.add(variant_name)
+            variant_logits = torch.from_numpy(
+                np.log(np.clip(variant_aff, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - variant_aff, 1e-6, 1.0))
+            )
+            aff_dice = dice_from_logits(variant_logits, target)
+            aff_iou = binary_iou_from_logits(variant_logits, target)
+            aff_record = affinity_stats(variant_name, variant_aff)
+            aff_record.update(
+                {
+                    "sample": path.name,
+                    "calibration_bias_z": float(calibration_bias[0]),
+                    "calibration_bias_y": float(calibration_bias[1]),
+                    "calibration_bias_x": float(calibration_bias[2]),
+                    "calibration_temperature": float(calibration_temperature),
+                    "affinity_dice": float(aff_dice),
+                    "affinity_iou": float(aff_iou),
+                    "inference_sec": float(infer_sec),
+                }
+            )
+            print(aff_record, flush=True)
+            affinity_records.append(aff_record)
+            backend_cache: dict[str, tuple[np.ndarray, float]] = {}
+            for backend in args.backends:
+                if (
+                    backend == "waterz"
+                    and args.batched_waterz
+                    and len(args.thresholds) > 1
+                    and len(args.seed_distance) == 1
+                    and len(args.boundary_threshold) == 1
+                ):
+                    for waterz_scoring in waterz_scorings:
+                        try:
+                            segs, postprocess_sec_total = run_waterz_threshold_sweep(
+                                variant_aff,
+                                [float(v) for v in args.thresholds],
+                                seed_method=args.seed_method,
+                                seed_distance=int(args.seed_distance[0]),
+                                boundary_threshold=float(args.boundary_threshold[0]),
+                                waterz_scoring=str(waterz_scoring),
+                                cache=backend_cache,
+                            )
+                        except Exception as exc:
+                            for threshold in args.thresholds:
+                                failure = {
+                                    "sample": path.name,
+                                    "affinity_variant": variant_name,
+                                    "calibration_bias_z": float(calibration_bias[0]),
+                                    "calibration_bias_y": float(calibration_bias[1]),
+                                    "calibration_bias_x": float(calibration_bias[2]),
+                                    "calibration_temperature": float(calibration_temperature),
+                                    "backend": backend,
+                                    "threshold": float(threshold),
+                                    "seed_distance": int(args.seed_distance[0]),
+                                    "boundary_threshold": float(args.boundary_threshold[0]),
+                                    "min_boundary": int(args.min_boundary[0]),
+                                    "score_mode": str(args.score_mode[0]),
+                                    "rag_quantile": float(args.rag_quantile[0]),
+                                    "waterz_scoring": str(waterz_scoring),
+                                    "z_threshold": "",
+                                    "xy_threshold": "",
+                                    "error": repr(exc),
+                                }
+                                print(failure, flush=True)
+                                failures.append(failure)
+                            if args.fail_on_backend_error:
+                                raise
+                            continue
+                        per_threshold_sec = float(postprocess_sec_total / max(1, len(segs)))
+                        for threshold, seg in zip(args.thresholds, segs):
+                            t2 = time.perf_counter()
+                            metrics = segmentation_metrics(
+                                seg,
+                                metric_label,
+                                ignore_label=args.ignore_label,
+                                backend=args.metric_backend,
+                            )
+                            metrics_sec = time.perf_counter() - t2
+                            record: dict[str, float | int | str] = {
+                                "sample": path.name,
+                                "affinity_variant": variant_name,
+                                "calibration_bias_z": float(calibration_bias[0]),
+                                "calibration_bias_y": float(calibration_bias[1]),
+                                "calibration_bias_x": float(calibration_bias[2]),
+                                "calibration_temperature": float(calibration_temperature),
+                                "backend": backend,
+                                "threshold": float(threshold),
+                                "seed_distance": int(args.seed_distance[0]),
+                                "boundary_threshold": float(args.boundary_threshold[0]),
+                                "min_boundary": int(args.min_boundary[0]),
+                                "score_mode": str(args.score_mode[0]),
+                                "rag_quantile": float(args.rag_quantile[0]),
+                                "waterz_scoring": str(waterz_scoring),
+                                "z_threshold": "",
+                                "xy_threshold": "",
+                                "affinity_dice": float(aff_dice),
+                                "affinity_iou": float(aff_iou),
+                                "inference_sec": float(infer_sec),
+                                "postprocess_sec": per_threshold_sec,
+                                "metrics_sec": float(metrics_sec),
+                                **metric_dict(metrics),
+                            }
+                            print(record, flush=True)
+                            records.append(record)
+                            if args.save_seg:
+                                safe_variant = "".join(
+                                    ch if ch.isalnum() or ch in "._-" else "_" for ch in variant_name
+                                )
+                                out_npz = output_dir / (
+                                    f"{path.stem}_{safe_variant}_{backend}_thr{float(threshold):.2f}_"
+                                    f"sd{int(args.seed_distance[0])}_bt{float(args.boundary_threshold[0]):.2f}_"
+                                    f"mb{int(args.min_boundary[0])}_{args.score_mode[0]}_znone_xynone_seg.npz"
+                                )
+                                np.savez_compressed(
+                                    out_npz,
+                                    segmentation=seg.astype(np.uint64),
+                                    crop=np.array([[sl.start, sl.stop] for sl in crop]),
+                                )
+                    continue
+                threshold_values = args.thresholds if backend not in watershed_backends else [args.thresholds[0]]
+                if backend in anisotropic_graph_backends and args.z_thresholds and args.xy_thresholds:
+                    threshold_values = [args.thresholds[0]]
+                if backend in agglomeration_backends and args.z_thresholds and args.xy_thresholds:
+                    threshold_values = [args.thresholds[0]]
+                seed_distances = args.seed_distance if backend in seed_backends else [args.seed_distance[0]]
+                boundary_thresholds = args.boundary_threshold if backend in seed_backends else [args.boundary_threshold[0]]
+                min_boundaries = args.min_boundary if backend in agglomeration_backends else [args.min_boundary[0]]
+                score_modes = args.score_mode if backend in agglomeration_backends else [args.score_mode[0]]
+                waterz_scoring_values = waterz_scorings if backend == "waterz" else [waterz_scorings[0]]
+                z_thresholds = [None]
+                xy_thresholds = [None]
+                if backend in agglomeration_backends | anisotropic_graph_backends:
+                    z_thresholds = list(args.z_thresholds) if args.z_thresholds else [None]
+                    xy_thresholds = list(args.xy_thresholds) if args.xy_thresholds else [None]
+                for threshold, seed_distance, boundary_threshold, min_boundary, score_mode, rag_quantile, waterz_scoring, z_threshold, xy_threshold in itertools.product(
+                    threshold_values,
+                    seed_distances,
+                    boundary_thresholds,
+                    min_boundaries,
+                    score_modes,
+                    args.rag_quantile if backend in agglomeration_backends else [args.rag_quantile[0]],
+                    waterz_scoring_values,
+                    z_thresholds,
+                    xy_thresholds,
+                ):
+                    try:
+                        t1 = time.perf_counter()
+                        seg = run_backend(
+                            variant_aff,
+                            backend=backend,
+                            threshold=threshold,
+                            min_size=args.min_size,
+                            seed_method=args.seed_method,
+                            seed_distance=int(seed_distance),
+                            boundary_threshold=float(boundary_threshold),
+                            min_boundary=int(min_boundary),
+                            score_mode=str(score_mode),
+                            rag_quantile=float(rag_quantile),
+                            z_threshold=None if z_threshold is None else float(z_threshold),
+                            xy_threshold=None if xy_threshold is None else float(xy_threshold),
+                            waterz_scoring=str(waterz_scoring),
+                            cache=backend_cache,
+                        )
+                        postprocess_sec = time.perf_counter() - t1
+                        t2 = time.perf_counter()
+                        metrics = segmentation_metrics(
+                            seg,
+                            metric_label,
+                            ignore_label=args.ignore_label,
+                            backend=args.metric_backend,
+                        )
+                        metrics_sec = time.perf_counter() - t2
+                    except Exception as exc:
+                        failure = {
+                            "sample": path.name,
+                            "affinity_variant": variant_name,
+                            "calibration_bias_z": float(calibration_bias[0]),
+                            "calibration_bias_y": float(calibration_bias[1]),
+                            "calibration_bias_x": float(calibration_bias[2]),
+                            "calibration_temperature": float(calibration_temperature),
+                            "backend": backend,
+                            "threshold": float(threshold),
+                            "seed_distance": int(seed_distance),
+                            "boundary_threshold": float(boundary_threshold),
+                            "min_boundary": int(min_boundary),
+                            "score_mode": str(score_mode),
+                            "rag_quantile": float(rag_quantile),
+                            "waterz_scoring": str(waterz_scoring),
+                            "z_threshold": "" if z_threshold is None else float(z_threshold),
+                            "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
+                            "error": repr(exc),
+                        }
+                        print(failure, flush=True)
+                        failures.append(failure)
+                        if args.fail_on_backend_error:
+                            raise
+                        continue
+                    record: dict[str, float | int | str] = {
+                        "sample": path.name,
+                        "affinity_variant": variant_name,
+                        "calibration_bias_z": float(calibration_bias[0]),
+                        "calibration_bias_y": float(calibration_bias[1]),
+                        "calibration_bias_x": float(calibration_bias[2]),
+                        "calibration_temperature": float(calibration_temperature),
+                        "backend": backend,
+                        "threshold": float(threshold),
+                        "seed_distance": int(seed_distance),
+                        "boundary_threshold": float(boundary_threshold),
+                        "min_boundary": int(min_boundary),
+                        "score_mode": str(score_mode),
+                        "rag_quantile": float(rag_quantile),
+                        "waterz_scoring": str(waterz_scoring),
+                        "z_threshold": "" if z_threshold is None else float(z_threshold),
+                        "xy_threshold": "" if xy_threshold is None else float(xy_threshold),
+                        "affinity_dice": float(aff_dice),
+                        "affinity_iou": float(aff_iou),
+                        "inference_sec": float(infer_sec),
+                        "postprocess_sec": float(postprocess_sec),
+                        "metrics_sec": float(metrics_sec),
+                        **metric_dict(metrics),
+                    }
+                    print(record, flush=True)
+                    records.append(record)
+                    if args.save_seg:
+                        z_tag = "none" if z_threshold is None else f"{float(z_threshold):.2f}"
+                        xy_tag = "none" if xy_threshold is None else f"{float(xy_threshold):.2f}"
+                        safe_variant = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in variant_name)
+                        out_npz = output_dir / (
+                            f"{path.stem}_{safe_variant}_{backend}_thr{threshold:.2f}_sd{int(seed_distance)}_"
+                            f"bt{float(boundary_threshold):.2f}_mb{int(min_boundary)}_"
+                            f"{score_mode}_z{z_tag}_xy{xy_tag}_seg.npz"
+                        )
+                        np.savez_compressed(
+                            out_npz,
+                            segmentation=seg.astype(np.uint64),
+                            crop=np.array([[sl.start, sl.stop] for sl in crop]),
+                        )
+
+    csv_path = output_dir / "cremi_segmentation_metrics.csv"
+    if records:
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
+            writer.writeheader()
+            writer.writerows(records)
+    affinity_csv_path = output_dir / "cremi_affinity_stats.csv"
+    if affinity_records:
+        with affinity_csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(affinity_records[0].keys()))
+            writer.writeheader()
+            writer.writerows(affinity_records)
+    thresholds = sorted({float(r["threshold"]) for r in records})
+    summary: dict[str, object] = {
+        "checkpoint": str(args.checkpoint),
+        "data_dir": str(args.data_dir),
+        "requested_crop_size": list(requested_crop_size),
+        "crop_size": list(crop_size),
+        "window_size": list(model_window),
+        "stride": list(stride),
+        "num_records": len(records),
+        "num_affinity_records": len(affinity_records),
+        "affinity_records": affinity_records,
+        "sample_records": sample_records,
+        "package_probe": probes,
+        "metric_backend": args.metric_backend,
+        "ignore_label": None if args.ignore_label is None else int(args.ignore_label),
+        "cremi_boundary_ignore_distance_xy": int(args.cremi_boundary_ignore_distance_xy),
+        "cremi_boundary_ignore_distance_z": int(args.cremi_boundary_ignore_distance_z),
+        "replicate_affinity_boundary": bool(args.replicate_affinity_boundary),
+        "learned_postprocess_loaded": postprocess is not None,
+        "calibration_biases": [list(bias) for bias in calibration_biases],
+        "calibration_temperatures": calibration_temperatures,
+        "auto_calibration_targets": [list(target) for target in auto_calibration_targets],
+        "auto_calibration_quantiles": auto_calibration_quantiles,
+        "waterz_scoring": list(waterz_scorings),
+        "affinity_channels": affinity_channel_indices,
+        "failures": failures,
+        "per_threshold": [],
+        "per_backend_threshold": [],
+    }
+    metric_keys = [
+        "adapted_rand_error",
+        "rand_fscore",
+        "rand_precision",
+        "rand_recall",
+        "voi_split",
+        "voi_merge",
+        "voi_sum",
+        "affinity_dice",
+        "affinity_iou",
+        "inference_sec",
+        "postprocess_sec",
+        "metrics_sec",
+    ]
+    group_keys = [
+        "affinity_variant",
+        "calibration_bias_z",
+        "calibration_bias_y",
+        "calibration_bias_x",
+        "calibration_temperature",
+        "backend",
+        "threshold",
+        "seed_distance",
+        "boundary_threshold",
+        "min_boundary",
+        "score_mode",
+        "rag_quantile",
+        "waterz_scoring",
+        "z_threshold",
+        "xy_threshold",
+    ]
+    grouped: dict[tuple[object, ...], list[dict[str, float | int | str]]] = {}
+    for record in records:
+        grouped.setdefault(tuple(record[key] for key in group_keys), []).append(record)
+    for key_tuple, rows in sorted(grouped.items(), key=lambda item: tuple(str(v) for v in item[0])):
+        mean_row: dict[str, float | int | str] = dict(zip(group_keys, key_tuple))
+        mean_row["n"] = len(rows)
+        for key in metric_keys:
+            mean_row[key] = float(np.mean([float(r[key]) for r in rows])) if rows else float("nan")
+        summary["per_backend_threshold"].append(mean_row)  # type: ignore[index]
+    for threshold in thresholds:
+        rows = [r for r in records if float(r["threshold"]) == threshold]
+        mean_row: dict[str, float | int] = {"threshold": threshold, "n": len(rows)}
+        for key in metric_keys:
+            mean_row[key] = float(np.mean([float(r[key]) for r in rows])) if rows else float("nan")
+        summary["per_threshold"].append(mean_row)  # type: ignore[index]
+    if summary["per_backend_threshold"]:
+        summary["best_by_adapted_rand"] = min(
+            summary["per_backend_threshold"],  # type: ignore[arg-type]
+            key=lambda row: float(row["adapted_rand_error"]),
+        )
+        summary["best_by_voi_sum"] = min(
+            summary["per_backend_threshold"],  # type: ignore[arg-type]
+            key=lambda row: float(row["voi_sum"]),
+        )
+    (output_dir / "cremi_segmentation_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "cremi_segmentation_records.json").write_text(
+        json.dumps(records, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+if __name__ == "__main__":
+    main()

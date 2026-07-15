@@ -177,3 +177,21 @@ train_finetune.py               CREMI affinity 微调
 ```
 
 大数据、权重和生成结果不进入 Git。
+
+## MEC 8 nm 工作区
+
+MEC 髓鞘实例分割实验独立放在 [`mec8nm/`](mec8nm/README.md)，其中包含可版本化
+的运行时代码快照、配置、启动脚本、测试、紧凑证据和冻结的数据划分。为了兼容历史
+命令与 SiFlow bundle，仓库根目录中的原有入口不会移动；workspace verifier 会检查
+共享运行时文件逐字一致，因此这次合并不会重排原 dbMiM 目录结构。
+
+当前“最好”必须按评测口径区分：R58 仍是严格 M08/M10 crop affinity 锚点；
+R57 加校准 WaterZ 是保守的完整块绝对锚点；R58 加冻结 CREMI LoCoAgg 是同
+affinity 下最强的 M08/M10 验证与速度结果。M11/M12 的一次配对 replay 结论混合，
+后续 signed-VI 诊断又消费了 M07/M09，因此现有 MEC block 不能再用于选择。
+新的性能结论需要新标注 block 或官方 hidden evaluation。
+
+当前已经支持分块推理，但还不具备 PB 级全局一致实例分割的生产能力。启动 PB 任务
+前必须依次通过项目 state 中的单块、`2x2x2`、TB 和 100-TB 门槛。继续工作请先读
+[`mec8nm/README.md`](mec8nm/README.md) 和仓库内
+[`dbmim-neuron-seg-skill/SKILL.md`](dbmim-neuron-seg-skill/SKILL.md)。

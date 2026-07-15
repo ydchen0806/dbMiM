@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/MEC_8nm/hdf5/
+data/MEC_8nm/hf_snapshot/
+outputs/
+logs/
+assets/*.pt
+assets/*.pth
+assets/*.ckpt
+third_party/
+wheelhouse_*/
