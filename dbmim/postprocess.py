@@ -161,12 +161,70 @@ def _grid_seeds(boundary: np.ndarray, next_id: int, seed_distance: int) -> tuple
     return seeds, num
 
 
+def _spaced_maxima_seeds(
+    maxima: np.ndarray,
+    distance: np.ndarray,
+    next_id: int,
+    radius: int,
+) -> tuple[np.ndarray, int]:
+    """Select one seed per regional maximum with optional spatial suppression."""
+
+    from scipy import ndimage  # type: ignore
+
+    labels, num = ndimage.label(np.asarray(maxima, dtype=bool))
+    if int(num) <= 0:
+        return np.zeros_like(labels, dtype=np.int32), 0
+    radius = max(0, int(radius))
+    if radius == 0:
+        seeds = labels.astype(np.int32, copy=False)
+        seeds[seeds > 0] += int(next_id) - 1
+        return seeds, int(num)
+
+    flat_labels = labels.reshape(-1)
+    positions = np.flatnonzero(flat_labels)
+    first = np.full(int(num) + 1, flat_labels.size, dtype=np.int64)
+    np.minimum.at(first, flat_labels[positions].astype(np.int64, copy=False), positions)
+    candidate_ids = np.flatnonzero(first < flat_labels.size)
+    candidate_ids = candidate_ids[candidate_ids > 0]
+    flat_distance = np.asarray(distance, dtype=np.float32).reshape(-1)
+    order = np.lexsort((first[candidate_ids], -flat_distance[first[candidate_ids]]))
+
+    seeds = np.zeros_like(labels, dtype=np.int32)
+    height, width = labels.shape
+    cell_size = radius
+    radius_sq = radius * radius
+    accepted_by_cell: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    accepted = 0
+    for candidate_id in candidate_ids[order]:
+        index = int(first[int(candidate_id)])
+        y, x = divmod(index, width)
+        cell = (y // cell_size, x // cell_size)
+        too_close = False
+        for cy in range(cell[0] - 1, cell[0] + 2):
+            for cx in range(cell[1] - 1, cell[1] + 2):
+                for ay, ax in accepted_by_cell.get((cy, cx), ()):
+                    if (ay - y) * (ay - y) + (ax - x) * (ax - x) <= radius_sq:
+                        too_close = True
+                        break
+                if too_close:
+                    break
+            if too_close:
+                break
+        if too_close:
+            continue
+        seeds[y, x] = int(next_id) + accepted
+        accepted_by_cell.setdefault(cell, []).append((y, x))
+        accepted += 1
+    return seeds, accepted
+
+
 def _mahotas_seeds(
     boundary: np.ndarray,
     method: str,
     next_id: int,
     seed_distance: int,
     threshold: float,
+    seed_nms_radius: int = 0,
 ) -> tuple[np.ndarray, int]:
     import mahotas  # type: ignore
 
@@ -178,6 +236,11 @@ def _mahotas_seeds(
     elif method == "maxima_distance":
         distance = mahotas.distance(boundary < threshold)
         maxima = mahotas.regmax(distance)
+        if int(seed_nms_radius) > 0:
+            seeds, num = _spaced_maxima_seeds(maxima, distance, next_id, int(seed_nms_radius))
+            if int(num) <= 0:
+                return _grid_seeds(boundary, next_id, seed_distance)
+            return seeds, int(num)
         seeds, num = mahotas.label(maxima)
     else:
         raise ValueError(f"unknown seed method: {method}")
@@ -195,6 +258,7 @@ def _scipy_seeds(
     next_id: int,
     seed_distance: int,
     threshold: float,
+    seed_nms_radius: int = 0,
 ) -> tuple[np.ndarray, int]:
     if method == "grid":
         return _grid_seeds(boundary, next_id, seed_distance)
@@ -203,6 +267,11 @@ def _scipy_seeds(
     mask = boundary < threshold
     distance = ndimage.distance_transform_edt(mask)
     maxima = (distance == ndimage.maximum_filter(distance, size=5)) & (distance > 0)
+    if int(seed_nms_radius) > 0:
+        seeds, num = _spaced_maxima_seeds(maxima, distance, next_id, int(seed_nms_radius))
+        if int(num) <= 0:
+            return _grid_seeds(boundary, next_id, seed_distance)
+        return seeds, int(num)
     seeds, num = ndimage.label(maxima)
     seeds = seeds.astype(np.int32, copy=False)
     seeds[seeds > 0] += int(next_id) - 1
@@ -217,8 +286,13 @@ def watershed_fragments(
     seed_method: str = "maxima_distance",
     seed_distance: int = 12,
     boundary_threshold: float = 0.5,
+    seed_nms_radius: int = 0,
 ) -> np.ndarray:
-    """Build 2D slice-wise watershed fragments from predicted xy affinities."""
+    """Build 2D slice-wise watershed fragments from predicted xy affinities.
+
+    ``seed_nms_radius=0`` preserves the historical regional-maxima behavior.
+    Positive values suppress nearby distance-map maxima before watershed.
+    """
 
     affinities = np.asarray(affinities, dtype=np.float32)
     if affinities.ndim != 4 or affinities.shape[0] != 3:
@@ -231,7 +305,14 @@ def watershed_fragments(
         import mahotas  # type: ignore
 
         for z in range(depth):
-            seeds, num = _mahotas_seeds(boundary[z], seed_method, next_id, seed_distance, boundary_threshold)
+            seeds, num = _mahotas_seeds(
+                boundary[z],
+                seed_method,
+                next_id,
+                seed_distance,
+                boundary_threshold,
+                seed_nms_radius,
+            )
             fragments[z] = mahotas.cwatershed(boundary[z], seeds).astype(np.uint64, copy=False)
             next_id = int(fragments[z].max()) + 1
             if num <= 0:
@@ -240,7 +321,14 @@ def watershed_fragments(
         from scipy import ndimage  # type: ignore
 
         for z in range(depth):
-            seeds, num = _scipy_seeds(boundary[z], seed_method, next_id, seed_distance, boundary_threshold)
+            seeds, num = _scipy_seeds(
+                boundary[z],
+                seed_method,
+                next_id,
+                seed_distance,
+                boundary_threshold,
+                seed_nms_radius,
+            )
             fragments[z] = ndimage.watershed_ift(
                 np.clip(boundary[z] * 255.0, 0, 255).astype(np.uint8),
                 seeds.astype(np.int32, copy=False),

@@ -1,0 +1,43 @@
+seed: 74
+device: cpu
+output_dir: /tmp/dbmim_r74_pretrain_smoke
+pretrained_min_keys: 41
+data:
+  synthetic: true
+  synthetic_length: 1
+  volume_size:
+  - 8
+  - 32
+  - 32
+model:
+  architecture: dbmim
+  in_channels: 1
+  volume_size:
+  - 8
+  - 32
+  - 32
+  patch_size:
+  - 4
+  - 16
+  - 16
+  embed_dim: 24
+  depth: 3
+  num_heads: 3
+  decoder_dim: 24
+  mask_ratio: 0.75
+  structure_weight: 0.2
+  membrane_weight: 1.35
+decision:
+  enabled: false
+train:
+  batch_size: 1
+  epochs: 1
+  max_steps: 1
+  num_workers: 0
+  lr: 2.0e-05
+  weight_decay: 0.01
+  amp: false
+  log_every: 1
+  save_every: 1
+  save_steps: 1
+  clip_grad: 1.0

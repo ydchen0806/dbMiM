@@ -1,0 +1,122 @@
+{
+  "baseline": {
+    "balance": 0.08376122743618136,
+    "bias": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mean_arand": 0.02254600366656634,
+    "mean_voi": 0.3111834507513943,
+    "samples": {
+      "mec8nm_08.h5": {
+        "affinity_variant": "bias_z+0.00_y+0.00_x+0.00_t1.15",
+        "arand": 0.014948239287021159,
+        "n_pred": 242,
+        "voi": 0.2561279667535462
+      },
+      "mec8nm_10.h5": {
+        "affinity_variant": "bias_z+0.00_y+0.00_x+0.00_t1.15",
+        "arand": 0.03014376804611152,
+        "n_pred": 120,
+        "voi": 0.3662389347492424
+      }
+    },
+    "strict_crop_gate": true,
+    "temperature": 1.15,
+    "threshold": 0.5,
+    "vs_baseline_pct": {
+      "balance": 0.0,
+      "m08_arand": 0.0,
+      "m08_voi": 0.0,
+      "mean_arand": 0.0,
+      "mean_voi": 0.0
+    },
+    "worst_balance": 0.1050705548597519
+  },
+  "baseline_integrity": {
+    "collapsed_rows": 64,
+    "duplicate_rows": 16,
+    "raw_rows": 80
+  },
+  "baseline_metrics": "outputs/mec8nm_remote_results/r58_balanced_crop_20260711/cremi_segmentation_metrics.csv",
+  "best_balance": {
+    "balance": 0.11958057255974029,
+    "bias": [
+      -0.2,
+      -0.45,
+      -0.45
+    ],
+    "mean_arand": 0.03689662552712447,
+    "mean_voi": 0.387556128221077,
+    "samples": {
+      "mec8nm_08.h5": {
+        "affinity_variant": "bias_z-0.20_y-0.45_x-0.45_t1.00",
+        "arand": 0.040070609288032966,
+        "n_pred": 255,
+        "voi": 0.3776331696297389
+      },
+      "mec8nm_10.h5": {
+        "affinity_variant": "bias_z-0.20_y-0.45_x-0.45_t1.00",
+        "arand": 0.03372264176621598,
+        "n_pred": 138,
+        "voi": 0.397479086812415
+      }
+    },
+    "strict_crop_gate": false,
+    "temperature": 1.0,
+    "threshold": 0.5,
+    "vs_baseline_pct": {
+      "balance": 42.76363446422762,
+      "m08_arand": 168.06240199020868,
+      "m08_voi": 47.43925640619657,
+      "mean_arand": 63.65040152033148,
+      "mean_voi": 24.54265395067461
+    },
+    "worst_balance": 0.12301215872601677
+  },
+  "integrity": {
+    "collapsed_rows": 64,
+    "duplicate_rows": 16,
+    "raw_rows": 80
+  },
+  "metrics": "outputs/mec8nm_remote_results/r75_halo_consistency_20260713/crop/eval_val_crop64x512/eval_finetune_mec8nm_r75_seed1789_halo_consistency_stage1_val_crop64x512/cremi_segmentation_metrics.csv",
+  "pareto": [
+    {
+      "balance": 0.11958057255974029,
+      "bias": [
+        -0.2,
+        -0.45,
+        -0.45
+      ],
+      "mean_arand": 0.03689662552712447,
+      "mean_voi": 0.387556128221077,
+      "samples": {
+        "mec8nm_08.h5": {
+          "affinity_variant": "bias_z-0.20_y-0.45_x-0.45_t1.00",
+          "arand": 0.040070609288032966,
+          "n_pred": 255,
+          "voi": 0.3776331696297389
+        },
+        "mec8nm_10.h5": {
+          "affinity_variant": "bias_z-0.20_y-0.45_x-0.45_t1.00",
+          "arand": 0.03372264176621598,
+          "n_pred": 138,
+          "voi": 0.397479086812415
+        }
+      },
+      "strict_crop_gate": false,
+      "temperature": 1.0,
+      "threshold": 0.5,
+      "vs_baseline_pct": {
+        "balance": 42.76363446422762,
+        "m08_arand": 168.06240199020868,
+        "m08_voi": 47.43925640619657,
+        "mean_arand": 63.65040152033148,
+        "mean_voi": 24.54265395067461
+      },
+      "worst_balance": 0.12301215872601677
+    }
+  ],
+  "strict_crop_gate_passes": []
+}

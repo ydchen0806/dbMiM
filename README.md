@@ -183,3 +183,27 @@ train_finetune.py               CREMI affinity finetuning
 ```
 
 Large datasets, checkpoints, and generated outputs are not tracked in Git.
+
+## MEC 8 nm workspace
+
+The MEC myelin instance-segmentation line is isolated under
+[`mec8nm/`](mec8nm/README.md). It contains a versionable runtime snapshot,
+configs, launchers, tests, compact evidence, and the frozen split contract.
+Existing root-level files remain in place for compatibility with historical
+commands and SiFlow bundles; the workspace verifier requires shared runtime
+files to remain byte-identical, so this integration does not reorganize the
+original dbMiM layout.
+
+Current selection depends on protocol: R58 remains the strict M08/M10 crop
+affinity anchor, R57 plus calibrated WaterZ is the conservative absolute
+full-block anchor, and R58 plus frozen CREMI LoCoAgg is the strongest
+same-affinity M08/M10 validation/runtime result. The paired M11/M12 replay is
+mixed, and later signed-VI diagnostics consume M07/M09, so no existing MEC
+block may be reopened for selection. A new claim requires new labeled blocks
+or an official hidden evaluation.
+
+Blockwise inference is implemented, but PB-scale globally coherent instance
+segmentation is not production ready. Use the staged single-block, `2x2x2`,
+TB, and 100-TB gates in the project state before scheduling a PB run. Start
+with [`mec8nm/README.md`](mec8nm/README.md) and the repository skill at
+[`dbmim-neuron-seg-skill/SKILL.md`](dbmim-neuron-seg-skill/SKILL.md).

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from collections import Counter
+from collections.abc import Sequence
 
 import torch
 import torch.distributed as dist
@@ -134,6 +136,9 @@ def boundary_calibrated_affinity_ranking_loss(
     pos_threshold = float(cfg.get("bcar_pos_threshold", 0.75))
     neg_threshold = float(cfg.get("bcar_neg_threshold", 0.25))
     z_xy_gap = float(cfg.get("bcar_z_xy_gap", 0.0))
+    bcar_channels = int(cfg.get("bcar_channels", logits.shape[1]))
+    if bcar_channels <= 0 or bcar_channels > int(logits.shape[1]):
+        raise ValueError(f"bcar_channels must be in [1, {int(logits.shape[1])}], got {bcar_channels}")
 
     mask = torch.ones_like(target, dtype=torch.bool)
     if valid_mask is not None:
@@ -142,7 +147,7 @@ def boundary_calibrated_affinity_ranking_loss(
     neg_mask = (target <= neg_threshold) & mask
     rank_losses = []
     calib_losses = []
-    for channel in range(int(logits.shape[1])):
+    for channel in range(bcar_channels):
         pos = logits[:, channel][pos_mask[:, channel]]
         neg = logits[:, channel][neg_mask[:, channel]]
         if pos.numel() > 0 and neg.numel() > 0:
@@ -513,6 +518,512 @@ def make_affinity_target(labels: torch.Tensor, train_cfg: dict) -> torch.Tensor:
     )
 
 
+def make_photometric_consistency_view(image: torch.Tensor, cfg: dict) -> torch.Tensor:
+    """Create a coordinate-aligned photometric view for consistency training."""
+
+    if image.ndim != 5:
+        raise ValueError(f"consistency input must be [B,C,D,H,W], got {tuple(image.shape)}")
+
+    def sample_range(name: str, default: tuple[float, float]) -> torch.Tensor:
+        values = cfg.get(name, default)
+        if not isinstance(values, (list, tuple)) or len(values) != 2:
+            raise ValueError(f"train.augmentation_consistency.{name} must contain two values")
+        low, high = float(values[0]), float(values[1])
+        if low > high:
+            raise ValueError(f"train.augmentation_consistency.{name} must be ordered, got {values}")
+        shape = (int(image.shape[0]), 1, 1, 1, 1)
+        return image.new_empty(shape).uniform_(low, high)
+
+    gamma = sample_range("gamma_range", (1.0, 1.0))
+    gain = sample_range("gain_range", (1.0, 1.0))
+    bias = sample_range("bias_range", (0.0, 0.0))
+    view = image.clamp(0.0, 1.0).pow(gamma)
+    view = view * gain + bias
+    noise_std = float(cfg.get("noise_std", 0.0))
+    if noise_std < 0.0:
+        raise ValueError("train.augmentation_consistency.noise_std must be non-negative")
+    if noise_std > 0.0:
+        view = view + torch.randn_like(view) * noise_std
+    return view.clamp(0.0, 1.0)
+
+
+def photometric_consistency_loss(
+    reference_logits: torch.Tensor,
+    view_logits: torch.Tensor,
+    cfg: dict,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Match affinity probabilities across aligned views with a stopped teacher."""
+
+    channels = int(cfg.get("channels", min(reference_logits.shape[1], view_logits.shape[1])))
+    if channels <= 0 or channels > min(reference_logits.shape[1], view_logits.shape[1]):
+        raise ValueError(
+            "train.augmentation_consistency.channels must fit both model outputs, "
+            f"got {channels} for {reference_logits.shape[1]} and {view_logits.shape[1]}"
+        )
+    teacher = torch.sigmoid(reference_logits[:, :channels]).detach()
+    student = torch.sigmoid(view_logits[:, :channels])
+    error = (student - teacher).pow(2)
+
+    confidence_floor = float(cfg.get("confidence_floor", 0.0))
+    if not 0.0 <= confidence_floor < 0.5:
+        raise ValueError("train.augmentation_consistency.confidence_floor must be in [0, 0.5)")
+    mask = torch.ones_like(error)
+    if confidence_floor > 0.0:
+        mask = mask * ((teacher - 0.5).abs() >= confidence_floor).to(error.dtype)
+    if valid_mask is not None:
+        mask = mask * valid_mask[:, :channels].to(device=error.device, dtype=error.dtype)
+    return (error * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def _halo_consistency_slices(shape: Sequence[int], cfg: dict) -> tuple[slice, slice, slice]:
+    values = cfg.get("halo", (4, 16, 16))
+    if not isinstance(values, (list, tuple)) or len(values) != 3:
+        raise ValueError("train.halo_consistency.halo must contain three z/y/x values")
+    halo = tuple(int(value) for value in values)
+    spatial = tuple(int(value) for value in shape[-3:])
+    if any(value <= 0 for value in halo):
+        raise ValueError(f"train.halo_consistency.halo must be positive, got {halo}")
+    if any(2 * value >= size for value, size in zip(halo, spatial)):
+        raise ValueError(f"train.halo_consistency.halo {halo} does not fit spatial shape {spatial}")
+    return tuple(slice(value, size - value) for value, size in zip(halo, spatial))
+
+
+def make_halo_consistency_view(image: torch.Tensor, cfg: dict) -> torch.Tensor:
+    """Replace only the crop halo while preserving the central image exactly."""
+
+    if image.ndim != 5:
+        raise ValueError(f"halo consistency input must be [B,C,D,H,W], got {tuple(image.shape)}")
+    z_slice, y_slice, x_slice = _halo_consistency_slices(image.shape, cfg)
+    core = image[:, :, z_slice, y_slice, x_slice]
+    hz, hy, hx = (int(value) for value in cfg.get("halo", (4, 16, 16)))
+    padding_mode = str(cfg.get("padding_mode", "reflect")).lower()
+    if padding_mode not in {"reflect", "replicate"}:
+        raise ValueError(
+            "train.halo_consistency.padding_mode must be reflect or replicate, "
+            f"got {padding_mode}"
+        )
+    view = F.pad(core, (hx, hx, hy, hy, hz, hz), mode=padding_mode)
+    if tuple(view.shape) != tuple(image.shape):
+        raise RuntimeError(f"halo consistency view changed shape: {tuple(image.shape)} -> {tuple(view.shape)}")
+    return view
+
+
+def halo_consistency_loss(
+    reference_logits: torch.Tensor,
+    view_logits: torch.Tensor,
+    cfg: dict,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Match stopped full-context predictions inside the unchanged central core."""
+
+    if tuple(reference_logits.shape[-3:]) != tuple(view_logits.shape[-3:]):
+        raise ValueError(
+            "halo consistency logits must share a spatial shape, "
+            f"got {tuple(reference_logits.shape)} and {tuple(view_logits.shape)}"
+        )
+    channels = int(cfg.get("channels", min(reference_logits.shape[1], view_logits.shape[1])))
+    if channels <= 0 or channels > min(reference_logits.shape[1], view_logits.shape[1]):
+        raise ValueError(
+            "train.halo_consistency.channels must fit both model outputs, "
+            f"got {channels} for {reference_logits.shape[1]} and {view_logits.shape[1]}"
+        )
+    z_slice, y_slice, x_slice = _halo_consistency_slices(reference_logits.shape, cfg)
+    teacher = torch.sigmoid(
+        reference_logits[:, :channels, z_slice, y_slice, x_slice]
+    ).detach()
+    student = torch.sigmoid(view_logits[:, :channels, z_slice, y_slice, x_slice])
+    error = (student - teacher).pow(2)
+
+    confidence_floor = float(cfg.get("confidence_floor", 0.0))
+    if not 0.0 <= confidence_floor < 0.5:
+        raise ValueError("train.halo_consistency.confidence_floor must be in [0, 0.5)")
+    mask = torch.ones_like(error)
+    if confidence_floor > 0.0:
+        mask = mask * ((teacher - 0.5).abs() >= confidence_floor).to(error.dtype)
+    if valid_mask is not None:
+        valid_core = valid_mask[:, :channels, z_slice, y_slice, x_slice]
+        mask = mask * valid_core.to(device=error.device, dtype=error.dtype)
+    return (error * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def paired_overlap_slices(
+    spatial_shape: Sequence[int],
+    offset: Sequence[int],
+) -> tuple[tuple[slice, slice, slice], tuple[slice, slice, slice]]:
+    """Return aligned first/second crop slices for a second-minus-first offset."""
+
+    if len(spatial_shape) != 3 or len(offset) != 3:
+        raise ValueError(f"paired overlap expects 3D shape/offset, got {spatial_shape} and {offset}")
+    reference_slices: list[slice] = []
+    paired_slices: list[slice] = []
+    for size_value, offset_value in zip(spatial_shape, offset):
+        size = int(size_value)
+        delta = int(offset_value)
+        if size <= 0 or abs(delta) >= size:
+            raise ValueError(f"paired offset {tuple(offset)} does not overlap shape {tuple(spatial_shape)}")
+        if delta >= 0:
+            reference_slices.append(slice(delta, size))
+            paired_slices.append(slice(0, size - delta))
+        else:
+            reference_slices.append(slice(0, size + delta))
+            paired_slices.append(slice(-delta, size))
+    return tuple(reference_slices), tuple(paired_slices)  # type: ignore[return-value]
+
+
+def paired_overlap_consistency_loss(
+    reference_logits: torch.Tensor,
+    paired_logits: torch.Tensor,
+    paired_offsets: torch.Tensor,
+    cfg: dict,
+    *,
+    reference_valid_mask: torch.Tensor | None = None,
+    paired_valid_mask: torch.Tensor | None = None,
+    reference_target: torch.Tensor | None = None,
+    paired_target: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Match stopped-teacher affinities in the real coordinate-aligned overlap."""
+
+    if tuple(reference_logits.shape) != tuple(paired_logits.shape):
+        raise ValueError(
+            "paired overlap logits must share a shape, "
+            f"got {tuple(reference_logits.shape)} and {tuple(paired_logits.shape)}"
+        )
+    if reference_logits.ndim != 5:
+        raise ValueError(f"paired overlap logits must be [B,C,D,H,W], got {reference_logits.shape}")
+    offsets = paired_offsets
+    if offsets.ndim == 1:
+        offsets = offsets.unsqueeze(0)
+    if tuple(offsets.shape) != (int(reference_logits.shape[0]), 3):
+        raise ValueError(
+            f"paired offsets must have shape [B,3], got {tuple(offsets.shape)} "
+            f"for batch {reference_logits.shape[0]}"
+        )
+    channels = int(cfg.get("channels", min(reference_logits.shape[1], paired_logits.shape[1])))
+    if channels <= 0 or channels > min(reference_logits.shape[1], paired_logits.shape[1]):
+        raise ValueError(
+            "train.paired_overlap_consistency.channels must fit both model outputs, "
+            f"got {channels} for {reference_logits.shape[1]} and {paired_logits.shape[1]}"
+        )
+    confidence_floor = float(cfg.get("confidence_floor", 0.0))
+    if not 0.0 <= confidence_floor < 0.5:
+        raise ValueError("train.paired_overlap_consistency.confidence_floor must be in [0, 0.5)")
+    expected_overlap = cfg.get("expected_overlap")
+    if expected_overlap is not None and (
+        not isinstance(expected_overlap, (list, tuple)) or len(expected_overlap) != 3
+    ):
+        raise ValueError("train.paired_overlap_consistency.expected_overlap must contain z/y/x")
+
+    numerator = reference_logits.new_tensor(0.0)
+    denominator = reference_logits.new_tensor(0.0)
+    spatial = tuple(int(value) for value in reference_logits.shape[-3:])
+    for batch_index in range(int(reference_logits.shape[0])):
+        offset = tuple(int(value) for value in offsets[batch_index].detach().cpu().tolist())
+        reference_slice, paired_slice = paired_overlap_slices(spatial, offset)
+        overlap_shape = tuple(int(value.stop - value.start) for value in reference_slice)
+        if expected_overlap is not None and overlap_shape != tuple(int(value) for value in expected_overlap):
+            raise ValueError(
+                f"paired overlap shape changed: expected {tuple(expected_overlap)}, got {overlap_shape} "
+                f"from offset {offset}"
+            )
+        ref_index = (batch_index, slice(0, channels), *reference_slice)
+        pair_index = (batch_index, slice(0, channels), *paired_slice)
+        teacher = torch.sigmoid(reference_logits[ref_index]).detach()
+        student = torch.sigmoid(paired_logits[pair_index])
+        error = (student - teacher).pow(2)
+        mask = torch.ones_like(error)
+        if confidence_floor > 0.0:
+            mask = mask * ((teacher - 0.5).abs() >= confidence_floor).to(error.dtype)
+        if reference_valid_mask is not None:
+            mask = mask * reference_valid_mask[ref_index].to(device=error.device, dtype=error.dtype)
+        if paired_valid_mask is not None:
+            mask = mask * paired_valid_mask[pair_index].to(device=error.device, dtype=error.dtype)
+        if reference_target is not None and paired_target is not None:
+            reference_affinity = reference_target[ref_index]
+            paired_affinity = paired_target[pair_index]
+            target_agreement = torch.isclose(reference_affinity, paired_affinity, atol=0.0, rtol=0.0)
+            mask = mask * target_agreement.to(device=error.device, dtype=error.dtype)
+        numerator = numerator + (error * mask).sum()
+        denominator = denominator + mask.sum()
+    return numerator / denominator.clamp_min(1.0)
+
+
+def topology_simple_teacher_route(
+    foreground_fraction: torch.Tensor,
+    boundary_fraction: torch.Tensor,
+    unique_nonzero: torch.Tensor,
+    cfg: dict,
+) -> torch.Tensor:
+    """Return a soft per-crop route toward the simple-topology teacher."""
+
+    if foreground_fraction.ndim != 1:
+        raise ValueError(
+            "topology foreground fraction must have shape [B], "
+            f"got {tuple(foreground_fraction.shape)}"
+        )
+    if tuple(boundary_fraction.shape) != tuple(foreground_fraction.shape) or tuple(
+        unique_nonzero.shape
+    ) != tuple(foreground_fraction.shape):
+        raise ValueError(
+            "topology route inputs must share shape [B], got "
+            f"{tuple(foreground_fraction.shape)}, {tuple(boundary_fraction.shape)}, "
+            f"and {tuple(unique_nonzero.shape)}"
+        )
+
+    foreground_width = float(cfg.get("foreground_width", 0.02))
+    boundary_width = float(cfg.get("boundary_width", 0.02))
+    unique_width = float(cfg.get("unique_width", 2.0))
+    if foreground_width <= 0.0 or boundary_width <= 0.0 or unique_width <= 0.0:
+        raise ValueError("topology teacher route widths must be positive")
+
+    foreground_route = torch.sigmoid(
+        (foreground_fraction - float(cfg.get("foreground_threshold", 0.95))) / foreground_width
+    )
+    boundary_route = torch.sigmoid(
+        (float(cfg.get("boundary_threshold", 0.05)) - boundary_fraction) / boundary_width
+    )
+    unique_route = torch.sigmoid(
+        (float(cfg.get("unique_threshold", 5.5)) - unique_nonzero) / unique_width
+    )
+    return foreground_route * boundary_route * unique_route
+
+
+def topology_routed_teacher_loss(
+    student_logits: torch.Tensor,
+    simple_teacher_logits: torch.Tensor,
+    complex_teacher_logits: torch.Tensor,
+    simple_route: torch.Tensor,
+    cfg: dict,
+    valid_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Distill a crop-routed blend of two frozen affinity teachers."""
+
+    if student_logits.ndim != 5:
+        raise ValueError(f"topology teacher logits must be [B,C,D,H,W], got {student_logits.shape}")
+    if tuple(simple_teacher_logits.shape) != tuple(student_logits.shape) or tuple(
+        complex_teacher_logits.shape
+    ) != tuple(student_logits.shape):
+        raise ValueError(
+            "student and topology teacher logits must share a shape, got "
+            f"{tuple(student_logits.shape)}, {tuple(simple_teacher_logits.shape)}, "
+            f"and {tuple(complex_teacher_logits.shape)}"
+        )
+    if tuple(simple_route.shape) != (int(student_logits.shape[0]),):
+        raise ValueError(
+            f"simple teacher route must have shape [B], got {tuple(simple_route.shape)} "
+            f"for batch {student_logits.shape[0]}"
+        )
+
+    channels = int(cfg.get("channels", student_logits.shape[1]))
+    if channels <= 0 or channels > int(student_logits.shape[1]):
+        raise ValueError(
+            "train.topology_teacher_distillation.channels must fit model outputs, "
+            f"got {channels} for {student_logits.shape[1]}"
+        )
+    route = simple_route.detach().to(device=student_logits.device, dtype=torch.float32).view(-1, 1, 1, 1, 1)
+    simple_probability = torch.sigmoid(simple_teacher_logits[:, :channels]).detach().float()
+    complex_probability = torch.sigmoid(complex_teacher_logits[:, :channels]).detach().float()
+    teacher = route * simple_probability + (1.0 - route) * complex_probability
+    student = torch.sigmoid(student_logits[:, :channels]).float()
+    error = (student - teacher).pow(2)
+
+    confidence_floor = float(cfg.get("confidence_floor", 0.0))
+    if not 0.0 <= confidence_floor < 0.5:
+        raise ValueError("train.topology_teacher_distillation.confidence_floor must be in [0, 0.5)")
+    mask = torch.ones_like(error)
+    if confidence_floor > 0.0:
+        mask = mask * ((teacher - 0.5).abs() >= confidence_floor).to(error.dtype)
+    if valid_mask is not None:
+        mask = mask * valid_mask[:, :channels].to(device=error.device, dtype=error.dtype)
+    return (error * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def discriminative_instance_embedding_loss(
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    cfg: dict,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compact decoder features within instances and separate instance centroids."""
+
+    if features.ndim != 5 or labels.ndim != 4:
+        raise ValueError(
+            "instance embedding expects features [B,C,D,H,W] and labels [B,D,H,W], "
+            f"got {tuple(features.shape)} and {tuple(labels.shape)}"
+        )
+    if int(features.shape[0]) != int(labels.shape[0]):
+        raise ValueError(
+            f"instance embedding batch mismatch: {features.shape[0]} vs {labels.shape[0]}"
+        )
+    stride_values = cfg.get("feature_stride", (2, 4, 4))
+    if not isinstance(stride_values, (list, tuple)) or len(stride_values) != 3:
+        raise ValueError("train.instance_embedding.feature_stride must contain z/y/x")
+    stride = tuple(int(value) for value in stride_values)
+    if any(value <= 0 for value in stride):
+        raise ValueError(f"train.instance_embedding.feature_stride must be positive, got {stride}")
+    min_voxels = int(cfg.get("min_voxels", 8))
+    max_instances = int(cfg.get("max_instances", 64))
+    variance_margin = float(cfg.get("variance_margin", 0.20))
+    distance_margin = float(cfg.get("distance_margin", 1.0))
+    variance_weight = float(cfg.get("variance_weight", 1.0))
+    distance_weight = float(cfg.get("distance_weight", 1.0))
+    if min_voxels <= 0 or max_instances <= 0:
+        raise ValueError("train.instance_embedding min_voxels and max_instances must be positive")
+    if min(variance_margin, distance_margin, variance_weight, distance_weight) < 0.0:
+        raise ValueError("train.instance_embedding margins and component weights must be non-negative")
+
+    if tuple(features.shape[-3:]) != tuple(labels.shape[-3:]):
+        labels = F.interpolate(
+            labels.unsqueeze(1).float(),
+            size=tuple(int(value) for value in features.shape[-3:]),
+            mode="nearest",
+        ).squeeze(1).long()
+    sampled_features = F.normalize(
+        features.float()[:, :, :: stride[0], :: stride[1], :: stride[2]],
+        dim=1,
+        eps=1e-6,
+    )
+    sampled_labels = labels[:, :: stride[0], :: stride[1], :: stride[2]].long()
+    foreground_fraction = (sampled_labels > 0).float().mean()
+
+    variance_losses: list[torch.Tensor] = []
+    distance_losses: list[torch.Tensor] = []
+    total_instances = 0
+    for batch_index in range(int(sampled_features.shape[0])):
+        labels_flat = sampled_labels[batch_index].reshape(-1)
+        features_flat = sampled_features[batch_index].reshape(
+            int(sampled_features.shape[1]), -1
+        ).transpose(0, 1)
+        instance_ids, counts = torch.unique(labels_flat, sorted=True, return_counts=True)
+        keep = (instance_ids > 0) & (counts >= min_voxels)
+        instance_ids = instance_ids[keep]
+        counts = counts[keep]
+        if int(instance_ids.numel()) > max_instances:
+            selected = torch.argsort(counts, descending=True)[:max_instances]
+            instance_ids = instance_ids[selected]
+
+        centroids: list[torch.Tensor] = []
+        for instance_id in instance_ids:
+            instance_features = features_flat[labels_flat == instance_id]
+            centroid = instance_features.mean(dim=0)
+            centroids.append(centroid)
+            distances = torch.linalg.vector_norm(instance_features - centroid, dim=1)
+            variance_losses.append(F.relu(distances - variance_margin).pow(2).mean())
+        total_instances += len(centroids)
+        if len(centroids) > 1:
+            centroid_tensor = torch.stack(centroids)
+            pair_distances = torch.pdist(centroid_tensor, p=2)
+            distance_losses.append(F.relu(distance_margin - pair_distances).pow(2).mean())
+
+    zero = features.float().sum() * 0.0
+    variance_loss = torch.stack(variance_losses).mean() if variance_losses else zero
+    distance_loss = torch.stack(distance_losses).mean() if distance_losses else zero
+    loss = variance_weight * variance_loss + distance_weight * distance_loss
+    return loss, {
+        "variance_loss": variance_loss.detach(),
+        "distance_loss": distance_loss.detach(),
+        "instance_count": features.new_tensor(float(total_instances) / max(1, int(features.shape[0]))),
+        "sampled_foreground_fraction": foreground_fraction.detach(),
+    }
+
+
+def instance_pair_boundary_leak_loss(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    cfg: dict,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Penalize high-tail affinity leaks across each true adjacent instance pair."""
+
+    if logits.ndim != 5 or labels.ndim not in {3, 4}:
+        raise ValueError(f"expected logits [B,C,D,H,W] and labels [B,D,H,W], got {logits.shape}, {labels.shape}")
+    if labels.ndim == 3:
+        labels = labels.unsqueeze(0)
+    if tuple(logits.shape[0:1] + logits.shape[2:]) != tuple(labels.shape):
+        raise ValueError(f"boundary-leak logits/label shapes differ: {logits.shape} vs {labels.shape}")
+    channels = int(cfg.get("channels", 3))
+    if channels != 3 or int(logits.shape[1]) < channels:
+        raise ValueError(f"boundary leak requires exactly three nearest-neighbor channels, got {channels}")
+    tail_fraction = float(cfg.get("tail_fraction", 0.10))
+    max_affinity = float(cfg.get("max_affinity", 0.25))
+    min_edges = int(cfg.get("min_edges", 4))
+    max_pairs = int(cfg.get("max_pairs", 64))
+    if not 0.0 < tail_fraction <= 1.0:
+        raise ValueError("train.boundary_leak.tail_fraction must be in (0, 1]")
+    if not 0.0 <= max_affinity < 1.0:
+        raise ValueError("train.boundary_leak.max_affinity must be in [0, 1)")
+    if min_edges <= 0:
+        raise ValueError("train.boundary_leak.min_edges must be positive")
+    if max_pairs <= 0:
+        raise ValueError("train.boundary_leak.max_pairs must be positive")
+
+    probabilities = torch.sigmoid(logits[:, :channels])
+    labels = labels.to(device=probabilities.device, dtype=torch.long)
+    zero = logits.sum() * 0.0
+    sample_losses: list[torch.Tensor] = []
+    pair_count = 0
+    edge_count = 0
+    active_pair_sum = zero.detach()
+    tail_probability_sum = zero.detach()
+
+    for batch_index in range(int(labels.shape[0])):
+        sample_labels = labels[batch_index]
+        sample_probabilities = probabilities[batch_index]
+        base = int(sample_labels.max().detach().item()) + 1
+        if base <= 1:
+            continue
+        pair_codes: list[torch.Tensor] = []
+        pair_probabilities: list[torch.Tensor] = []
+        slices = (
+            (sample_labels[1:], sample_labels[:-1], sample_probabilities[0, 1:]),
+            (sample_labels[:, 1:], sample_labels[:, :-1], sample_probabilities[1, :, 1:]),
+            (sample_labels[:, :, 1:], sample_labels[:, :, :-1], sample_probabilities[2, :, :, 1:]),
+        )
+        for source, neighbor, edge_probability in slices:
+            cross_instance = (source > 0) & (neighbor > 0) & (source != neighbor)
+            if not cross_instance.any():
+                continue
+            source_ids = source[cross_instance]
+            neighbor_ids = neighbor[cross_instance]
+            low = torch.minimum(source_ids, neighbor_ids)
+            high = torch.maximum(source_ids, neighbor_ids)
+            pair_codes.append(low * base + high)
+            pair_probabilities.append(edge_probability[cross_instance])
+        if not pair_codes:
+            continue
+        codes = torch.cat(pair_codes)
+        values = torch.cat(pair_probabilities)
+        unique_codes, counts = torch.unique(codes, sorted=True, return_counts=True)
+        eligible = counts >= min_edges
+        unique_codes = unique_codes[eligible]
+        counts = counts[eligible]
+        if unique_codes.numel() == 0:
+            continue
+        if unique_codes.numel() > max_pairs:
+            order = torch.argsort(counts, descending=True, stable=True)[:max_pairs]
+            unique_codes = unique_codes[order]
+        current_losses: list[torch.Tensor] = []
+        for code in unique_codes:
+            pair_values = values[codes == code]
+            tail_size = max(1, math.ceil(pair_values.numel() * tail_fraction))
+            tail = torch.topk(pair_values, k=tail_size, largest=True, sorted=False).values
+            excess = F.relu(tail - max_affinity)
+            current_losses.append(excess.square().mean())
+            pair_count += 1
+            edge_count += int(pair_values.numel())
+            active_pair_sum = active_pair_sum + (excess.detach() > 0).any().to(dtype=logits.dtype)
+            tail_probability_sum = tail_probability_sum + tail.detach().mean()
+        if current_losses:
+            sample_losses.append(torch.stack(current_losses).mean())
+
+    loss = torch.stack(sample_losses).mean() if sample_losses else zero
+    normalizer = max(1, pair_count)
+    return loss, {
+        "pair_count": logits.new_tensor(float(pair_count) / max(1, int(labels.shape[0]))),
+        "edge_count": logits.new_tensor(float(edge_count) / max(1, int(labels.shape[0]))),
+        "active_pair_fraction": active_pair_sum / normalizer,
+        "tail_probability_mean": tail_probability_sum / normalizer,
+    }
+
+
 def finetune_loss(
     logits: torch.Tensor,
     affinity_target: torch.Tensor,
@@ -601,6 +1112,7 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
             length=int(data_cfg.get("synthetic_length", 128)),
             volume_size=volume_size,
             with_labels=True,
+            return_unwidened_label=bool(data_cfg.get("return_unwidened_label", False)),
             seed=int(cfg.get("seed", 0)),
         )
     image_paths = data_cfg.get("image_paths") or data_cfg.get("train_images")
@@ -618,9 +1130,31 @@ def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
         augment_rotate_xy=bool(data_cfg.get("augment_rotate_xy", False)),
         augment_gamma=bool(data_cfg.get("augment_gamma", False)),
         augment_gamma_range=tuple(data_cfg.get("augment_gamma_range", [0.7, 1.5])),
+        augment_gamma_probability=float(data_cfg.get("augment_gamma_probability", 0.35)),
         augment_noise_std=float(data_cfg.get("augment_noise_std", 0.03)),
+        augment_intensity_probability=float(data_cfg.get("augment_intensity_probability", 0.35)),
+        augment_intensity_gain_range=tuple(data_cfg.get("augment_intensity_gain_range", [0.85, 1.15])),
+        augment_intensity_bias_range=tuple(data_cfg.get("augment_intensity_bias_range", [-0.05, 0.05])),
+        augment_xy_blur_probability=float(data_cfg.get("augment_xy_blur_probability", 0.0)),
+        augment_xy_blur_kernel=int(data_cfg.get("augment_xy_blur_kernel", 3)),
         widen_border=bool(data_cfg.get("widen_border", False)),
         widen_border_radius=int(data_cfg.get("widen_border_radius", 1)),
+        boundary_sampling=bool(data_cfg.get("boundary_sampling", False)),
+        boundary_sampling_attempts=int(data_cfg.get("boundary_sampling_attempts", 8)),
+        boundary_sampling_min_fraction=float(data_cfg.get("boundary_sampling_min_fraction", 0.001)),
+        boundary_sampling_min_unique=int(data_cfg.get("boundary_sampling_min_unique", 2)),
+        boundary_sampling_min_foreground=float(data_cfg.get("boundary_sampling_min_foreground", 0.05)),
+        boundary_sampling_max_foreground=float(data_cfg.get("boundary_sampling_max_foreground", 0.995)),
+        simple_sampling_probability=float(data_cfg.get("simple_sampling_probability", 0.0)),
+        simple_sampling_attempts=int(data_cfg.get("simple_sampling_attempts", 8)),
+        simple_sampling_min_foreground=float(data_cfg.get("simple_sampling_min_foreground", 0.95)),
+        simple_sampling_max_boundary_fraction=float(data_cfg.get("simple_sampling_max_boundary_fraction", 0.05)),
+        simple_sampling_max_unique=int(data_cfg.get("simple_sampling_max_unique", 5)),
+        simple_sampling_require_eligible=bool(data_cfg.get("simple_sampling_require_eligible", False)),
+        paired_overlap=bool(data_cfg.get("paired_overlap", False)),
+        paired_overlap_shift=tuple(data_cfg.get("paired_overlap_shift", [8, 32, 32])),
+        return_topology_stats=bool(data_cfg.get("return_topology_stats", False)),
+        return_unwidened_label=bool(data_cfg.get("return_unwidened_label", False)),
         seed=int(cfg.get("seed", 0)),
     )
 
@@ -675,6 +1209,38 @@ def build_affinity_model(cfg: dict) -> torch.nn.Module:
     if architecture in {"linear_head", "transpose_head", "mae_head", "mae_backbone"}:
         return MAEBackboneAffinityNet(**common)
     raise ValueError(f"unknown model architecture: {architecture}")
+
+
+def load_frozen_affinity_teacher(
+    cfg: dict,
+    checkpoint_path: str,
+    device: torch.device,
+    *,
+    expected_keys: int = 0,
+) -> tuple[torch.nn.Module, list[str]]:
+    """Build a complete frozen teacher without perturbing the training RNG stream."""
+
+    cuda_devices: list[int] = []
+    if device.type == "cuda":
+        cuda_devices = [device.index if device.index is not None else torch.cuda.current_device()]
+    with torch.random.fork_rng(devices=cuda_devices):
+        teacher = build_affinity_model(cfg).to(device)
+    checkpoint = load_checkpoint(checkpoint_path, map_location="cpu")
+    loaded = load_pretrained_backbone(teacher, checkpoint)
+    if expected_keys > 0 and len(loaded) != expected_keys:
+        raise ValueError(
+            f"topology teacher expected {expected_keys} compatible keys, "
+            f"loaded {len(loaded)} from {checkpoint_path}"
+        )
+    if len(loaded) != len(teacher.state_dict()):
+        missing = sorted(set(teacher.state_dict()).difference(loaded))
+        raise ValueError(
+            f"topology teacher checkpoint is incomplete: loaded {len(loaded)}/{len(teacher.state_dict())} "
+            f"keys from {checkpoint_path}; missing sample={missing[:8]}"
+        )
+    teacher.requires_grad_(False)
+    teacher.eval()
+    return teacher, loaded
 
 
 def _strip_module_prefix(name: str) -> str:
@@ -809,6 +1375,8 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--pretrained", default="")
     parser.add_argument("--resume", default="")
+    parser.add_argument("--simple-teacher", default="")
+    parser.add_argument("--complex-teacher", default="")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -819,6 +1387,24 @@ def main() -> None:
     dataset = build_dataset(cfg)
 
     train_cfg = cfg.get("train", {})
+    boundary_leak_cfg = train_cfg.get("boundary_leak", {})
+    if not isinstance(boundary_leak_cfg, dict):
+        raise ValueError("train.boundary_leak must be a mapping")
+    boundary_leak_weight = float(boundary_leak_cfg.get("weight", 0.0))
+    if boundary_leak_weight < 0.0:
+        raise ValueError("train.boundary_leak.weight must be non-negative")
+    instance_embedding_cfg = train_cfg.get("instance_embedding", {})
+    if not isinstance(instance_embedding_cfg, dict):
+        raise ValueError("train.instance_embedding must be a mapping")
+    instance_embedding_weight = float(instance_embedding_cfg.get("weight", 0.0))
+    if instance_embedding_weight < 0.0:
+        raise ValueError("train.instance_embedding.weight must be non-negative")
+    topology_teacher_cfg = train_cfg.get("topology_teacher_distillation", {})
+    if not isinstance(topology_teacher_cfg, dict):
+        raise ValueError("train.topology_teacher_distillation must be a mapping")
+    topology_teacher_weight = float(topology_teacher_cfg.get("weight", 0.0))
+    if topology_teacher_weight < 0.0:
+        raise ValueError("train.topology_teacher_distillation.weight must be non-negative")
     val_fraction = float(train_cfg.get("val_fraction", 0.1))
     if val_fraction > 0.0 and len(dataset) > 1:
         val_len = min(len(dataset) - 1, max(1, int(round(len(dataset) * val_fraction))))
@@ -889,6 +1475,39 @@ def main() -> None:
                     f"prefix_counts={dict(sorted(counts.items()))}"
                 )
 
+    simple_teacher = None
+    complex_teacher = None
+    simple_teacher_path = args.simple_teacher or str(topology_teacher_cfg.get("simple_teacher", ""))
+    complex_teacher_path = args.complex_teacher or str(topology_teacher_cfg.get("complex_teacher", ""))
+    if topology_teacher_weight > 0.0:
+        if not simple_teacher_path or not complex_teacher_path:
+            raise ValueError(
+                "topology teacher distillation requires simple_teacher and complex_teacher checkpoints"
+            )
+        expected_teacher_keys = int(topology_teacher_cfg.get("expected_teacher_keys", 0))
+        simple_teacher, simple_loaded = load_frozen_affinity_teacher(
+            cfg,
+            simple_teacher_path,
+            device,
+            expected_keys=expected_teacher_keys,
+        )
+        complex_teacher, complex_loaded = load_frozen_affinity_teacher(
+            cfg,
+            complex_teacher_path,
+            device,
+            expected_keys=expected_teacher_keys,
+        )
+        if is_main(rank):
+            print(
+                "topology_teachers_loaded="
+                f"{{'simple': '{simple_teacher_path}', 'simple_keys': {len(simple_loaded)}, "
+                f"'complex': '{complex_teacher_path}', 'complex_keys': {len(complex_loaded)}}}"
+            )
+
+    if instance_embedding_weight > 0.0 and not isinstance(model, UNETRAnisotropicAffinityNet):
+        raise ValueError(
+            "train.instance_embedding requires an anisotropic UNETR model with decoder features"
+        )
     frozen_params = apply_param_freeze(model, train_cfg)
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
@@ -926,6 +1545,77 @@ def main() -> None:
     eval_every = int(train_cfg.get("eval_every", 1))
     save_every = int(train_cfg.get("save_every", 1))
     save_steps = int(train_cfg.get("save_steps", 0))
+    consistency_cfg = train_cfg.get("augmentation_consistency", {})
+    if not isinstance(consistency_cfg, dict):
+        raise ValueError("train.augmentation_consistency must be a mapping")
+    consistency_weight = float(consistency_cfg.get("weight", 0.0))
+    if consistency_weight < 0.0:
+        raise ValueError("train.augmentation_consistency.weight must be non-negative")
+    halo_consistency_cfg = train_cfg.get("halo_consistency", {})
+    if not isinstance(halo_consistency_cfg, dict):
+        raise ValueError("train.halo_consistency must be a mapping")
+    halo_consistency_weight = float(halo_consistency_cfg.get("weight", 0.0))
+    if halo_consistency_weight < 0.0:
+        raise ValueError("train.halo_consistency.weight must be non-negative")
+    paired_overlap_cfg = train_cfg.get("paired_overlap_consistency", {})
+    if not isinstance(paired_overlap_cfg, dict):
+        raise ValueError("train.paired_overlap_consistency must be a mapping")
+    paired_overlap_weight = float(paired_overlap_cfg.get("weight", 0.0))
+    if paired_overlap_weight < 0.0:
+        raise ValueError("train.paired_overlap_consistency.weight must be non-negative")
+    active_consistency = sum(
+        weight > 0.0
+        for weight in (
+            consistency_weight,
+            halo_consistency_weight,
+            paired_overlap_weight,
+            topology_teacher_weight,
+        )
+    )
+    if active_consistency > 1:
+        raise ValueError(
+            "augmentation, halo, paired-overlap, and topology-teacher consistency are mutually exclusive"
+        )
+    if instance_embedding_weight > 0.0 and active_consistency > 0:
+        raise ValueError(
+            "instance embedding cannot be combined with augmentation, halo, paired-overlap, "
+            "or topology-teacher consistency"
+        )
+    lsd_weight = float(loss_cfg.get("lsd_weight", train_cfg.get("lsd_weight", 0.0)))
+    if instance_embedding_weight > 0.0 and (dpp_weight > 0.0 or lsd_weight > 0.0):
+        raise ValueError("instance embedding cannot be combined with DPP or LSD auxiliary losses")
+    if boundary_leak_weight > 0.0 and (
+        instance_embedding_weight > 0.0
+        or active_consistency > 0
+        or dpp_weight > 0.0
+        or lsd_weight > 0.0
+    ):
+        raise ValueError(
+            "boundary leak cannot be combined with consistency, teacher, instance embedding, DPP, or LSD auxiliaries"
+        )
+    unwidened_labels_enabled = bool(cfg.get("data", {}).get("return_unwidened_label", False))
+    if boundary_leak_weight > 0.0 and not unwidened_labels_enabled:
+        raise ValueError("boundary leak requires data.return_unwidened_label=true")
+    paired_dataset_enabled = bool(cfg.get("data", {}).get("paired_overlap", False))
+    if paired_overlap_weight > 0.0 and not paired_dataset_enabled:
+        raise ValueError("paired-overlap consistency requires data.paired_overlap=true")
+    topology_stats_enabled = bool(cfg.get("data", {}).get("return_topology_stats", False))
+    if topology_teacher_weight > 0.0 and not topology_stats_enabled:
+        raise ValueError("topology teacher distillation requires data.return_topology_stats=true")
+    ema_decay = float(train_cfg.get("ema_decay", 0.0))
+    if not 0.0 <= ema_decay < 1.0:
+        raise ValueError("train.ema_decay must be in [0, 1)")
+    if boundary_leak_weight > 0.0 and ema_decay > 0.0:
+        raise ValueError("boundary leak cannot be combined with EMA")
+    ema_state = (
+        {name: value.detach().clone() for name, value in unwrap(model).state_dict().items()}
+        if ema_decay > 0.0 and is_main(rank)
+        else None
+    )
+
+    def checkpoint_model_state() -> dict[str, torch.Tensor]:
+        return ema_state if ema_state is not None else unwrap(model).state_dict()
+
     if is_main(rank):
         print(f"output_dir={output_dir}")
         print(
@@ -934,6 +1624,24 @@ def main() -> None:
         )
         print(f"model_trainable_params={count_parameters(unwrap(model))}")
         print(f"loss_config={_loss_cfg(train_cfg)}")
+        print(
+            "boundary_leak_config="
+            f"{{'unwidened_labels_enabled': {unwidened_labels_enabled}, 'loss': {boundary_leak_cfg}}}"
+        )
+        print(f"augmentation_consistency_config={consistency_cfg}")
+        print(f"halo_consistency_config={halo_consistency_cfg}")
+        print(
+            "paired_overlap_config="
+            f"{{'dataset_enabled': {paired_dataset_enabled}, "
+            f"'shift': {cfg.get('data', {}).get('paired_overlap_shift', [])}, "
+            f"'loss': {paired_overlap_cfg}}}"
+        )
+        print(
+            "topology_teacher_config="
+            f"{{'stats_enabled': {topology_stats_enabled}, 'loss': {topology_teacher_cfg}}}"
+        )
+        print(f"instance_embedding_config={instance_embedding_cfg}")
+        print(f"ema_config={{'decay': {ema_decay}, 'checkpoint_uses_ema': {ema_state is not None}}}")
         if frozen_params:
             print({"frozen_param_count": len(frozen_params), "frozen_param_prefix_sample": frozen_params[:12]})
         print(
@@ -955,6 +1663,10 @@ def main() -> None:
         if sampler is not None:
             sampler.set_epoch(epoch)
         model.train()
+        if simple_teacher is not None:
+            simple_teacher.eval()
+        if complex_teacher is not None:
+            complex_teacher.eval()
         if postprocess is not None:
             postprocess.train()
         for batch in loader:
@@ -963,7 +1675,14 @@ def main() -> None:
             target = make_affinity_target(labels, train_cfg).to(device)
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
-                logits = model(image)
+                decoder_features = None
+                if instance_embedding_weight > 0.0:
+                    model_output = model(image, return_features=True)
+                    if not isinstance(model_output, tuple) or len(model_output) != 2:
+                        raise RuntimeError("instance embedding model did not return logits and features")
+                    logits, decoder_features = model_output
+                else:
+                    logits = model(image)
                 loss, loss_parts = finetune_loss(
                     logits,
                     target,
@@ -972,6 +1691,170 @@ def main() -> None:
                     image=image,
                     postprocess=postprocess,
                 )
+                consistency_loss = logits.new_tensor(0.0)
+                consistency_view_l1 = logits.new_tensor(0.0)
+                halo_loss = logits.new_tensor(0.0)
+                halo_view_l1 = logits.new_tensor(0.0)
+                paired_overlap_loss = logits.new_tensor(0.0)
+                paired_offset_abs = logits.new_zeros(3)
+                topology_teacher_loss = logits.new_tensor(0.0)
+                topology_simple_route_mean = logits.new_tensor(0.0)
+                topology_teacher_disagreement = logits.new_tensor(0.0)
+                topology_foreground_mean = logits.new_tensor(0.0)
+                topology_boundary_mean = logits.new_tensor(0.0)
+                topology_unique_mean = logits.new_tensor(0.0)
+                instance_embedding_loss = logits.new_tensor(0.0)
+                instance_embedding_variance_loss = logits.new_tensor(0.0)
+                instance_embedding_distance_loss = logits.new_tensor(0.0)
+                instance_embedding_count = logits.new_tensor(0.0)
+                instance_embedding_foreground_fraction = logits.new_tensor(0.0)
+                boundary_leak_loss = logits.new_tensor(0.0)
+                boundary_leak_pair_count = logits.new_tensor(0.0)
+                boundary_leak_edge_count = logits.new_tensor(0.0)
+                boundary_leak_active_pair_fraction = logits.new_tensor(0.0)
+                boundary_leak_tail_probability_mean = logits.new_tensor(0.0)
+                if boundary_leak_weight > 0.0:
+                    if "unwidened_label" not in batch:
+                        raise RuntimeError("boundary-leak batch is missing unwidened_label")
+                    unwidened_labels = batch["unwidened_label"].to(device, non_blocking=True)
+                    boundary_leak_loss, boundary_leak_parts = instance_pair_boundary_leak_loss(
+                        logits,
+                        unwidened_labels,
+                        boundary_leak_cfg,
+                    )
+                    boundary_leak_pair_count = boundary_leak_parts["pair_count"]
+                    boundary_leak_edge_count = boundary_leak_parts["edge_count"]
+                    boundary_leak_active_pair_fraction = boundary_leak_parts["active_pair_fraction"]
+                    boundary_leak_tail_probability_mean = boundary_leak_parts["tail_probability_mean"]
+                    loss = loss + boundary_leak_weight * boundary_leak_loss
+                if instance_embedding_weight > 0.0:
+                    if decoder_features is None:
+                        raise RuntimeError("instance embedding features were not captured")
+                    instance_embedding_loss, embedding_parts = discriminative_instance_embedding_loss(
+                        decoder_features,
+                        labels,
+                        instance_embedding_cfg,
+                    )
+                    instance_embedding_variance_loss = embedding_parts["variance_loss"]
+                    instance_embedding_distance_loss = embedding_parts["distance_loss"]
+                    instance_embedding_count = embedding_parts["instance_count"]
+                    instance_embedding_foreground_fraction = embedding_parts[
+                        "sampled_foreground_fraction"
+                    ]
+                    loss = loss + instance_embedding_weight * instance_embedding_loss
+                if consistency_weight > 0.0:
+                    consistency_view = make_photometric_consistency_view(image, consistency_cfg)
+                    consistency_logits = model(consistency_view)
+                    consistency_valid_mask = make_offset_affinity_valid_mask(
+                        labels,
+                        train_cfg,
+                        int(target.shape[1]),
+                    )
+                    consistency_loss = photometric_consistency_loss(
+                        logits,
+                        consistency_logits,
+                        consistency_cfg,
+                        valid_mask=consistency_valid_mask,
+                    )
+                    consistency_view_l1 = (consistency_view - image).abs().mean()
+                    loss = loss + consistency_weight * consistency_loss
+                if halo_consistency_weight > 0.0:
+                    halo_view = make_halo_consistency_view(image, halo_consistency_cfg)
+                    halo_logits = model(halo_view)
+                    halo_valid_mask = make_offset_affinity_valid_mask(
+                        labels,
+                        train_cfg,
+                        int(target.shape[1]),
+                    )
+                    halo_loss = halo_consistency_loss(
+                        logits,
+                        halo_logits,
+                        halo_consistency_cfg,
+                        valid_mask=halo_valid_mask,
+                    )
+                    halo_view_l1 = (halo_view - image).abs().mean()
+                    loss = loss + halo_consistency_weight * halo_loss
+                if paired_overlap_weight > 0.0:
+                    missing = {"paired_image", "paired_label", "paired_offset"}.difference(batch)
+                    if missing:
+                        raise RuntimeError(f"paired-overlap batch is missing keys: {sorted(missing)}")
+                    paired_image = batch["paired_image"].to(device, non_blocking=True)
+                    paired_labels = batch["paired_label"].to(device, non_blocking=True)
+                    paired_offsets = batch["paired_offset"].to(device, non_blocking=True)
+                    paired_target = make_affinity_target(paired_labels, train_cfg).to(device)
+                    paired_logits = model(paired_image)
+                    reference_valid_mask = make_offset_affinity_valid_mask(
+                        labels,
+                        train_cfg,
+                        int(target.shape[1]),
+                    )
+                    paired_valid_mask = make_offset_affinity_valid_mask(
+                        paired_labels,
+                        train_cfg,
+                        int(paired_target.shape[1]),
+                    )
+                    paired_overlap_loss = paired_overlap_consistency_loss(
+                        logits,
+                        paired_logits,
+                        paired_offsets,
+                        paired_overlap_cfg,
+                        reference_valid_mask=reference_valid_mask,
+                        paired_valid_mask=paired_valid_mask,
+                        reference_target=target,
+                        paired_target=paired_target,
+                    )
+                    paired_offset_abs = paired_offsets.detach().abs().float().mean(dim=0)
+                    loss = loss + paired_overlap_weight * paired_overlap_loss
+                if topology_teacher_weight > 0.0:
+                    required = {
+                        "topology_foreground_fraction",
+                        "topology_boundary_fraction",
+                        "topology_unique_nonzero",
+                    }
+                    missing = required.difference(batch)
+                    if missing:
+                        raise RuntimeError(f"topology teacher batch is missing keys: {sorted(missing)}")
+                    foreground_fraction = batch["topology_foreground_fraction"].to(
+                        device, non_blocking=True
+                    )
+                    boundary_fraction = batch["topology_boundary_fraction"].to(
+                        device, non_blocking=True
+                    )
+                    unique_nonzero = batch["topology_unique_nonzero"].to(device, non_blocking=True)
+                    simple_route = topology_simple_teacher_route(
+                        foreground_fraction,
+                        boundary_fraction,
+                        unique_nonzero,
+                        topology_teacher_cfg,
+                    )
+                    if simple_teacher is None or complex_teacher is None:
+                        raise RuntimeError("topology teachers were not initialized")
+                    with torch.no_grad():
+                        simple_teacher_logits = simple_teacher(image)
+                        complex_teacher_logits = complex_teacher(image)
+                    teacher_valid_mask = make_offset_affinity_valid_mask(
+                        labels,
+                        train_cfg,
+                        int(target.shape[1]),
+                    )
+                    topology_teacher_loss = topology_routed_teacher_loss(
+                        logits,
+                        simple_teacher_logits,
+                        complex_teacher_logits,
+                        simple_route,
+                        topology_teacher_cfg,
+                        valid_mask=teacher_valid_mask,
+                    )
+                    teacher_channels = int(topology_teacher_cfg.get("channels", target.shape[1]))
+                    topology_teacher_disagreement = (
+                        torch.sigmoid(simple_teacher_logits[:, :teacher_channels]).float()
+                        - torch.sigmoid(complex_teacher_logits[:, :teacher_channels]).float()
+                    ).abs().mean()
+                    topology_simple_route_mean = simple_route.detach().mean()
+                    topology_foreground_mean = foreground_fraction.detach().mean()
+                    topology_boundary_mean = boundary_fraction.detach().mean()
+                    topology_unique_mean = unique_nonzero.detach().mean()
+                    loss = loss + topology_teacher_weight * topology_teacher_loss
             scaler.scale(loss).backward()
             if float(train_cfg.get("clip_grad", 0.0)) > 0:
                 scaler.unscale_(optimizer)
@@ -979,6 +1862,13 @@ def main() -> None:
             scaler.step(optimizer)
             scaler.update()
             global_step += 1
+            if ema_state is not None:
+                with torch.no_grad():
+                    for name, value in unwrap(model).state_dict().items():
+                        if value.is_floating_point():
+                            ema_state[name].mul_(ema_decay).add_(value.detach(), alpha=1.0 - ema_decay)
+                        else:
+                            ema_state[name].copy_(value.detach())
             if is_main(rank) and global_step % log_every == 0:
                 payload = {
                     "epoch": epoch,
@@ -991,6 +1881,42 @@ def main() -> None:
                     "train_lsd_loss": float(loss_parts["lsd_loss"].cpu()),
                     "train_differentiable_postprocess_loss": float(
                         loss_parts["differentiable_postprocess_loss"].cpu()
+                    ),
+                    "train_augmentation_consistency_loss": float(consistency_loss.detach().cpu()),
+                    "train_consistency_view_l1": float(consistency_view_l1.detach().cpu()),
+                    "train_halo_consistency_loss": float(halo_loss.detach().cpu()),
+                    "train_halo_view_l1": float(halo_view_l1.detach().cpu()),
+                    "train_paired_overlap_consistency_loss": float(paired_overlap_loss.detach().cpu()),
+                    "train_paired_offset_abs_z": float(paired_offset_abs[0].detach().cpu()),
+                    "train_paired_offset_abs_y": float(paired_offset_abs[1].detach().cpu()),
+                    "train_paired_offset_abs_x": float(paired_offset_abs[2].detach().cpu()),
+                    "train_topology_teacher_loss": float(topology_teacher_loss.detach().cpu()),
+                    "train_topology_simple_route_mean": float(topology_simple_route_mean.detach().cpu()),
+                    "train_topology_teacher_disagreement": float(
+                        topology_teacher_disagreement.detach().cpu()
+                    ),
+                    "train_topology_foreground_mean": float(topology_foreground_mean.detach().cpu()),
+                    "train_topology_boundary_mean": float(topology_boundary_mean.detach().cpu()),
+                    "train_topology_unique_mean": float(topology_unique_mean.detach().cpu()),
+                    "train_instance_embedding_loss": float(instance_embedding_loss.detach().cpu()),
+                    "train_instance_embedding_variance_loss": float(
+                        instance_embedding_variance_loss.detach().cpu()
+                    ),
+                    "train_instance_embedding_distance_loss": float(
+                        instance_embedding_distance_loss.detach().cpu()
+                    ),
+                    "train_instance_embedding_count": float(instance_embedding_count.detach().cpu()),
+                    "train_instance_embedding_foreground_fraction": float(
+                        instance_embedding_foreground_fraction.detach().cpu()
+                    ),
+                    "train_boundary_leak_loss": float(boundary_leak_loss.detach().cpu()),
+                    "train_boundary_leak_pair_count": float(boundary_leak_pair_count.detach().cpu()),
+                    "train_boundary_leak_edge_count": float(boundary_leak_edge_count.detach().cpu()),
+                    "train_boundary_leak_active_pair_fraction": float(
+                        boundary_leak_active_pair_fraction.detach().cpu()
+                    ),
+                    "train_boundary_leak_tail_probability_mean": float(
+                        boundary_leak_tail_probability_mean.detach().cpu()
                     ),
                     "train_membrane_weight_mean": float(loss_parts["membrane_weight_mean"].cpu()),
                     "train_bcar_rank_loss": float(loss_parts["bcar_rank_loss"].cpu()),
@@ -1005,7 +1931,8 @@ def main() -> None:
                     dist.barrier()
                 if is_main(rank):
                     payload = {
-                        "model": unwrap(model).state_dict(),
+                        "model": checkpoint_model_state(),
+                        "ema_decay": ema_decay if ema_state is not None else None,
                         "postprocess": unwrap(postprocess).state_dict() if postprocess is not None else None,
                         "optimizer": optimizer.state_dict(),
                         "epoch": epoch,
@@ -1064,7 +1991,8 @@ def main() -> None:
             dist.barrier()
         if is_main(rank) and should_save:
             payload = {
-                "model": unwrap(model).state_dict(),
+                "model": checkpoint_model_state(),
+                "ema_decay": ema_decay if ema_state is not None else None,
                 "postprocess": unwrap(postprocess).state_dict() if postprocess is not None else None,
                 "optimizer": optimizer.state_dict(),
                 "epoch": epoch,

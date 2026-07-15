@@ -1114,9 +1114,17 @@ class UNETRAnisotropicAffinityNet(nn.Module):
         out = self.decoder2(dec1, enc1)
         return out
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        return_features: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         out = self.decode_features(x)
-        return self.head(out)
+        logits = self.head(out)
+        if return_features:
+            return logits, out
+        return logits
 
 
 class UNETREMAffinityNet(UNETRAnisotropicAffinityNet):
@@ -1479,6 +1487,20 @@ def load_pretrained_backbone(
             continue
         if key in own and own[key].shape == value.shape:
             loaded[key] = value
+        elif (
+            key in own
+            and key.endswith(("channel_bias", "channel_scale"))
+            and value.ndim == own[key].ndim
+            and value.ndim >= 2
+            and value.shape[0] == own[key].shape[0]
+            and value.shape[1] < own[key].shape[1]
+            and value.shape[2:] == own[key].shape[2:]
+        ):
+            # Preserve affinity-channel calibration when auxiliary output heads
+            # expand the final channel dimension.
+            expanded = own[key].clone()
+            expanded[:, : value.shape[1]] = value
+            loaded[key] = expanded
         elif key == "pos_embed" and key in own:
             interpolated = _interpolate_pos_embed_for_model(value, own[key], model, checkpoint)
             if interpolated is not None:

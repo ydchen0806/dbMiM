@@ -1,0 +1,397 @@
+{
+  "created_at_utc": "2026-07-10T18:25:41Z",
+  "dataset": "MEC_8nm_myelin",
+  "hdf5_dir": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5",
+  "label_semantics": "myelin instance labels; 0 is background",
+  "license": "cc-by-4.0",
+  "records": [
+    {
+      "convert_sec": 7.78,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.92068571648,
+      "foreground_voxels": 179821429,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_01.h5",
+      "index": 1,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 684,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/1_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 684,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/1_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 8.549,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.90987280384,
+      "foreground_voxels": 177709532,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_02.h5",
+      "index": 2,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 843,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/2_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 843,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/2_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 9.085,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.89712421888,
+      "foreground_voxels": 175219574,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_03.h5",
+      "index": 3,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 926,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/3_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 926,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/3_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 8.641,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.80301228544,
+      "foreground_voxels": 156838337,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_04.h5",
+      "index": 4,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 919,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/4_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 919,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/4_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 8.446,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.8298603413032963,
+      "foreground_voxels": 162341533,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_05.h5",
+      "index": 5,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 947,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/5_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1251,
+        1251
+      ],
+      "num_nonzero_labels": 946,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/5_raw.npy",
+      "raw_shape_original": [
+        125,
+        1251,
+        1251
+      ],
+      "shape": [
+        125,
+        1251,
+        1251
+      ],
+      "voxels": 195625125
+    },
+    {
+      "convert_sec": 8.242,
+      "cropped_to_common_shape": true,
+      "foreground_fraction": 0.82014918144,
+      "foreground_voxels": 160185387,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_06.h5",
+      "index": 6,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 817,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/6_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1251,
+        1251
+      ],
+      "num_nonzero_labels": 817,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/6_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 7.58,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.9390035456,
+      "foreground_voxels": 183399130,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_07.h5",
+      "index": 7,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 372,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/7_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 372,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/7_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 7.437,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.97466946048,
+      "foreground_voxels": 190365129,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_08.h5",
+      "index": 8,
+      "label_dtype_hdf5": "uint8",
+      "label_dtype_original": "uint8",
+      "label_max": 66,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/8_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 66,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/8_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 8.464,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.93059518976,
+      "foreground_voxels": 181756873,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_09.h5",
+      "index": 9,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 722,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/9_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 722,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/9_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 8.544,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.95711866368,
+      "foreground_voxels": 186937239,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_10.h5",
+      "index": 10,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 397,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/10_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 397,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/10_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 9.98,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.92450322944,
+      "foreground_voxels": 180567037,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_11.h5",
+      "index": 11,
+      "label_dtype_hdf5": "uint16",
+      "label_dtype_original": "uint16",
+      "label_max": 642,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/11_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 642,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/11_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    },
+    {
+      "convert_sec": 7.789,
+      "cropped_to_common_shape": false,
+      "foreground_fraction": 0.97376295424,
+      "foreground_voxels": 190188077,
+      "hdf5": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hdf5/mec8nm_12.h5",
+      "index": 12,
+      "label_dtype_hdf5": "uint8",
+      "label_dtype_original": "uint8",
+      "label_max": 202,
+      "label_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/12_seg_Myelin.npy",
+      "label_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "num_nonzero_labels": 202,
+      "raw_dtype_hdf5": "uint8",
+      "raw_dtype_original": "float32",
+      "raw_npy": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot/12_raw.npy",
+      "raw_shape_original": [
+        125,
+        1250,
+        1250
+      ],
+      "shape": [
+        125,
+        1250,
+        1250
+      ],
+      "voxels": 195312500
+    }
+  ],
+  "resolution_xy_nm": 8,
+  "snapshot_dir": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/hf_snapshot",
+  "source_hf_repo": "haoyuan7/mec",
+  "splits_json": "/volume/med-train/users/dchen02/code/dbMiM/data/MEC_8nm/mec8nm_splits.json"
+}

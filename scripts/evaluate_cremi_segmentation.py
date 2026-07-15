@@ -8,7 +8,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import torch
@@ -166,11 +166,17 @@ def predict_affinities(
     channels: int = 3,
     postprocess: torch.nn.Module | None = None,
     return_logits: bool = False,
+    normalization_scope: str = "volume",
 ) -> np.ndarray:
     model.eval()
     if postprocess is not None:
         postprocess.eval()
-    volume = normalize_volume(raw)
+    if normalization_scope not in {"volume", "window", "global", "none"}:
+        raise ValueError(f"unknown normalization_scope={normalization_scope!r}")
+    # Volume preserves historical per-call behavior. Global is equivalent for
+    # a direct call, while blockwise evaluation pre-normalizes the full block
+    # and uses ``none`` for each chunk. Window matches training-crop scaling.
+    volume = normalize_volume(raw) if normalization_scope in {"volume", "global"} else np.asarray(raw)
     depth, height, width = volume.shape
     wd, wh, ww = window_size
     pad = (
@@ -192,6 +198,8 @@ def predict_affinities(
         for y0 in y_starts:
             for x0 in x_starts:
                 patch = volume[z0 : z0 + wd, y0 : y0 + wh, x0 : x0 + ww]
+                if normalization_scope == "window":
+                    patch = normalize_volume(patch)
                 tensor = torch.from_numpy(patch[None, None]).float().to(device)
                 with torch.amp.autocast("cuda", enabled=amp_enabled):
                     logits = model(tensor)
@@ -233,6 +241,49 @@ def make_calibrated_variants(
     return variants
 
 
+def make_auto_calibrated_variants(
+    logits: np.ndarray,
+    target_values: list[tuple[float, float, float]],
+    quantile_values: list[float],
+    temperature_values: list[float],
+) -> list[tuple[str, np.ndarray, tuple[float, float, float], float]]:
+    """Build label-free per-volume calibration variants.
+
+    The fixed-bias calibration used for CREMI is strong but not portable across
+    arbitrary EM volumes. This variant chooses a z/y/x logit bias so that a
+    chosen per-channel logit quantile maps to a target affinity probability.
+    It does not inspect labels and is therefore usable for deployment volumes.
+    """
+
+    variants: list[tuple[str, np.ndarray, tuple[float, float, float], float]] = []
+    channel_logits = [logits[channel].reshape(-1).astype(np.float32, copy=False) for channel in range(3)]
+    for targets in target_values:
+        target_logits = np.asarray(
+            [np.log(np.clip(t, 1e-6, 1.0 - 1e-6) / np.clip(1.0 - t, 1e-6, 1.0)) for t in targets],
+            dtype=np.float32,
+        )
+        for quantile in quantile_values:
+            q = float(quantile)
+            observed = np.asarray([np.quantile(values, q) for values in channel_logits], dtype=np.float32)
+            for temperature in temperature_values:
+                temp = max(float(temperature), 1e-6)
+                bias_arr = (temp * target_logits - observed).astype(np.float32)
+                bias = tuple(float(v) for v in bias_arr)
+                name = (
+                    f"auto_q{q:.2f}_tz{targets[0]:.2f}_ty{targets[1]:.2f}_"
+                    f"tx{targets[2]:.2f}_t{temp:.2f}"
+                )
+                variants.append(
+                    (
+                        name,
+                        sigmoid_np((logits + bias_arr.reshape(3, 1, 1, 1)) / temp).astype(np.float32, copy=False),
+                        bias,
+                        temp,
+                    )
+                )
+    return variants
+
+
 def build_model(cfg: dict, checkpoint: Path, device: torch.device) -> torch.nn.Module:
     payload = load_checkpoint(checkpoint, map_location="cpu")
     effective_cfg = payload.get("config", cfg)
@@ -258,6 +309,121 @@ def build_postprocess(cfg: dict, checkpoint: Path, device: torch.device) -> torc
     )
     module.load_state_dict(state, strict=True)
     return module.to(device)
+
+
+class LogitEnsemble(torch.nn.Module):
+    """Mix compatible affinity models before sigmoid calibration and WaterZ."""
+
+    def __init__(
+        self,
+        members: Sequence[tuple[torch.nn.Module, torch.nn.Module | None]],
+        weights: Sequence[float],
+        member_biases: Sequence[tuple[float, float, float]] | None = None,
+        member_temperatures: Sequence[float] | None = None,
+    ) -> None:
+        super().__init__()
+        if len(members) < 2:
+            raise ValueError("a logit ensemble requires at least two members")
+        if len(members) != len(weights):
+            raise ValueError(f"member/weight count mismatch: {len(members)} != {len(weights)}")
+        raw_weights = np.asarray(weights, dtype=np.float32)
+        if not np.all(np.isfinite(raw_weights)) or np.any(raw_weights < 0.0) or float(raw_weights.sum()) <= 0.0:
+            raise ValueError(f"ensemble weights must be finite, non-negative, and sum to a positive value: {weights}")
+        if member_biases is None:
+            member_biases = [(0.0, 0.0, 0.0)] * len(members)
+        if member_temperatures is None:
+            member_temperatures = [1.0] * len(members)
+        if len(member_biases) != len(members) or len(member_temperatures) != len(members):
+            raise ValueError(
+                "member calibration count must match the ensemble size: "
+                f"biases={len(member_biases)} temperatures={len(member_temperatures)} members={len(members)}"
+            )
+        bias_array = np.asarray(member_biases, dtype=np.float32)
+        temperature_array = np.asarray(member_temperatures, dtype=np.float32)
+        if bias_array.shape != (len(members), 3):
+            raise ValueError(f"member biases must have shape ({len(members)}, 3), got {bias_array.shape}")
+        if not np.all(np.isfinite(bias_array)) or not np.all(np.isfinite(temperature_array)) or np.any(temperature_array <= 0.0):
+            raise ValueError("member biases must be finite and member temperatures must be finite and positive")
+
+        first_model = members[0][0]
+        first_window = tuple(int(value) for value in first_model.volume_size)
+        first_channels = int(getattr(first_model, "out_channels", 3))
+        for index, (model, _) in enumerate(members[1:], start=1):
+            window = tuple(int(value) for value in model.volume_size)
+            channels = int(getattr(model, "out_channels", 3))
+            if window != first_window or channels != first_channels:
+                raise ValueError(
+                    "all ensemble members must have matching volume_size/out_channels; "
+                    f"member0={first_window}/{first_channels}, member{index}={window}/{channels}"
+                )
+
+        self.members = torch.nn.ModuleList([model for model, _ in members])
+        self.postprocessors = torch.nn.ModuleList(
+            [postprocess if postprocess is not None else torch.nn.Identity() for _, postprocess in members]
+        )
+        self.volume_size = first_window
+        self.out_channels = first_channels
+        normalized = torch.from_numpy(raw_weights / float(raw_weights.sum()))
+        self.register_buffer("ensemble_weights", normalized, persistent=False)
+        self.register_buffer("member_biases", torch.from_numpy(bias_array).reshape(len(members), 3, 1, 1, 1), persistent=False)
+        self.register_buffer(
+            "member_temperatures",
+            torch.from_numpy(temperature_array).reshape(len(members), 1, 1, 1, 1),
+            persistent=False,
+        )
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        mixed_logits: torch.Tensor | None = None
+        for index, (model, postprocess, weight) in enumerate(zip(self.members, self.postprocessors, self.ensemble_weights)):
+            logits = model(inputs)
+            affinity_logits = postprocess(logits[:, : self.out_channels])
+            calibrated_logits = (
+                affinity_logits + self.member_biases[index].to(dtype=affinity_logits.dtype)
+            ) / self.member_temperatures[index].to(dtype=affinity_logits.dtype)
+            weighted_logits = calibrated_logits * weight.to(dtype=affinity_logits.dtype)
+            mixed_logits = weighted_logits if mixed_logits is None else mixed_logits + weighted_logits
+        if mixed_logits is None:  # pragma: no cover - constructor rejects an empty member list
+            raise RuntimeError("logit ensemble has no members")
+        return mixed_logits
+
+
+def build_logit_ensemble(
+    cfg: dict,
+    checkpoints: Sequence[Path],
+    weights: Sequence[float],
+    device: torch.device,
+    member_biases: Sequence[tuple[float, float, float]] | None = None,
+    member_temperatures: Sequence[float] | None = None,
+) -> tuple[LogitEnsemble, dict[str, object]]:
+    """Load compatible checkpoints and expose their weighted affinity logits."""
+
+    if len(checkpoints) < 2:
+        raise ValueError("--ensemble-checkpoints requires at least one secondary checkpoint")
+    if len(checkpoints) != len(weights):
+        raise ValueError(f"checkpoint/weight count mismatch: {len(checkpoints)} != {len(weights)}")
+    members: list[tuple[torch.nn.Module, torch.nn.Module | None]] = []
+    for checkpoint in checkpoints:
+        members.append((build_model(cfg, checkpoint, device), build_postprocess(cfg, checkpoint, device)))
+    ensemble = LogitEnsemble(
+        members,
+        weights,
+        member_biases=member_biases,
+        member_temperatures=member_temperatures,
+    ).to(device)
+    return ensemble, {
+        "mode": "weighted_logit_mean",
+        "checkpoints": [str(checkpoint) for checkpoint in checkpoints],
+        "weights": [float(value) for value in ensemble.ensemble_weights.detach().cpu().tolist()],
+        "member_biases": [
+            [float(value) for value in bias]
+            for bias in ensemble.member_biases.detach().cpu().reshape(len(members), 3).tolist()
+        ],
+        "member_temperatures": [
+            float(value)
+            for value in ensemble.member_temperatures.detach().cpu().reshape(len(members)).tolist()
+        ],
+        "member_has_postprocess": [postprocess is not None for _, postprocess in members],
+    }
 
 
 def metric_dict(obj) -> dict[str, float | int]:
@@ -314,6 +480,7 @@ def run_backend(
     seed_distance: int,
     boundary_threshold: float,
     min_boundary: int,
+    seed_nms_radius: int = 0,
     score_mode: str = "mean",
     rag_quantile: float = 0.25,
     z_threshold: float | None = None,
@@ -335,7 +502,7 @@ def run_backend(
     if backend == "cupy_graph_cc":
         return cupy_affinity_graph_connected_components(affinities, threshold=graph_threshold, min_size=min_size)
     if backend == "mahotas_watershed":
-        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
         if cache is not None and key in cache:
             return cache[key][0]
         fragments = watershed_fragments(
@@ -344,12 +511,13 @@ def run_backend(
             seed_method=seed_method,
             seed_distance=seed_distance,
             boundary_threshold=boundary_threshold,
+            seed_nms_radius=seed_nms_radius,
         )
         if cache is not None:
             cache[key] = (fragments, 0.0)
         return fragments
     if backend == "scipy_watershed":
-        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}"
+        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
         if cache is not None and key in cache:
             return cache[key][0]
         fragments = watershed_fragments(
@@ -358,12 +526,13 @@ def run_backend(
             seed_method=seed_method,
             seed_distance=seed_distance,
             boundary_threshold=boundary_threshold,
+            seed_nms_radius=seed_nms_radius,
         )
         if cache is not None:
             cache[key] = (fragments, 0.0)
         return fragments
     if backend in {"mahotas_agglomeration", "seeded_rag"}:
-        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
         fragments = None
         if cache is not None and key in cache:
             fragments = cache[key][0]
@@ -374,6 +543,7 @@ def run_backend(
                 seed_method=seed_method,
                 seed_distance=seed_distance,
                 boundary_threshold=boundary_threshold,
+                seed_nms_radius=seed_nms_radius,
             )
             if cache is not None:
                 cache[key] = (fragments, 0.0)
@@ -388,7 +558,7 @@ def run_backend(
             quantile=rag_quantile,
         )
     if backend == "scipy_agglomeration":
-        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}"
+        key = f"fragments:scipy:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
         fragments = None
         if cache is not None and key in cache:
             fragments = cache[key][0]
@@ -399,6 +569,7 @@ def run_backend(
                 seed_method=seed_method,
                 seed_distance=seed_distance,
                 boundary_threshold=boundary_threshold,
+                seed_nms_radius=seed_nms_radius,
             )
             if cache is not None:
                 cache[key] = (fragments, 0.0)
@@ -413,7 +584,7 @@ def run_backend(
             quantile=rag_quantile,
         )
     if backend == "waterz":
-        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+        key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
         fragments = None
         if cache is not None and key in cache:
             fragments = cache[key][0]
@@ -424,6 +595,7 @@ def run_backend(
                 seed_method=seed_method,
                 seed_distance=seed_distance,
                 boundary_threshold=boundary_threshold,
+                seed_nms_radius=seed_nms_radius,
             )
             if cache is not None:
                 cache[key] = (fragments, 0.0)
@@ -439,9 +611,10 @@ def run_waterz_threshold_sweep(
     seed_distance: int,
     boundary_threshold: float,
     waterz_scoring: str,
+    seed_nms_radius: int = 0,
     cache: dict[str, tuple[np.ndarray, float]] | None = None,
 ) -> tuple[list[np.ndarray], float]:
-    key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}"
+    key = f"fragments:mahotas:{seed_method}:{seed_distance}:{boundary_threshold}:{seed_nms_radius}"
     t0 = time.perf_counter()
     fragments = None
     if cache is not None and key in cache:
@@ -453,6 +626,7 @@ def run_waterz_threshold_sweep(
             seed_method=seed_method,
             seed_distance=seed_distance,
             boundary_threshold=boundary_threshold,
+            seed_nms_radius=seed_nms_radius,
         )
         if cache is not None:
             cache[key] = (fragments, 0.0)
@@ -509,6 +683,12 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
+        "--inference-normalization",
+        choices=["volume", "window", "global"],
+        default="volume",
+        help="normalization scope before model inference; global normalizes the requested volume once",
+    )
+    parser.add_argument(
         "--affinity-channels",
         nargs="+",
         type=int,
@@ -534,6 +714,24 @@ def main() -> None:
         type=float,
         default=[1.0],
         help="logit temperatures for eval-time affinity calibration",
+    )
+    parser.add_argument(
+        "--auto-calibration-targets",
+        nargs="+",
+        type=float,
+        default=[],
+        help=(
+            "Optional z/y/x target affinity triplets for label-free per-volume calibration. "
+            "For each triplet, a channel-wise logit bias is chosen so the requested "
+            "logit quantile maps to the target probability."
+        ),
+    )
+    parser.add_argument(
+        "--auto-calibration-quantiles",
+        nargs="+",
+        type=float,
+        default=[],
+        help="Quantiles used by --auto-calibration-targets, e.g. 0.50 0.60.",
     )
     parser.add_argument(
         "--waterz-scoring",
@@ -576,6 +774,12 @@ def main() -> None:
     waterz_scorings = args.waterz_scoring if isinstance(args.waterz_scoring, list) else [args.waterz_scoring]
     calibration_biases = parse_channel_triplets([float(v) for v in args.calibration_biases])
     calibration_temperatures = [float(v) for v in args.calibration_temperatures]
+    auto_calibration_targets = (
+        parse_channel_triplets([float(v) for v in args.auto_calibration_targets])
+        if args.auto_calibration_targets
+        else []
+    )
+    auto_calibration_quantiles = [float(v) for v in args.auto_calibration_quantiles]
     watershed_backends = {"mahotas_watershed", "scipy_watershed"}
     anisotropic_graph_backends = {"graph_cc", "cupy_graph_cc"}
     agglomeration_backends = {"seeded_rag", "mahotas_agglomeration", "scipy_agglomeration"}
@@ -594,6 +798,7 @@ def main() -> None:
         )
         sample_record: dict[str, float | int | str] = {
             "sample": path.name,
+            "inference_normalization": str(args.inference_normalization),
             "label_unique": int(np.unique(label).size),
             "label_zero_fraction": float(np.mean(label == args.ignore_label)) if args.ignore_label is not None else 0.0,
             "metric_label_unique": int(np.unique(metric_label[metric_label != args.ignore_label]).size)
@@ -622,6 +827,7 @@ def main() -> None:
             channels=required_channels,
             postprocess=postprocess,
             return_logits=True,
+            normalization_scope=str(args.inference_normalization),
         )
         logits_np = logits_all[np.asarray(affinity_channel_indices, dtype=np.int64)]
         aff = sigmoid_np(logits_np).astype(np.float32, copy=False)
@@ -633,6 +839,15 @@ def main() -> None:
         target = torch.from_numpy(target_aff)
         variants = [("pred", aff, (0.0, 0.0, 0.0), 1.0)]
         variants.extend(make_calibrated_variants(logits_np, calibration_biases, calibration_temperatures))
+        if auto_calibration_targets and auto_calibration_quantiles:
+            variants.extend(
+                make_auto_calibrated_variants(
+                    logits_np,
+                    auto_calibration_targets,
+                    auto_calibration_quantiles,
+                    calibration_temperatures,
+                )
+            )
         seen_variant_names: set[str] = set()
         for variant_name, variant_aff, calibration_bias, calibration_temperature in variants:
             if variant_name in seen_variant_names:
@@ -907,6 +1122,8 @@ def main() -> None:
         "learned_postprocess_loaded": postprocess is not None,
         "calibration_biases": [list(bias) for bias in calibration_biases],
         "calibration_temperatures": calibration_temperatures,
+        "auto_calibration_targets": [list(target) for target in auto_calibration_targets],
+        "auto_calibration_quantiles": auto_calibration_quantiles,
         "waterz_scoring": list(waterz_scorings),
         "affinity_channels": affinity_channel_indices,
         "failures": failures,

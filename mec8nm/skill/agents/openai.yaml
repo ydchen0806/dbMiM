@@ -1,0 +1,4 @@
+interface:
+  display_name: "dbMiM MEC/CREMI Segmentation"
+  short_description: "Continue gated MEC segmentation and PB-readiness work"
+  default_prompt: "Use $dbmim-neuron-seg to read the latest MEC state, distinguish the crop, full-block, and LoCoAgg anchors, preserve consumed splits, and choose the next evidence or PB-readiness gate."

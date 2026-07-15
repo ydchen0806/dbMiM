@@ -11,7 +11,12 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from dbmim.datasets import EMVolumeDataset, SyntheticEMDataset
-from dbmim.models import DBMIM3DMAE, DecoderAwareDBMIM3DMAE, DecisionModule
+from dbmim.models import (
+    DBMIM3DMAE,
+    DecoderAwareDBMIM3DMAE,
+    DecisionModule,
+    load_pretrained_backbone,
+)
 from dbmim.utils import (
     atomic_jsonl_append,
     count_parameters,
@@ -48,6 +53,22 @@ def unwrap(model: torch.nn.Module) -> torch.nn.Module:
     return model.module if hasattr(model, "module") else model
 
 
+def initialize_from_pretrained(
+    model: torch.nn.Module,
+    checkpoint_path: str | Path,
+    *,
+    min_loaded_keys: int = 1,
+) -> list[str]:
+    checkpoint = load_checkpoint(checkpoint_path, map_location="cpu")
+    loaded = load_pretrained_backbone(model, checkpoint)
+    if len(loaded) < int(min_loaded_keys):
+        raise RuntimeError(
+            f"pretrained initialization loaded {len(loaded)} keys from {checkpoint_path}; "
+            f"expected at least {int(min_loaded_keys)}"
+        )
+    return loaded
+
+
 def build_dataset(cfg: dict) -> torch.utils.data.Dataset:
     data_cfg = cfg.get("data", {})
     volume_size = tuple(data_cfg.get("volume_size", cfg.get("model", {}).get("volume_size", [16, 64, 64])))
@@ -80,9 +101,13 @@ def main() -> None:
     parser.add_argument("--config", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--resume", default="")
+    parser.add_argument("--pretrained", default="")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    pretrained_path = str(args.pretrained or cfg.get("pretrained", "")).strip()
+    if args.resume and pretrained_path:
+        raise ValueError("--resume and --pretrained are mutually exclusive")
     seed_everything(int(cfg.get("seed", 0)))
     output_dir = ensure_dir(args.output_dir or cfg["output_dir"])
     log_path = output_dir / "train_log.jsonl"
@@ -178,6 +203,14 @@ def main() -> None:
             prior_logit_margin=decision_cfg.get("prior_logit_margin"),
         ).to(device)
 
+    pretrained_loaded_keys: list[str] = []
+    if pretrained_path:
+        pretrained_loaded_keys = initialize_from_pretrained(
+            model,
+            pretrained_path,
+            min_loaded_keys=int(cfg.get("pretrained_min_keys", 1)),
+        )
+
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True)
         if decision_module is not None:
@@ -229,6 +262,11 @@ def main() -> None:
         print(f"output_dir={output_dir}")
         print(f"dataset_size={len(dataset)} batches={len(loader)} device={device} world_size={world_size}")
         print(f"model_trainable_params={count_parameters(unwrap(model))}")
+        if pretrained_path:
+            print(
+                f"pretrained={pretrained_path} loaded_keys={len(pretrained_loaded_keys)} "
+                f"first_keys={pretrained_loaded_keys[:8]}"
+            )
         if decision_module is not None:
             print(f"decision_trainable_params={count_parameters(unwrap(decision_module))}")
 
@@ -338,6 +376,8 @@ def main() -> None:
                         "epoch": epoch,
                         "global_step": global_step,
                         "config": cfg,
+                        "pretrained": pretrained_path,
+                        "pretrained_loaded_keys": pretrained_loaded_keys,
                     }
                     save_checkpoint(output_dir / f"checkpoint_step_{global_step:08d}.pt", payload)
                     save_checkpoint(output_dir / "pretrained_latest.pt", payload)
@@ -356,6 +396,8 @@ def main() -> None:
                     "epoch": epoch,
                     "global_step": global_step,
                     "config": cfg,
+                    "pretrained": pretrained_path,
+                    "pretrained_loaded_keys": pretrained_loaded_keys,
                 }
                 save_checkpoint(output_dir / f"checkpoint_{epoch:04d}.pt", payload)
                 save_checkpoint(output_dir / "pretrained_latest.pt", payload)

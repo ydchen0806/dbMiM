@@ -1,0 +1,57 @@
+seed: 75
+device: cpu
+output_dir: /tmp/mec8nm_r75_cpu_smoke
+data:
+  synthetic: true
+  synthetic_length: 2
+  volume_size:
+  - 8
+  - 32
+  - 32
+model:
+  architecture: mae_head
+  in_channels: 1
+  out_channels: 3
+  volume_size:
+  - 8
+  - 32
+  - 32
+  patch_size:
+  - 4
+  - 16
+  - 16
+  embed_dim: 24
+  depth: 2
+  num_heads: 4
+  dropout: 0.0
+train:
+  batch_size: 1
+  epochs: 1
+  max_steps: 1
+  num_workers: 0
+  lr: 0.0001
+  weight_decay: 0.0
+  amp: false
+  log_every: 1
+  eval_every: 0
+  save_every: 0
+  save_steps: 0
+  val_fraction: 0.0
+  clip_grad: 1.0
+  replicate_affinity_boundary: true
+  halo_consistency:
+    weight: 0.05
+    channels: 3
+    halo:
+    - 1
+    - 4
+    - 4
+    padding_mode: reflect
+    confidence_floor: 0.0
+  loss:
+    loss_type: weighted_mse
+    weight_alpha: 1.0
+    channel_weights:
+    - 1.0
+    - 1.0
+    - 1.0
